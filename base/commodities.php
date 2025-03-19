@@ -26,7 +26,9 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
 
     <!-- Bootstrap 5.3 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
+    <link rel="stylesheet" href="assets/style.css" />
+    <link rel="stylesheet" href="assets/globals.css" />
+    <link rel="stylesheet" href="assets/styleguide.css" />
     <style>
         body {
             padding: 20px;
@@ -47,7 +49,7 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
             gap: 10px; /* Space between buttons */
         }
         .btn-add-new {
-            background-color: maroon; /* Maroon color for Add New button */
+            background-color:  rgba(180, 80, 50, 1);;
             color: white;
             padding: 10px 20px; /* Larger button */
             font-size: 16px;
@@ -83,23 +85,85 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
             outline: none;
             background: white;
         }
+        .stats-container {
+            display: flex;
+            gap: 20px; /* Space between items */
+            justify-content: space-between; /* Distributes evenly */
+            align-items: center;
+            flex-wrap: nowrap; /* Prevent wrapping */
+            width: 87%; /* Reduce width to 60% */
+            max-width: 100%; /* Ensure responsiveness */
+            margin: 0 auto 20px auto; /* Centers the div horizontally */
+            margin-left: 0.7%;
+        }
+
+        .stats-container > div {
+            flex: 1; /* Make all items take equal width */
+            background: white; /* Match table styling */
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        .stats-section {
+            text-align: left;
+            margin-left: 11%; /* Adjust to align with stats-container */
+        }
+
     </style>
 </head>
 <body>
+<div class="stats-section">
+    <div class="text-wrapper-8"><h3>Commodities Management</h3></div>
+    <p class="p">Manage everything related to Commodity</p>
+
+            <div class="stats-container">
+                <div class="overlap-6">
+                <div class="img-wrapper"><img class="frame-38" src="img/frame-3.svg" /></div>
+                <div class="text-wrapper-34">Commodities</div>
+                <div class="text-wrapper-35">190</div>
+        </div>
+        <div class="overlap-7">
+            <div class="overlap-8"><img class="frame-39" src="img/frame-26.svg" /></div>
+            <div class="text-wrapper-36">Cereals</div>
+            <div class="text-wrapper-37">100</div>
+        </div>
+        <div class="overlap-9">
+            <div class="overlap-10"><img class="frame-40" src="img/frame-27.svg" /></div>
+            <div class="text-wrapper-38">Pulses</div>
+            <div class="text-wrapper-39">45</div>
+        </div>
+        <div class="group-wrapper">
+            <div class="group-20">
+                <div class="rtrtre-wrapper"><div class="rtrtre" src="img/frame-27.svg"></div></div>
+                <div class="text-wrapper-40">Oil seeds</div>
+                <div class="text-wrapper-41">45</div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <div class="container">
     <div class="table-container">
-        <h4 class="mb-3">Commodities Management</h4>
 
         <!-- Action Buttons -->
         <div class="btn-group">
-            <a href="add_commodity.php" class="btn btn-add-new">➕ Add New</a>
-            <button class="btn btn-delete" onclick="deleteSelected()">🗑 Delete</button>
+            <a href="add_commodity.php" class="btn btn-add-new">
+                <img src="img/frame-10.svg" alt="Add New" style="width: 22px; height: 22px; margin-right: 5px;">
+                Add New
+            </a>
+
+            <button class="btn btn-delete" onclick="deleteSelected()">
+                <img src="img/frame-8.svg" alt="Delete" style="width: 20px; height: 20px; margin-right: 3px;">Delete
+            </button>
+
             <!-- Export Dropdown -->
             <div class="dropdown">
-                <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                    📊 Export
-                </button>
+            <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                <img src="img/frame-25.svg" alt="Export" style="width: 20px; height: 20px; margin-right: 3px;">
+                Export
+            </button>
+
                 <ul class="dropdown-menu" aria-labelledby="exportDropdown">
                     <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">Export to Excel</a></li>
                     <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">Export to PDF</a></li>
@@ -109,26 +173,27 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
 
         <!-- Table -->
         <table class="table table-striped table-hover">
-            <thead class="table-dark">
-                <tr>
-                    <th><input type="checkbox" id="selectAll"></th>
-                    <th>HS Code</th>
-                    <th>Category</th>
-                    <th>Commodity</th>
-                    <th>Variety</th>
-                    <th>Image</th>
-                    <th>Actions</th>
-                </tr>
-                <tr class="filter-row"> <!-- White background for filter row -->
-                    <th></th>
-                    <th><input type="text" class="filter-input" id="filterHsCode" placeholder="Filter HS Code"></th>
-                    <th><input type="text" class="filter-input" id="filterCategory" placeholder="Filter Category"></th>
-                    <th><input type="text" class="filter-input" id="filterCommodity" placeholder="Filter Commodity"></th>
-                    <th><input type="text" class="filter-input" id="filterVariety" placeholder="Filter Variety"></th>
-                    <th></th>
-                    <th></th>
-                </tr>
-            </thead>
+        
+        <tr style="background-color: #d3d3d3 !important; color: black !important;">
+            <th><input type="checkbox" id="selectAll"></th>
+            <th>HS Code</th>
+            <th>Category</th>
+            <th>Commodity</th>
+            <th>Variety</th>
+            <th>Image</th>
+            <th>Actions</th>
+        </tr>
+        <tr class="filter-row" style="background-color: white !important; color: black !important;">
+            <th></th>
+            <th><input type="text" class="filter-input" id="filterHsCode" placeholder="Filter HS Code"></th>
+            <th><input type="text" class="filter-input" id="filterCategory" placeholder="Filter Category"></th>
+            <th><input type="text" class="filter-input" id="filterCommodity" placeholder="Filter Commodity"></th>
+            <th><input type="text" class="filter-input" id="filterVariety" placeholder="Filter Variety"></th>
+            <th></th>
+            <th></th>
+        </tr>
+    </thead>
+
             <tbody id="commodityTable">
                 <?php foreach ($commodities as $commodity): ?>
                     <tr>
@@ -147,7 +212,10 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
                             <?php endif; ?>
                         </td>
                         <td>
-                            <button class="btn btn-sm btn-warning">✏ Edit</button>
+                        <button class="btn btn-sm btn-warning">
+                            <img src="img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
+                        </button>
+
                         </td>
                     </tr>
                 <?php endforeach; ?>
