@@ -1,0 +1,1418 @@
+.tradepoints-table {
+    background-color: #ffffff;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    width: 100%;
+  }
+  
+  .tradepoints-table .overlap-wrapper {
+    background-color: #ffffff;
+    width: 1512px;
+    height: 982px;
+  }
+  
+  .tradepoints-table .overlap {
+    position: relative;
+    height: 982px;
+    background-color: var(--light-bg-color);
+  }
+  
+  .tradepoints-table .overlap-group {
+    position: absolute;
+    width: 1512px;
+    height: 982px;
+    top: 0;
+    left: 0;
+  }
+  
+  .tradepoints-table .rectangle {
+    position: absolute;
+    width: 1512px;
+    height: 91px;
+    top: 0;
+    left: 0;
+    background-color: var(--pure-white);
+  }
+  
+  .tradepoints-table .group {
+    position: absolute;
+    width: 215px;
+    height: 982px;
+    top: 0;
+    left: 0;
+    background-color: var(--pure-white);
+  }
+  
+  .tradepoints-table .frame {
+    position: absolute;
+    width: 120px;
+    height: 39px;
+    top: 101px;
+    left: 15px;
+  }
+  
+  .tradepoints-table .text-wrapper {
+    position: absolute;
+    top: 18px;
+    left: 5px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .div {
+    position: absolute;
+    width: 175px;
+    height: 122px;
+    top: 204px;
+    left: 33px;
+  }
+  
+  .tradepoints-table .line {
+    width: 1px;
+    height: 81px;
+    top: 24px;
+    left: 7px;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .frame-2 {
+    display: flex;
+    width: 172px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px 52px 10px 0px;
+    position: absolute;
+    top: 0;
+    left: 3px;
+  }
+  
+  .tradepoints-table .ellipse {
+    position: relative;
+    width: 10px;
+    height: 10px;
+    background-color: var(--border-color);
+    border-radius: 5px;
+  }
+  
+  .tradepoints-table .text-wrapper-2 {
+    position: relative;
+    width: fit-content;
+    margin-top: -0.50px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .frame-3 {
+    display: flex;
+    width: 172px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px 52px 10px 0px;
+    position: absolute;
+    top: 40px;
+    left: 0;
+  }
+  
+  .tradepoints-table .ellipse-2 {
+    position: relative;
+    width: 10px;
+    height: 10px;
+    background-color: var(--primary-brownish);
+    border-radius: 5px;
+  }
+  
+  .tradepoints-table .text-wrapper-3 {
+    position: relative;
+    width: fit-content;
+    margin-top: -0.50px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--primary-brownish);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .frame-4 {
+    display: flex;
+    width: 169px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px 52px 10px 0px;
+    position: absolute;
+    top: 82px;
+    left: 3px;
+  }
+  
+  .tradepoints-table .overlap-2 {
+    width: 205px;
+    height: 44px;
+    top: 154px;
+    background-color: #ffded5;
+    border-radius: 0px 5px 5px 0px;
+    position: absolute;
+    left: 0;
+  }
+  
+  .tradepoints-table .frame-5 {
+    display: flex;
+    width: 189px;
+    align-items: center;
+    justify-content: space-between;
+    position: absolute;
+    top: 0;
+    left: 7px;
+  }
+  
+  .tradepoints-table .frame-6 {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    position: relative;
+    flex: 0 0 auto;
+  }
+  
+  .tradepoints-table .img {
+    position: relative;
+    width: 24px;
+    height: 24px;
+  }
+  
+  .tradepoints-table .text-wrapper-4 {
+    position: relative;
+    width: fit-content;
+    font-family: "Inter-Medium", Helvetica;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .rectangle-2 {
+    position: absolute;
+    width: 7px;
+    height: 44px;
+    top: 0;
+    left: 0;
+    background-color: var(--primary-brownish);
+  }
+  
+  .tradepoints-table .frame-7 {
+    display: flex;
+    width: 189px;
+    align-items: center;
+    justify-content: space-between;
+    position: absolute;
+    top: 338px;
+    left: 7px;
+  }
+  
+  .tradepoints-table .frame-8 {
+    display: flex;
+    width: 189px;
+    align-items: center;
+    justify-content: space-between;
+    position: absolute;
+    top: 390px;
+    left: 7px;
+  }
+  
+  .tradepoints-table .site {
+    position: relative;
+    width: 23px;
+    height: 23.31px;
+  }
+  
+  .tradepoints-table .group-2 {
+    position: absolute;
+    width: 21px;
+    height: 21px;
+    top: 3px;
+    left: 1px;
+  }
+  
+  .tradepoints-table .frame-9 {
+    display: flex;
+    width: 189px;
+    align-items: center;
+    justify-content: space-between;
+    position: absolute;
+    top: 442px;
+    left: 7px;
+  }
+  
+  .tradepoints-table .line-2 {
+    width: 1px;
+    height: 982px;
+    top: 0;
+    left: 215px;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .line-3 {
+    width: 1512px;
+    height: 1px;
+    top: 90px;
+    left: 0;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .frame-10 {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px;
+    position: absolute;
+    top: 26px;
+    left: 228px;
+  }
+  
+  .tradepoints-table .text-wrapper-5 {
+    position: relative;
+    width: fit-content;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .frame-11 {
+    display: inline-flex;
+    align-items: center;
+    gap: 24px;
+    position: absolute;
+    top: 22px;
+    left: 1260px;
+  }
+  
+  .tradepoints-table .overlap-group-wrapper {
+    position: relative;
+    width: 167.15px;
+    height: 51px;
+  }
+  
+  .tradepoints-table .overlap-group-2 {
+    position: relative;
+    width: 167px;
+    height: 51px;
+    border-radius: 6px;
+  }
+  
+  .tradepoints-table .frame-12 {
+    display: flex;
+    width: 151px;
+    height: 34px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    position: absolute;
+    top: 8px;
+    left: 9px;
+  }
+  
+  .tradepoints-table .rectangle-3 {
+    position: relative;
+    width: 42px;
+    height: 40px;
+    margin-top: -3.00px;
+    margin-bottom: -3.00px;
+    margin-left: -1.41px;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .frame-13 {
+    display: inline-flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 16px;
+    position: relative;
+    flex: 0 0 auto;
+    margin-right: -1.41px;
+  }
+  
+  .tradepoints-table .frame-14 {
+    display: flex;
+    flex-direction: column;
+    width: 68px;
+    align-items: flex-start;
+    position: relative;
+  }
+  
+  .tradepoints-table .text-wrapper-6 {
+    position: relative;
+    align-self: stretch;
+    margin-top: -1.00px;
+    font-family: "Inter-SemiBold", Helvetica;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 12px;
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .text-wrapper-7 {
+    position: relative;
+    align-self: stretch;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 12px;
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .frame-15 {
+    position: relative;
+    width: 20px;
+    height: 20px;
+  }
+  
+  .tradepoints-table .rectangle-4 {
+    position: absolute;
+    width: 167px;
+    height: 51px;
+    top: 0;
+    left: 0;
+    border-radius: 6px;
+    border: 1px solid;
+    border-color: var(--border-color);
+  }
+  
+  .tradepoints-table .ellipse-3 {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    top: 10px;
+    left: 13px;
+    background-color: var(--primary-brownish);
+    border-radius: 6px;
+    border: 1px solid;
+    border-color: var(--pure-white);
+  }
+  
+  .tradepoints-table .ratin-logo {
+    position: absolute;
+    width: 90px;
+    height: 53px;
+    top: 22px;
+    left: 20px;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .text-wrapper-8 {
+    position: absolute;
+    top: 112px;
+    left: 239px;
+    font-family: "Inter-SemiBold", Helvetica;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 20px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .p {
+    position: absolute;
+    top: 139px;
+    left: 239px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .overlap-3 {
+    position: absolute;
+    width: 280px;
+    height: 97px;
+    top: 179px;
+    left: 242px;
+    background-color: var(--pure-white);
+    border-radius: 5px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .frame-wrapper {
+    position: absolute;
+    width: 79px;
+    height: 75px;
+    top: 11px;
+    left: 11px;
+    background-color: #ffded5;
+    border-radius: 5px;
+  }
+  
+  .tradepoints-table .frame-16 {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    top: 17px;
+    left: 18px;
+  }
+  
+  .tradepoints-table .text-wrapper-9 {
+    position: absolute;
+    top: 24px;
+    left: 101px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-10 {
+    position: absolute;
+    top: 48px;
+    left: 102px;
+    font-family: "Inter-SemiBold", Helvetica;
+    font-weight: 600;
+    font-size: 20px;
+    white-space: nowrap;
+    color: var(--text-primary);
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .overlap-4 {
+    position: absolute;
+    width: 280px;
+    height: 97px;
+    top: 179px;
+    left: 560px;
+    background-color: var(--pure-white);
+    border-radius: 5px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .div-wrapper {
+    position: absolute;
+    width: 79px;
+    height: 75px;
+    top: 11px;
+    left: 13px;
+    background-color: var(--selected-bg-color);
+    border-radius: 5px;
+  }
+  
+  .tradepoints-table .market-icon {
+    position: relative;
+    width: 38px;
+    height: 45px;
+    top: 15px;
+    left: 20px;
+  }
+  
+  .tradepoints-table .group-3 {
+    position: absolute;
+    width: 38px;
+    height: 40px;
+    top: 3px;
+    left: 0;
+  }
+  
+  .tradepoints-table .text-wrapper-11 {
+    position: absolute;
+    top: 24px;
+    left: 108px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-12 {
+    position: absolute;
+    top: 48px;
+    left: 109px;
+    font-family: "Inter-SemiBold", Helvetica;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 20px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .overlap-5 {
+    position: absolute;
+    width: 280px;
+    height: 97px;
+    top: 179px;
+    left: 877px;
+    background-color: var(--pure-white);
+    border-radius: 5px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .img-wrapper {
+    position: absolute;
+    width: 79px;
+    height: 75px;
+    top: 11px;
+    left: 15px;
+    background-color: var(--variable-collection-bg-for-primary);
+    border-radius: 5px;
+  }
+  
+  .tradepoints-table .frame-17 {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    top: 18px;
+    left: 20px;
+  }
+  
+  .tradepoints-table .text-wrapper-13 {
+    position: absolute;
+    top: 24px;
+    left: 117px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-14 {
+    position: absolute;
+    top: 48px;
+    left: 118px;
+    font-family: "Inter-SemiBold", Helvetica;
+    font-weight: 600;
+    font-size: 20px;
+    white-space: nowrap;
+    color: var(--text-primary);
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .overlap-6 {
+    position: absolute;
+    width: 280px;
+    height: 97px;
+    top: 179px;
+    left: 1195px;
+    background-color: var(--pure-white);
+    border-radius: 5px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .miller {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    top: 18px;
+    left: 20px;
+    background-image: url(./img/layer-1.png);
+    background-size: 100% 100%;
+  }
+  
+  .tradepoints-table .group-4 {
+    position: absolute;
+    width: 1237px;
+    height: 626px;
+    top: 296px;
+    left: 240px;
+  }
+  
+  .tradepoints-table .overlap-7 {
+    position: relative;
+    width: 1235px;
+    height: 626px;
+    background-color: var(--pure-white);
+    border-radius: 8px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .frame-18 {
+    display: inline-flex;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 6px 10px;
+    position: absolute;
+    top: 16px;
+    left: 336px;
+    border-radius: 5px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .text-wrapper-15 {
+    position: relative;
+    width: fit-content;
+    font-family: "Inter-Medium", Helvetica;
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--text-primary);
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .frame-19 {
+    display: inline-flex;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 6px 10px;
+    position: absolute;
+    top: 16px;
+    left: 222px;
+    border-radius: 5px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .frame-20 {
+    display: inline-flex;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 6px 10px;
+    position: absolute;
+    top: 16px;
+    left: 451px;
+    border-radius: 5px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .frame-21 {
+    position: relative;
+    width: 24px;
+  }
+  
+  .tradepoints-table .overlap-8 {
+    position: absolute;
+    width: 1191px;
+    height: 462px;
+    top: 72px;
+    left: 25px;
+  }
+  
+  .tradepoints-table .overlap-9 {
+    width: 1191px;
+    height: 459px;
+    top: 0;
+    position: absolute;
+    left: 0;
+  }
+  
+  .tradepoints-table .rectangle-5 {
+    position: absolute;
+    width: 1190px;
+    height: 45px;
+    top: 0;
+    left: 1px;
+    background-color: var(--light-bg-color);
+  }
+  
+  .tradepoints-table .line-4 {
+    width: 1191px;
+    height: 1px;
+    top: 98px;
+    left: 0;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .line-5 {
+    width: 1191px;
+    height: 1px;
+    top: 152px;
+    left: 0;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .line-6 {
+    width: 1191px;
+    height: 1px;
+    top: 206px;
+    left: 0;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .line-7 {
+    width: 1191px;
+    height: 1px;
+    top: 260px;
+    left: 0;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .line-8 {
+    width: 1191px;
+    height: 1px;
+    top: 314px;
+    left: 0;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .line-9 {
+    width: 1191px;
+    height: 1px;
+    top: 368px;
+    left: 0;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .line-10 {
+    width: 1191px;
+    height: 1px;
+    top: 422px;
+    left: 0;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .frame-22 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 11px;
+    left: 10px;
+  }
+  
+  .tradepoints-table .text-wrapper-16 {
+    position: absolute;
+    top: 14px;
+    left: 1072px;
+    font-family: "Inter-SemiBold", Helvetica;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .group-5 {
+    position: absolute;
+    width: 141px;
+    height: 445px;
+    top: 14px;
+    left: 105px;
+  }
+  
+  .tradepoints-table .text-wrapper-17 {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-family: "Inter-SemiBold", Helvetica;
+    font-weight: 600;
+    font-size: 15px;
+    white-space: nowrap;
+    color: var(--text-primary);
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .frame-23 {
+    display: flex;
+    flex-direction: column;
+    width: 125px;
+    height: 38px;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 10px;
+    padding: 3px 13px 3px 14px;
+    position: absolute;
+    top: 39px;
+    left: 0;
+    background-color: var(--whitecolor);
+    border-radius: 5px;
+    overflow: hidden;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .frame-24 {
+    display: inline-flex;
+    height: 22px;
+    align-items: center;
+    gap: 10px;
+    position: relative;
+  }
+  
+  .tradepoints-table .frame-25 {
+    display: inline-flex;
+    height: 21px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    position: relative;
+    flex: 0 0 auto;
+  }
+  
+  .tradepoints-table .clip-path-group-wrapper {
+    position: relative;
+    width: 24.58px;
+    height: 24px;
+    margin-top: -1.50px;
+    margin-bottom: -1.50px;
+    overflow: hidden;
+    transform: rotate(-4.98deg);
+  }
+  
+  .tradepoints-table .clip-path-group {
+    position: absolute;
+    width: 27px;
+    height: 26px;
+    top: -1px;
+    left: -1px;
+    transform: rotate(4.98deg);
+  }
+  
+  .tradepoints-table .frame-26 {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 16px;
+    position: relative;
+    flex: 0 0 auto;
+  }
+  
+  .tradepoints-table .frame-27 {
+    display: inline-flex;
+    align-items: center;
+    gap: 16px;
+    position: relative;
+    flex: 0 0 auto;
+  }
+  
+  .tradepoints-table .text-wrapper-18 {
+    position: relative;
+    width: fit-content;
+    margin-top: -1.00px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--pure-white);
+    font-size: 14px;
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .text-wrapper-19 {
+    position: absolute;
+    top: 103px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-20 {
+    position: absolute;
+    top: 319px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-21 {
+    position: absolute;
+    top: 157px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-22 {
+    position: absolute;
+    top: 373px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-23 {
+    position: absolute;
+    top: 211px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-24 {
+    position: absolute;
+    top: 427px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-25 {
+    position: absolute;
+    top: 265px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    font-size: 15px;
+    white-space: nowrap;
+    color: var(--text-primary);
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .group-6 {
+    position: absolute;
+    width: 154px;
+    height: 445px;
+    top: 14px;
+    left: 337px;
+  }
+  
+  .tradepoints-table .frame-28 {
+    display: flex;
+    flex-direction: column;
+    width: 138px;
+    height: 38px;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 10px;
+    padding: 3px 13px 3px 14px;
+    position: absolute;
+    top: 39px;
+    left: 0;
+    background-color: var(--whitecolor);
+    border-radius: 5px;
+    overflow: hidden;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .group-7 {
+    position: absolute;
+    width: 154px;
+    height: 445px;
+    top: 14px;
+    left: 582px;
+  }
+  
+  .tradepoints-table .text-wrapper-26 {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-family: "Inter-Medium", Helvetica;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .group-8 {
+    position: absolute;
+    width: 154px;
+    height: 445px;
+    top: 14px;
+    left: 827px;
+  }
+  
+  .tradepoints-table .frame-29 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 114px;
+    left: 10px;
+  }
+  
+  .tradepoints-table .group-9 {
+    position: absolute;
+    width: 64px;
+    height: 24px;
+    top: 114px;
+    left: 1075px;
+  }
+  
+  .tradepoints-table .frame-30 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 0;
+    left: 40px;
+  }
+  
+  .tradepoints-table .edit {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 0;
+    left: 0;
+  }
+  
+  .tradepoints-table .frame-31 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 330px;
+    left: 10px;
+  }
+  
+  .tradepoints-table .group-10 {
+    top: 330px;
+    position: absolute;
+    width: 64px;
+    height: 24px;
+    left: 1075px;
+  }
+  
+  .tradepoints-table .frame-32 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 168px;
+    left: 10px;
+  }
+  
+  .tradepoints-table .group-11 {
+    top: 168px;
+    position: absolute;
+    width: 64px;
+    height: 24px;
+    left: 1075px;
+  }
+  
+  .tradepoints-table .frame-33 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 384px;
+    left: 10px;
+  }
+  
+  .tradepoints-table .group-12 {
+    top: 384px;
+    position: absolute;
+    width: 64px;
+    height: 24px;
+    left: 1075px;
+  }
+  
+  .tradepoints-table .frame-34 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 222px;
+    left: 10px;
+  }
+  
+  .tradepoints-table .group-13 {
+    top: 222px;
+    position: absolute;
+    width: 64px;
+    height: 24px;
+    left: 1075px;
+  }
+  
+  .tradepoints-table .frame-35 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 438px;
+    left: 10px;
+  }
+  
+  .tradepoints-table .group-14 {
+    top: 438px;
+    position: absolute;
+    width: 64px;
+    height: 24px;
+    left: 1075px;
+  }
+  
+  .tradepoints-table .frame-36 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 276px;
+    left: 10px;
+  }
+  
+  .tradepoints-table .group-15 {
+    top: 276px;
+    position: absolute;
+    width: 64px;
+    height: 24px;
+    left: 1075px;
+  }
+  
+  .tradepoints-table .line-11 {
+    width: 1191px;
+    height: 1px;
+    top: 547px;
+    left: 24px;
+    position: absolute;
+    object-fit: cover;
+  }
+  
+  .tradepoints-table .group-16 {
+    position: absolute;
+    width: 1151px;
+    height: 40px;
+    top: 563px;
+    left: 24px;
+  }
+  
+  .tradepoints-table .group-17 {
+    position: absolute;
+    width: 613px;
+    height: 27px;
+    top: 6px;
+    left: 540px;
+  }
+  
+  .tradepoints-table .text-wrapper-27 {
+    position: absolute;
+    top: 4px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .group-18 {
+    position: absolute;
+    width: 389px;
+    height: 27px;
+    top: 0;
+    left: 222px;
+  }
+  
+  .tradepoints-table .frame-37 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 1px;
+    left: 0;
+  }
+  
+  .tradepoints-table .frame-38 {
+    display: flex;
+    flex-direction: column;
+    width: 276px;
+    align-items: flex-start;
+    gap: 10px;
+    position: absolute;
+    top: 0;
+    left: 57px;
+  }
+  
+  .tradepoints-table .frame-39 {
+    display: flex;
+    align-items: center;
+    gap: 31px;
+    position: relative;
+    align-self: stretch;
+    width: 100%;
+    flex: 0 0 auto;
+  }
+  
+  .tradepoints-table .group-19 {
+    position: relative;
+    width: 29px;
+    height: 27px;
+  }
+  
+  .tradepoints-table .overlap-group-3 {
+    position: relative;
+    width: 27px;
+    height: 27px;
+    background-color: var(--light-green);
+    border-radius: 5px;
+  }
+  
+  .tradepoints-table .text-wrapper-28 {
+    position: absolute;
+    top: 5px;
+    left: 10px;
+    font-family: "Inter-Medium", Helvetica;
+    font-weight: 500;
+    font-size: 15px;
+    white-space: nowrap;
+    color: var(--text-primary);
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  
+  .tradepoints-table .text-wrapper-29 {
+    position: relative;
+    width: fit-content;
+    font-family: "Inter-Medium", Helvetica;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .frame-40 {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 2px;
+    left: 365px;
+  }
+  
+  .tradepoints-table .group-20 {
+    position: absolute;
+    width: 179px;
+    height: 40px;
+    top: 0;
+    left: 0;
+  }
+  
+  .tradepoints-table .text-wrapper-30 {
+    position: absolute;
+    top: 11px;
+    left: 0;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .text-wrapper-31 {
+    position: absolute;
+    top: 11px;
+    left: 126px;
+    font-family: "Inter-Regular", Helvetica;
+    font-weight: 400;
+    color: var(--text-primary);
+    font-size: 15px;
+    letter-spacing: 0;
+    line-height: normal;
+    white-space: nowrap;
+  }
+  
+  .tradepoints-table .frame-41 {
+    display: inline-flex;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 6px 10px;
+    position: absolute;
+    top: 0;
+    left: 48px;
+    border-radius: 5px;
+    border: 1px solid;
+    border-color: var(--input-fields-stroke);
+  }
+  
+  .tradepoints-table .button-hover {
+    display: flex;
+    width: 119px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 6px 10px;
+    position: absolute;
+    top: 16px;
+    left: 25px;
+    background-color: var(--primary-brownish);
+    border-radius: 5px;
+  }
+  
+  .tradepoints-table .text-wrapper-32 {
+    position: relative;
+    width: fit-content;
+    font-family: "Inter-Medium", Helvetica;
+    font-weight: 500;
+    color: var(--pure-white);
+    font-size: 14px;
+    letter-spacing: 0;
+    line-height: normal;
+  }
+  

@@ -1,0 +1,28 @@
+:root {
+    --primary-green: rgba(3, 88, 44, 1);
+    --primary-brownish: rgba(180, 80, 50, 1);
+    --light-green: rgba(209, 218, 118, 1);
+    --text-primary: rgba(51, 51, 51, 1);
+    --text-secondary: rgba(120, 120, 120, 1);
+    --light-bg-color: rgba(245, 245, 245, 1);
+    --border-color: rgba(224, 224, 224, 1);
+    --disabled-btn-bg: rgba(211, 211, 211, 1);
+    --input-fields-stroke: rgba(211, 211, 211, 1);
+    --pure-white: rgba(255, 255, 255, 1);
+    --sec-text-color: rgba(170, 170, 170, 1);
+    --selected-bg-color: rgba(243, 246, 208, 1);
+    --drafts: rgba(242, 182, 9, 1);
+    --error-red: rgba(237, 27, 36, 1);
+    --pending-color: rgba(242, 182, 9, 1);
+    --completed-color: rgba(33, 185, 111, 1);
+    --drafts-color: rgba(255, 246, 220, 1);
+    --placeholderdisbled-text: rgba(169, 169, 169, 1);
+    --whitecolor: rgba(255, 255, 255, 1);
+    --my-card-shadow: 0px 1px 4px 0px rgba(0, 0, 0, 0.15);
+    --active-input-fields: 0px 4px 4px 9px rgba(3, 88, 44, 0.1);
+    --overlay-shadow: 0px 1px 4px 1px rgba(0, 0, 0, 0.25);
+    --variable-collection-on-press-color: rgba(139, 51, 24, 1);
+    --variable-collection-bg-for-primary: rgba(255, 223, 213, 1);
+    --variable-collection-published: rgba(76, 111, 255, 1);
+  }
+  
