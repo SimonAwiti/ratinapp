@@ -1,0 +1,140 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f8f8f8;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+.container {
+    background: white;
+    padding: 60px;
+    border-radius: 8px;
+    width: 800px;
+    height: 600px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    display: flex;
+    position: relative; /* Required for absolute positioning of the close button */
+}
+.close-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px; /* Moved to the top right */
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #a45c40;
+}
+.steps {
+    padding-right: 40px;
+    position: relative; /* Required for the vertical line */
+}
+.steps::before {
+    content: '';
+    position: absolute;
+    left: 22.5px; /* Center the line with the step circles (half of 45px circle width) */
+    top: 45px; /* Start from the bottom of the first step circle */
+    height: calc(250px - 45px + 45px); /* Height to connect Step 1 and Step 2 */
+    width: 1px;
+    background-color: #a45c40; /* Line color */
+}
+.step {
+    display: flex;
+    align-items: center;
+    margin-bottom: 250px; /* Increased margin to 250px */
+    position: relative; /* Ensure steps are above the line */
+}
+.step:last-child {
+    margin-bottom: 0; /* Remove margin for the last step */
+}
+.step-circle {
+    width: 45px;
+    height: 45px;
+    border-radius: 70%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-right: 20px;
+    font-size: 20px;
+    z-index: 1; /* Ensure circles are above the line */
+    background-color: #d3d3d3; /* Default inactive color */
+    color: white;
+    position: relative;
+}
+.step-circle::before {
+    content: '✓'; /* Checkmark for active step */
+    display: none; /* Hidden by default */
+}
+.step-circle.active::before {
+    display: block; /* Show checkmark for active step */
+}
+.step-circle.inactive::before {
+    content: ''; /* No checkmark for inactive step */
+}
+.step-circle.active {
+    background-color: #a45c40; /* Active step color */
+}
+.form-container {
+    flex-grow: 1;
+}
+label {
+    font-weight: bold;
+    display: block;
+    margin-top: 10px;
+}
+input, select, .file-input {
+    width: 100%; /* Ensure full width */
+    padding: 12px; /* Consistent padding */
+    margin-top: 10px; /* Consistent margin */
+    border: 1px solid #ccc; /* Consistent border */
+    border-radius: 5px; /* Consistent border radius */
+    font-size: 16px; /* Consistent font size */
+    box-sizing: border-box; /* Include padding and border in width */
+}
+.file-input {
+    background-color: white; /* Match the background color */
+    cursor: pointer; /* Indicate it's clickable */
+}
+.packaging {
+    display: flex;
+    align-items: center;
+    margin-top: 30px;
+}
+.packaging input {
+    flex-grow: 1;
+}
+.add-btn, .remove-btn {
+    margin-left: 10px;
+    cursor: pointer;
+    padding: 5px;
+    border-radius: 50%;
+    font-size: 16px;
+    border: none;
+    width: 30px;
+    height: 30px;
+    text-align: center;
+}
+.add-btn {
+    background-color: #d9f5d9;
+    color: green;
+}
+.remove-btn {
+    background-color: #f8d7da;
+    color: red;
+}
+.button-container {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+}
+.next-btn {
+    background-color: #a45c40;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    cursor: pointer;
+    border-radius: 5px;
+    width: 48%; /* Adjusted width to fit both buttons */
+}
