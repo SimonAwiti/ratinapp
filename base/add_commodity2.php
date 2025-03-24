@@ -14,8 +14,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $category = $_SESSION['category'];
     $commodity_name = $_SESSION['commodity_name'];
     $variety = $_SESSION['variety'];
-    $packaging = $_SESSION['packaging'];
-    $unit = $_SESSION['unit'];
+    $packaging = $_SESSION['packaging']; // Array of packaging sizes
+    $unit = $_SESSION['unit']; // Array of corresponding units
 
     $hs_code = $_POST['hs_code'];
     $commodity_alias = $_POST['commodity_alias'];
@@ -32,35 +32,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Insert data into the database using mysqli
-    $sql = "INSERT INTO commodities (commodity_name, category, variety, size, unit, hs_code, commodity_alias, country, image_url) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-    $stmt = $con->prepare($sql);
-    if ($stmt) {
-        $stmt->bind_param(
-            'sssssssss',
-            $commodity_name,
-            $category,
-            $variety,
-            $packaging,
-            $unit,
-            $hs_code,
-            $commodity_alias,
-            $country,
-            $image_url
-        );
-        $stmt->execute();
+    // Insert data into the database using a transaction
+    $con->begin_transaction();
+    try {
+        $sql = "INSERT INTO commodities (commodity_name, category, variety, size, unit, hs_code, commodity_alias, country, image_url) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $stmt = $con->prepare($sql);
 
-        // Clear session data
-        session_unset();
-        session_destroy();
-
-        // Redirect to a success page or commodities list
-        header('Location: commodities.php');
-        exit;
-    } else {
-        die("Database error: " . $con->error);
+        // Insert each packaging size with its respective unit
+        for ($i = 0; $i < count($packaging); $i++) {
+            $size = $packaging[$i];
+            $measure_unit = $unit[$i];
+            
+            $stmt->bind_param('sssssssss', 
+                $commodity_name, 
+                $category, 
+                $variety, 
+                $size, 
+                $measure_unit, 
+                $hs_code, 
+                $commodity_alias, 
+                $country, 
+                $image_url
+            );
+            $stmt->execute();
+        }
+        
+        $con->commit();
+    } catch (Exception $e) {
+        $con->rollback();
+        die("Database error: " . $e->getMessage());
     }
+
+    // Clear session data
+    session_unset();
+    session_destroy();
+
+    // Redirect to a success page or commodities list
+    header('Location: dashboard.php');
+    exit;
 }
 ?>
 
@@ -75,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
     <div class="container">
         <!-- Close button on the top right -->
-        <button class="close-btn" onclick="window.location.href='dashboard.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='dashboard.php'">&times;</button>
 
         <div class="steps">
             <div class="step">
