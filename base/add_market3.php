@@ -2,13 +2,6 @@
 session_start();
 include '../admin/includes/config.php'; // Include database configuration
 
-// Debugging session
-echo "<pre>";
-print_r($_SESSION);
-echo "</pre>";
-exit;
-?>
-
 // Redirect if session data is missing
 if (!isset($_SESSION['category'])) {
     header('Location: add_market.php');
@@ -72,6 +65,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Location: dashboard.php');
     exit;
 }
+
+// Fetch commodities from the database
+$commodities_query = "SELECT id, commodity_name FROM commodities";
+$commodities_result = $con->query($commodities_query);
+?>
 ?>
 
 
@@ -289,6 +287,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-top: 20px;
             gap: 60px; /* Adds space between the buttons */
         }
+        /* Additional styling for the dropdown */
+#primary_commodity {
+    font-size: 16px;
+    color: black; /* Set font color to black */
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+    background-color: white;
+}
+
+/* Ensures the options inside the dropdown are visible */
+#primary_commodity option {
+    color: black;
+}
+
 
     </style>
 </head>
@@ -321,11 +334,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
                 <label for="primary_commodity">Assign primary commodities</label>         
                 <select id="primary_commodity" name="primary_commodity" required>
-                        <option value="">Select commodity</option>
-                        <option value="Rwanda">Rwanda</option>
-                        <option value="Uganda">Uganda</option>
-                        <option value="Tanzania">Tanzania</option>
-                        <option value="Kenya">Kenya</option>
+                    <option value="">Select commodity</option>
+                    <?php
+                    // Populate dropdown with commodities from the database
+                    if ($commodities_result->num_rows > 0) {
+                        while ($row = $commodities_result->fetch_assoc()) {
+                            echo "<option value='" . $row['id'] . "'>" . $row['commodity_name'] . "</option>";
+                        }
+                    } else {
+                        echo "<option value=''>No commodities available</option>";
+                    }
+                    ?>
                 </select>
                 
                 <label for="additional_datasource">Additional data sources *</label>
