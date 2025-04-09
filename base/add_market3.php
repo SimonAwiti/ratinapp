@@ -70,7 +70,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $commodities_query = "SELECT id, commodity_name FROM commodities";
 $commodities_result = $con->query($commodities_query);
 ?>
-?>
 
 
 <!DOCTYPE html>

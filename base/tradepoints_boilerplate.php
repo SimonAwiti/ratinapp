@@ -1,35 +1,34 @@
 <?php
-// Include database configuration
 include '../admin/includes/config.php';
 
-// Fetch all data
-$query = "SELECT id, hs_code, category, commodity_name, variety, image_url FROM commodities";
+$query = "SELECT id, market_name, category, country, county_district FROM markets";
 $result = $con->query($query);
-$commodities = $result->fetch_all(MYSQLI_ASSOC);
+$markets = $result->fetch_all(MYSQLI_ASSOC);
 
-// Pagination setup
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
-$totalItems = count($commodities);
+$totalItems = count($markets);
 $totalPages = ceil($totalItems / $itemsPerPage);
 $page = isset($_GET['page']) ? max(1, min($totalPages, intval($_GET['page']))) : 1;
 $startIndex = ($page - 1) * $itemsPerPage;
-
-// Slice data for current page
-$commodities = array_slice($commodities, $startIndex, $itemsPerPage);
+$markets = array_slice($markets, $startIndex, $itemsPerPage);
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <title>Markets Table</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Commodities Table</title>
 
-    <!-- Bootstrap 5.3 CSS -->
+    <!-- Bootstrap CSS & custom styles -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="assets/style.css" />
     <link rel="stylesheet" href="assets/globals.css" />
     <link rel="stylesheet" href="assets/styleguide.css" />
     <style>
+        /* Same style as your commodities_boilerplate */
+        <?php include 'markets_style.css'; // Optionally extract to keep DRY ?>
+    </style>
+ <style>
         body {
             padding: 20px;
             background-color: #f8f9fa;
@@ -151,104 +150,84 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
 </head>
 <body>
 <div class="stats-section">
-    <div class="text-wrapper-8"><h3>Commodities Management</h3></div>
-    <p class="p">Manage everything related to Commodity</p>
+    <div class="text-wrapper-8"><h3>Markets Management</h3></div>
+    <p class="p">Manage everything related to Markets</p>
 
     <div class="stats-container">
         <div class="overlap-6">
             <div class="img-wrapper"><img class="frame-38" src="img/frame-3.svg" /></div>
-            <div class="text-wrapper-34">Commodities</div>
-            <div class="text-wrapper-35">190</div>
+            <div class="text-wrapper-34">Markets</div>
+            <div class="text-wrapper-35"><?= $totalItems ?></div>
         </div>
         <div class="overlap-7">
             <div class="overlap-8"><img class="frame-39" src="img/frame-26.svg" /></div>
-            <div class="text-wrapper-36">Cereals</div>
-            <div class="text-wrapper-37">100</div>
+            <div class="text-wrapper-36">Urban</div>
+            <div class="text-wrapper-37">70</div>
         </div>
         <div class="overlap-9">
             <div class="overlap-10"><img class="frame-40" src="img/frame-27.svg" /></div>
-            <div class="text-wrapper-38">Pulses</div>
-            <div class="text-wrapper-39">45</div>
-        </div>
-        <div class="overlap-9">
-            <div class="overlap-10"><img class="frame-40" src="img/frame-3.svg" /></div>
-            <div class="text-wrapper-38">Oil Seeds</div>
-            <div class="text-wrapper-39">100</div>
+            <div class="text-wrapper-38">Rural</div>
+            <div class="text-wrapper-39">50</div>
         </div>
     </div>
 </div>
 
 <div class="container">
     <div class="table-container">
-
-        <!-- Action Buttons -->
         <div class="btn-group">
-            <!-- Updated "Add New" Button -->
-            <a href="add_commodity.php" class="btn btn-add-new">
+            <a href="add_market.php" class="btn btn-add-new">
                 <img src="img/frame-10.svg" alt="Add New" style="width: 22px; height: 22px; margin-right: 5px;">
                 Add New
             </a>
 
-            <button class="btn btn-delete" onclick="deleteSelected()">
+            <button class="btn btn-delete" onclick="deleteSelected()"> 
                 <img src="img/frame-8.svg" alt="Delete" style="width: 20px; height: 20px; margin-right: 3px;">Delete
             </button>
 
-            <!-- Export Dropdown -->
             <div class="dropdown">
-                <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                <button class="btn btn-export dropdown-toggle" type="button" data-bs-toggle="dropdown">
                     <img src="img/frame-25.svg" alt="Export" style="width: 20px; height: 20px; margin-right: 3px;">
                     Export
                 </button>
-                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
+                <ul class="dropdown-menu">
                     <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">Export to Excel</a></li>
                     <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">Export to PDF</a></li>
                 </ul>
             </div>
         </div>
 
-        <!-- Table -->
         <table class="table table-striped table-hover">
             <thead>
                 <tr style="background-color: #d3d3d3 !important; color: black !important;">
                     <th><input type="checkbox" id="selectAll"></th>
-                    <th>HS Code</th>
-                    <th>Category</th>
-                    <th>Commodity</th>
-                    <th>Variety</th>
-                    <th>Image</th>
+                    <th>Name</th>
+                    <th>Tradepoint</th>
+                    <th>Admin 0</th>
+                    <th>Admin 1</th>
                     <th>Actions</th>
                 </tr>
-                <tr class="filter-row" style="background-color: white !important; color: black !important;">
+                <tr class="filter-row">
                     <th></th>
-                    <th><input type="text" class="filter-input" id="filterHsCode" placeholder="Filter HS Code"></th>
-                    <th><input type="text" class="filter-input" id="filterCategory" placeholder="Filter Category"></th>
-                    <th><input type="text" class="filter-input" id="filterCommodity" placeholder="Filter Commodity"></th>
-                    <th><input type="text" class="filter-input" id="filterVariety" placeholder="Filter Variety"></th>
+                    <th><input type="text" class="filter-input" id="filterName" placeholder="Filter Name"></th>
+                    <th><input type="text" class="filter-input" id="filterCategory" placeholder="Filter category"></th>
+                    <th><input type="text" class="filter-input" id="filterCountry" placeholder="Filter Admin 0"></th>
+                    <th><input type="text" class="filter-input" id="filterCounty" placeholder="Filter Admin 1"></th>
                     <th></th>
                     <th></th>
                 </tr>
             </thead>
-            <tbody id="commodityTable">
-                <?php foreach ($commodities as $commodity): ?>
+            <tbody id="marketTable">
+                <?php foreach ($markets as $market): ?>
                     <tr>
+                        <td><input type="checkbox" class="row-checkbox" value="<?= $market['id'] ?>"></td>
+                        <td><?= htmlspecialchars($market['market_name']) ?></td>
+                        <td><?= htmlspecialchars($market['category']) ?></td>
+                        <td><?= htmlspecialchars($market['country']) ?></td>
+                        <td><?= htmlspecialchars($market['county_district']) ?></td>
                         <td>
-                            <input type="checkbox" class="row-checkbox" value="<?php echo $commodity['id']; ?>">
-                        </td>
-                        <td><?php echo $commodity['hs_code']; ?></td>
-                        <td><?php echo $commodity['category']; ?></td>
-                        <td><?php echo $commodity['commodity_name']; ?></td>
-                        <td><?php echo $commodity['variety']; ?></td>
-                        <td>
-                            <?php if (!empty($commodity['image_url'])): ?>
-                                <a href="<?php echo $commodity['image_url']; ?>" target="_blank">View</a>
-                            <?php else: ?>
-                                <span class="text-muted">No Image</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <a href="edit_commodity.php?id=<?= $commodity['id'] ?>">
+                            <a href="edit_market.php?id=<?= $market['id'] ?>">
                                 <button class="btn btn-sm btn-warning">
-                                    <img src="img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
+                                    <img src="img/edit.svg" alt="Edit" style="width: 20px; height: 20px;">
                                 </button>
                             </a>
                         </td>
@@ -259,9 +238,7 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
 
         <!-- Pagination -->
         <div class="d-flex justify-content-between align-items-center">
-            <div>
-                Displaying <?= $startIndex + 1 ?> to <?= min($startIndex + $itemsPerPage, $totalItems) ?> of <?= $totalItems ?> items
-            </div>
+            <div>Displaying <?= $startIndex + 1 ?> to <?= min($startIndex + $itemsPerPage, $totalItems) ?> of <?= $totalItems ?> items</div>
             <div>
                 <label for="itemsPerPage">Show:</label>
                 <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="changeItemsPerPage()">
@@ -272,24 +249,69 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
             </div>
             <nav>
                 <ul class="pagination mb-0">
-                    <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                        <a class="page-link" href="?page=<?= $page - 1 ?>&limit=<?= $itemsPerPage ?>">Prev</a>
-                    </li>
+                    <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>"><a class="page-link" href="?page=<?= $page - 1 ?>&limit=<?= $itemsPerPage ?>">Prev</a></li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <li class="page-item <?= $page == $i ? 'active' : '' ?>">
-                            <a class="page-link" href="?page=<?= $i ?>&limit=<?= $itemsPerPage ?>"><?= $i ?></a>
-                        </li>
+                        <li class="page-item <?= $page == $i ? 'active' : '' ?>"><a class="page-link" href="?page=<?= $i ?>&limit=<?= $itemsPerPage ?>"><?= $i ?></a></li>
                     <?php endfor; ?>
-                    <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
-                        <a class="page-link" href="?page=<?= $page + 1 ?>&limit=<?= $itemsPerPage ?>">Next</a>
-                    </li>
+                    <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>"><a class="page-link" href="?page=<?= $page + 1 ?>&limit=<?= $itemsPerPage ?>">Next</a></li>
                 </ul>
             </nav>
         </div>
     </div>
 </div>
-<!-- Bootstrap & JavaScript -->
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="assets/filter.js"></script>
+<script>
+        function filterTable() {
+            const name = document.getElementById('filterName').value.toUpperCase();
+            const category = document.getElementById('filterCategory').value.toUpperCase();
+            const country = document.getElementById('filterCountry').value.toUpperCase();
+            const county = document.getElementById('filterCounty').value.toUpperCase();
+
+            document.querySelectorAll('#marketTable tr').forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length > 0) {
+                    const match =
+                        cells[1].textContent.toUpperCase().includes(name) &&
+                        cells[2].textContent.toUpperCase().includes(category) &&
+                        cells[3].textContent.toUpperCase().includes(country) &&
+                        cells[4].textContent.toUpperCase().includes(county);
+                    row.style.display = match ? '' : 'none';
+                }
+            });
+        }
+
+        // Bind correct filters
+        document.getElementById('filterName').addEventListener('input', filterTable);
+        document.getElementById('filterCategory').addEventListener('input', filterTable);
+        document.getElementById('filterCountry').addEventListener('input', filterTable);
+        document.getElementById('filterCounty').addEventListener('input', filterTable);
+
+
+    function changeItemsPerPage() {
+        let limit = document.getElementById("itemsPerPage").value;
+        window.location.href = "?page=1&limit=" + limit;
+    }
+
+    document.getElementById("selectAll").addEventListener("change", function () {
+        document.querySelectorAll(".row-checkbox").forEach(cb => cb.checked = this.checked);
+    });
+
+    function deleteSelected() {
+        let ids = getSelectedIds();
+        if (!ids.length) return alert("Select items to delete.");
+        if (confirm("Delete selected items?")) console.log("Deleting:", ids);
+    }
+
+    function exportSelected(type) {
+        let ids = getSelectedIds();
+        if (!ids.length) return alert("Select items to export.");
+        console.log(`Exporting ${type}:`, ids);
+    }
+
+    function getSelectedIds() {
+        return [...document.querySelectorAll(".row-checkbox:checked")].map(cb => cb.value);
+    }
+</script>
 </body>
 </html>

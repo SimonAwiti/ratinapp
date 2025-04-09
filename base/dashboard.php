@@ -113,10 +113,10 @@
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="submenu" id="baseSubmenu">
-            <a href="#" class="nav-link" onclick="updateBreadcrumb('Base', 'Commodities')">
+            <a href="#" class="nav-link" onclick="loadContent('commodities_boilerplate.php', 'Base', 'Commodities')">
                 <i class="fa fa-circle" style="color:#8B4513;"></i> Commodities
             </a>
-            <a href="#" class="nav-link" onclick="updateBreadcrumb('Base', 'Trade Points')">
+            <a href="#" class="nav-link" onclick="loadContent('tradepoints_boilerplate.php', 'Base', 'Trade Points')">
                 <i class="fa fa-circle text-secondary"></i> Trade Points
             </a>
             <a href="#" class="nav-link" onclick="updateBreadcrumb('Base', 'Enumerators')">
@@ -169,8 +169,8 @@
         </div>
 
         <!-- Main Content -->
-        <div class="content-container">
-            <?php include 'commodities_boilerplate.php'; ?>
+        <div class="content-container" id="mainContent">
+            <!-- Dynamic content will be loaded here -->
         </div>
     </div>
 </div>
@@ -194,7 +194,8 @@
     function updateBreadcrumb(mainCategory, subCategory) {
         document.getElementById("mainCategory").textContent = mainCategory;
         document.getElementById("subCategory").textContent = subCategory;
-        document.getElementById("pageTitle").textContent = subCategory;
+        const pageTitle = document.getElementById("pageTitle");
+        if (pageTitle) pageTitle.textContent = subCategory;
     }
 
     document.addEventListener("DOMContentLoaded", function () {
@@ -207,8 +208,8 @@
                 
                 // Add active class to clicked link
                 this.classList.add("active");
-                
-                // Check if the clicked link belongs to a submenu
+
+                // If submenu, update breadcrumb
                 let parentMenu = this.closest(".submenu");
                 if (parentMenu) {
                     let mainCategory = parentMenu.previousElementSibling.textContent.trim();
@@ -217,9 +218,39 @@
                 }
             });
         });
-    });
-</script>
 
+        // Load default content
+        loadContent('commodities_boilerplate.php', 'Base', 'Commodities');
+    });
+
+    function loadContent(page, mainCategory, subCategory) {
+    fetch(page)
+        .then(response => {
+            if (!response.ok) throw new Error('Failed to load page');
+            return response.text();
+        })
+        .then(html => {
+            document.getElementById("mainContent").innerHTML = html;
+            updateBreadcrumb(mainCategory, subCategory);
+            
+            // Dynamically load the filter.js script after content is loaded
+            loadScript('assets/filter.js');
+        })
+        .catch(error => {
+            document.getElementById("mainContent").innerHTML = `<div class="alert alert-danger">Error loading content: ${error}</div>`;
+        });
+}
+
+// Function to dynamically load a JavaScript file
+function loadScript(src) {
+    const script = document.createElement('script');
+    script.src = src;
+    script.type = 'text/javascript';
+    script.onload = () => console.log(`${src} loaded successfully`);
+    script.onerror = (error) => console.error(`Error loading script ${src}:`, error);
+    document.head.appendChild(script); // Add the script to the <head>
+}
+</script>
 
 </body>
 </html>
