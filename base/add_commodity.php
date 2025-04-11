@@ -1,21 +1,26 @@
 <?php
-include '../admin/includes/config.php'; // Include database configuration
+include '../admin/includes/config.php'; // DB connection
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     session_start();
-    // Store form data in session for use in the next step
     $_SESSION['category'] = $_POST['category'];
     $_SESSION['commodity_name'] = $_POST['commodity_name'];
     $_SESSION['variety'] = $_POST['variety'];
-
-    // Store packaging and unit as arrays
     $_SESSION['packaging'] = $_POST['packaging'];
     $_SESSION['unit'] = $_POST['unit'];
-
-    // Redirect to the next step
     header('Location: add_commodity2.php');
     exit;
+}
+
+// Fetch categories from DB
+$categories = [];
+$sql = "SELECT id, name FROM commodity_categories ORDER BY name ASC";
+$result = mysqli_query($con, $sql);
+if ($result) {
+    while ($row = mysqli_fetch_assoc($result)) {
+        $categories[] = $row;
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -148,10 +153,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label for="category">Category *</label>
                 <select id="category" name="category" required>
                     <option value="">Select category</option>
-                    <option value="Oil seeds">Oil seeds</option>
-                    <option value="Pulses">Pulses</option>
-                    <option value="Cereals">Cereals</option>
+                    <?php foreach ($categories as $cat): ?>
+                        <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+                    <?php endforeach; ?>
                 </select>
+
                 <label for="commodity-name">Commodity name *</label>
                 <input type="text" id="commodity-name" name="commodity_name" required>
                 <label for="variety">Variety</label>

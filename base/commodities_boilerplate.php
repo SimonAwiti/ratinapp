@@ -3,7 +3,20 @@
 include '../admin/includes/config.php';
 
 // Fetch all data
-$query = "SELECT id, hs_code, category, commodity_name, variety, image_url FROM commodities";
+$query = $query = "
+    SELECT 
+        c.id, 
+        c.hs_code, 
+        cc.name AS category, 
+        c.commodity_name, 
+        c.variety, 
+        c.image_url
+    FROM 
+        commodities c
+    JOIN 
+        commodity_categories cc ON c.category_id = cc.id
+";
+
 $result = $con->query($query);
 $commodities = $result->fetch_all(MYSQLI_ASSOC);
 
