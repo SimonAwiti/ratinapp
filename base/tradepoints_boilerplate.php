@@ -15,7 +15,125 @@ $markets = array_slice($markets, $startIndex, $itemsPerPage);
 // Get current URL without query parameters
 $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
 ?>
+    <style>
+        body {
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .table-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        .filter-row {
+            background-color: white; /* White background for filter row */
+        }
+        .btn-group {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px; /* Space between buttons */
+        }
+        .btn-add-new {
+            background-color:  rgba(180, 80, 50, 1);;
+            color: white;
+            padding: 10px 20px; /* Larger button */
+            font-size: 16px;
+            border: none;
+        }
+        .btn-add-new:hover {
+            background-color: darkred; /* Darker maroon on hover */
+        }
+        .btn-delete, .btn-export {
+            background-color: white; /* White background for Delete and Export buttons */
+            color: black;
+            border: 1px solid #ddd; /* Light border */
+            padding: 8px 16px;
+        }
+        .btn-delete:hover, .btn-export:hover {
+            background-color: #f8f9fa; /* Light gray on hover */
+        }
+        .dropdown-menu {
+            min-width: 120px; /* Adjust dropdown width */
+        }
+        .dropdown-item {
+            cursor: pointer; /* Show pointer cursor on dropdown items */
+        }
+        .filter-input {
+            width: 100%;
+            border: none;
+            background: white;
+            padding: 5px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .filter-input:focus {
+            outline: none;
+            background: white;
+        }
+        .stats-container {
+            display: flex;
+            gap: 20px; /* Space between items */
+            justify-content: space-between; /* Distributes evenly */
+            align-items: center;
+            flex-wrap: nowrap; /* Prevent wrapping */
+            width: 87%; /* Reduce width to 60% */
+            max-width: 100%; /* Ensure responsiveness */
+            margin: 0 auto 20px auto; /* Centers the div horizontally */
+            margin-left: 0.7%;
+        }
 
+        .stats-container > div {
+            flex: 1; /* Make all items take equal width */
+            background: white; /* Match table styling */
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        .stats-section {
+            text-align: left;
+            margin-left: 11%; /* Adjust to align with stats-container */
+        }
+
+        /* Modal Styles */
+        .modal-content {
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        .modal-header {
+            background-color: #2c3e50;
+            color: white;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+        }
+        .modal-header .btn-close {
+            color: white;
+        }
+        .form-control {
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 8px;
+        }
+        .form-control:focus {
+            outline: none;
+            border-color: rgba(180, 80, 50, 1);
+            box-shadow: 0 0 5px rgba(180, 80, 50, 0.5);
+        }
+        .btn-primary {
+            background-color: rgba(180, 80, 50, 1);
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+        }
+        .btn-primary:hover {
+            background-color: darkred;
+        }
+    </style>
 <div class="stats-section">
     <div class="text-wrapper-8"><h3>Markets Management</h3></div>
     <p class="p">Manage everything related to Markets</p>
