@@ -1,56 +1,63 @@
 <?php
 session_start();
-include '../admin/includes/config.php'; // Include database configuration
+include '../admin/includes/config.php';
 
-// Redirect if session data is missing
-if (!isset($_SESSION['market_name'])) {
-    header('Location: add_market.php');
+if (!isset($_SESSION['border_name'])) {
+    header('Location: add_borderpoint.php');
     exit;
 }
 
-// Handle form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $_SESSION['longitude'] = $_POST['longitude'];
-    $_SESSION['latitude'] = $_POST['latitude'];
-    $_SESSION['radius'] = $_POST['radius'];
-    $_SESSION['currency'] = $_POST['currency'];
+    // Insert border point info first
+    $stmt = $con->prepare("INSERT INTO border_points (name, country, county, longitude, latitude, radius, tradepoint) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssddds", 
+        $_SESSION['border_name'], 
+        $_SESSION['border_country'], 
+        $_SESSION['border_county'], 
+        $_SESSION['longitude'], 
+        $_SESSION['latitude'], 
+        $_SESSION['radius'],
+        $_SESSION['tradepoint'] // This should already be set in Step 1
+    );
+    
+    if ($stmt->execute()) {
+        $border_point_id = $stmt->insert_id;
 
-    // Handle Image Upload (Using Commodity Image Handling Approach)
-    $image_url = '';
-    if (isset($_FILES['imageUpload']) && $_FILES['imageUpload']['error'] === UPLOAD_ERR_OK) {
-        $upload_dir = 'uploads/'; // Ensure this directory exists and is writable
+        // Handle image uploads
+        $upload_dir = 'uploads/';
         if (!is_dir($upload_dir)) {
             mkdir($upload_dir, 0777, true);
         }
 
-        $image_name = basename($_FILES['imageUpload']['name']);
-        $image_path = $upload_dir . $image_name;
+        foreach ($_FILES['borderImages']['tmp_name'] as $key => $tmp_name) {
+            if ($_FILES['borderImages']['error'][$key] === UPLOAD_ERR_OK) {
+                $image_name = basename($_FILES['borderImages']['name'][$key]);
+                $image_path = $upload_dir . time() . '_' . $image_name;
 
-        if (move_uploaded_file($_FILES['imageUpload']['tmp_name'], $image_path)) {
-            $image_url = $image_path;
+                if (move_uploaded_file($tmp_name, $image_path)) {
+                    $img_stmt = $con->prepare("INSERT INTO border_images (border_point_id, image_path) VALUES (?, ?)");
+                    $img_stmt->bind_param("is", $border_point_id, $image_path);
+                    $img_stmt->execute();
+                }
+            }
         }
+
+        // Clear session & redirect
+        session_unset();
+        echo "<script>alert('Border Point added successfully!'); window.location.href='addtradepoint.php';</script>";
+        exit;
+    } else {
+        echo "<script>alert('Failed to save border point!'); window.history.back();</script>";
     }
-
-    // Store image URL in session
-    $_SESSION['image_url'] = $image_url;
-
-    session_write_close(); // Save session before redirect
-    header("Location: add_market3.php");
-    exit;
 }
 ?>
-
-
-
-<!-- Your HTML form would go here -->
 
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Tradepoint</title>
+    <title>Add Border Point - Step 2</title>
     <link rel="stylesheet" href="assets/add_commodity.css" />
     <style>
         body {
@@ -79,7 +86,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            height: 90%;
+            height: 40%;
         }
         .selection {
             background: #f7f7d8;
@@ -121,7 +128,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     position: absolute;
     left: 22.5px; /* Center the line with the step circles (half of 45px circle width) */
     top: 45px; /* Start from the bottom of the first step circle */
-    height: calc(100% - 45px - 100px); /* Height to connect Step 1 and Step 2 */
+    height: calc(100% - 45px - 405px); /* Height to connect Step 1 and Step 2 */
     width: 1px;
     background-color: #a45c40; /* Line color */
 }
@@ -231,111 +238,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='dashboard.php'">×</button>
         <div class="steps">
-            <div class="step">
-                <div class="step-circle active"></div>
-                <span>Step 1</span>
-            </div>
-            <div class="step">
-                <div class="step-circle active"></div>
-                <span>Step 2</span>
-            </div>
-            <div class="step">
-                <div class="step-circle inactive"></div>
-                <span>Step 3</span>
-            </div>
+            <div class="step"><div class="step-circle active"></div><span>Step 1</span></div>
+            <div class="step"><div class="step-circle active"></div><span>Step 2</span></div>
         </div>
         <div class="form-container">
-            <h2>Add Tradepoint</h2>
-            <p>Provide the necessary details to add a new tradepoint</p>
-            <div class="selection">
-                <label><input type="radio" name="tradepoint" checked> Markets</label>
-                <label><input type="radio" name="tradepoint"> Border Points</label>
-                <label><input type="radio" name="tradepoint"> Millers</label>
-            </div>
-            <form method="POST" action="add_market2.php" enctype="multipart/form-data">
-                <!-- Longitude & Latitude in one row -->
-                <div class="location-container">
-                    <label for="longitude">Longitude *
-                        <input type="text" id="longitude" name="longitude" required>
-                    </label>
-                    <label for="latitude">Latitude *
-                        <input type="text" id="latitude" name="latitude" required>
-                    </label>
-                </div>
+            <h2>Add Border Point</h2>
+            <p>Upload one or more images of the border point</p>
+            <form method="POST" action="" enctype="multipart/form-data">
+                <label for="borderImages">Upload Images *</label>
+                <input type="file" id="borderImages" name="borderImages[]" multiple accept="image/*" required>
 
-                <label for="radius">Market radius *</label>
-                <input type="text" id="radius" name="radius" required>
-
-                <label for="currency">Currency *</label>
-                <select id="currency" name="currency" required>
-                    <option value="">Select currency</option>
-                    <option value="KES">KES</option>
-                    <option value="TSH">TSH</option>
-                </select>
-
-                <!-- Image Upload Section -->
-                    <label for="imageUpload">Upload Images *</label>
-                    <input type="file" id="imageUpload" name="imageUpload" accept="image/*">
-                
-                <!-- Progress Bar -->
-                <div class="progress-bar-container">
-                    <div class="progress-bar" id="progressBar"></div>
-                </div>
-
-                <!-- Buttons on the same line -->
                 <div class="button-container">
                     <button type="button" class="next-btn" onclick="window.location.href='addtradepoint.php'">&larr; Previous</button>
-                    <button type="submit" class="next-btn">Next &rarr;</button>
+                    <button type="submit" class="next-btn">done &rarr;</button>
                 </div>
             </form>
         </div>
     </div>
-
-    <script>
-        document.getElementById("imageUpload").addEventListener("change", function(event) {
-            const files = event.target.files;
-            const preview = document.getElementById("imagePreview");
-            const progressBar = document.getElementById("progressBar");
-            const progressContainer = document.querySelector(".progress-bar-container");
-
-            preview.innerHTML = ""; 
-            if (files.length === 0) return;
-
-            progressContainer.style.display = "block";
-            progressBar.style.width = "0%";
-
-            let uploaded = 0;
-            const total = files.length;
-            
-            Array.from(files).forEach((file, index) => {
-                const reader = new FileReader();
-                
-                reader.onload = function(event) {
-                    const imgDiv = document.createElement("div");
-                    imgDiv.classList.add("preview-image");
-                    imgDiv.innerHTML = `
-                        <img src="${event.target.result}" alt="Uploaded Image">
-                        <button class="remove-img" onclick="removeImage(this)">✖</button>
-                    `;
-                    preview.appendChild(imgDiv);
-                    
-                    uploaded++;
-                    progressBar.style.width = `${(uploaded / total) * 100}%`;
-
-                    if (uploaded === total) {
-                        setTimeout(() => { progressContainer.style.display = "none"; }, 500);
-                    }
-                };
-                
-                reader.readAsDataURL(file);
-            });
-        });
-
-        function removeImage(button) {
-            button.parentElement.remove();
-        }
-    </script>
 </body>
 </html>

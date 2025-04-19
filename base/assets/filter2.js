@@ -83,16 +83,21 @@ window.exportSelected = function (type) {
 };
 
 window.updateItemsPerPage = function (limit) {
-    const url = new URL(window.location.href, window.location.origin);
-    
-    // If it's being run from a fragment like sidebar.php, make sure we redirect the parent
-    if (url.pathname.includes('sidebar.php') || url.pathname.includes('tradepoints_boilerplate.php')) {
-        window.location.href = 'dashboard.php?page=1&limit=' + limit;
-        return;
-    }
-
-    const params = url.searchParams;
+    const params = new URLSearchParams(window.location.search);
     params.set('limit', limit);
-    params.set('page', 1); // Reset to first page
-    window.location.href = url.pathname + '?' + params.toString();
+    params.set('page', 1); // Reset to page 1 on limit change
+
+    fetch('components/tradepoints_boilerplate.php?' + params.toString())
+        .then(response => response.text())
+        .then(html => {
+            document.getElementById('main-content').innerHTML = html;
+
+            // Update the URL in the address bar (optional)
+            const newUrl = window.location.pathname + '?' + params.toString();
+            history.pushState(null, '', newUrl);
+        })
+        .catch(err => {
+            console.error("Failed to fetch tradepoints content:", err);
+        });
 };
+
