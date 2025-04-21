@@ -119,7 +119,7 @@
             <a href="#" class="nav-link" onclick="loadContent('tradepoints_boilerplate.php', 'Base', 'Trade Points')">
                 <i class="fa fa-circle text-secondary"></i> Trade Points
             </a>
-            <a href="#" class="nav-link" onclick="updateBreadcrumb('Base', 'Enumerators')">
+            <a href="#" class="nav-link" onclick="loadContent('enumerator_boilerplate.php', 'Base', 'Enumerators')">
                 <i class="fa fa-circle text-secondary"></i> Enumerators
             </a>
         </div>
@@ -220,27 +220,28 @@
     });
 
     function loadContent(page, mainCategory, subCategory) {
-    fetch(page)
-        .then(response => {
-            if (!response.ok) throw new Error('Failed to load page');
-            return response.text();
-        })
-        .then(html => {
-            document.getElementById("mainContent").innerHTML = html;
-            updateBreadcrumb(mainCategory, subCategory);
+        fetch(page)
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to load page');
+                return response.text();
+            })
+            .then(html => {
+                document.getElementById("mainContent").innerHTML = html;
+                updateBreadcrumb(mainCategory, subCategory);
 
-            // Load specific script based on the page
-            if (page.includes('commodities')) {
-                loadScript('assets/filter.js');
-            } else if (page.includes('tradepoints')) {
-                loadScript('assets/filter2.js'); // Make sure this path exists
-            }
-        })
-        .catch(error => {
-            document.getElementById("mainContent").innerHTML = `<div class="alert alert-danger">Error loading content: ${error}</div>`;
-        });
-}
-
+                // Load specific script based on the page
+                if (page.includes('commodities')) {
+                    loadScript('assets/filter.js');
+                } else if (page.includes('tradepoints')) {
+                    loadScript('assets/filter2.js');
+                } else if (page.includes('enumerators')) {
+                    loadScript('assets/filter3.js'); // Make sure to create this file if needed
+                }
+            })
+            .catch(error => {
+                document.getElementById("mainContent").innerHTML = `<div class="alert alert-danger">Error loading content: ${error}</div>`;
+            });
+    }
 
     // Function to dynamically load a JavaScript file
     function loadScript(src) {
