@@ -19,6 +19,16 @@ $query = "SELECT
             county AS admin1
           FROM border_points
           
+          UNION ALL
+          
+          SELECT 
+            id, 
+            miller_name AS name, 
+            'Miller' AS tradepoint_type,  -- Assuming 'miller_name' is the column that holds the miller's name
+            country AS admin0, 
+            county_district AS admin1   -- Assuming you have county_district in miller_details
+          FROM miller_details
+          
           ORDER BY name ASC";
 
 $result = $con->query($query);
@@ -32,7 +42,7 @@ $startIndex = ($page - 1) * $itemsPerPage;
 $paginatedTradepoints = array_slice($tradepoints, $startIndex, $itemsPerPage);
 
 // Count types
-$typeCounts = ['Markets' => 0, 'Border Points' => 0];
+$typeCounts = ['Markets' => 0, 'Border Points' => 0, 'Miller' => 0];  // Add Miller count here
 foreach ($tradepoints as $tp) {
     $typeCounts[$tp['tradepoint_type']] = ($typeCounts[$tp['tradepoint_type']] ?? 0) + 1;
 }
@@ -40,6 +50,7 @@ foreach ($tradepoints as $tp) {
 // Get current URL without query parameters
 $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
 ?>
+
 
 <style>
 /* Same styles as before... (you can keep yours untouched) */
