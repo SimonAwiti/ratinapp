@@ -20,36 +20,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $latitude = $_SESSION['latitude'];
     $radius = $_SESSION['radius'];
     $currency = $_SESSION['currency'];
-    $primary_commodity = $_POST['primary_commodity'] ?? null;
+    $primary_commodities = isset($_POST['primary_commodity']) ? $_POST['primary_commodity'] : [];
     $additional_datasource = $_POST['additional_datasource'] ?? '';
     $image_url = $_SESSION['image_url'] ?? '';
 
-    // Validate that primary_commodity is not null
-    if (empty($primary_commodity)) {
-        die("Error: Primary commodity is required.");
+    // Validate that at least one primary commodity is selected
+    if (empty($primary_commodities)) {
+        die("Error: At least one primary commodity is required.");
     }
+
+    // Convert array of commodities to a comma-separated string
+    $commodities_str = implode(',', $primary_commodities);
 
     // Insert data into the database using a transaction
     $con->begin_transaction();
     try {
-        $sql = "INSERT INTO markets (market_name, category, type, country, county_district, longitude, latitude, radius, currency, primary_commodity, additional_datasource, image_url) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql = "INSERT INTO markets (market_name, category, type, country, county_district, longitude, latitude, radius, currency, primary_commodity, additional_datasource, image_url, tradepoint) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
         $stmt = $con->prepare($sql);
 
-        $stmt->bind_param("ssssssssssss", 
-            $market_name, 
-            $category, 
-            $type, 
-            $country, 
-            $county_district, 
-            $longitude, 
-            $latitude, 
-            $radius, 
-            $currency, 
-            $primary_commodity, 
-            $additional_datasource,
-            $image_url
+        $tradepoint = "Market"; // or "Markets" depending on your naming
+
+        $stmt->bind_param("sssssssssssss", 
+        $market_name, 
+        $category, 
+        $type, 
+        $country, 
+        $county_district, 
+        $longitude, 
+        $latitude, 
+        $radius, 
+        $currency, 
+        $commodities_str, 
+        $additional_datasource,
+        $image_url,
+        $tradepoint
         );
+
         
         $stmt->execute();
         $con->commit();
@@ -70,7 +78,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $commodities_query = "SELECT id, commodity_name FROM commodities";
 $commodities_result = $con->query($commodities_query);
 ?>
-
 
 <!DOCTYPE html>
 <html lang="en">
@@ -114,15 +121,14 @@ $commodities_result = $con->query($commodities_query);
             border-radius: 20px;
             display: flex;
             justify-content: center;
-            align-items: center; /* Ensures proper vertical alignment */
-            gap: 120px; /* Adds space between elements */
-            flex-wrap: nowrap; /* Ensures all items remain in one row */
+            align-items: center;
+            gap: 120px;
+            flex-wrap: nowrap;
         }
-
         .selection label {
             display: flex;
             align-items: center;
-            gap: 8px; /* Adds space between the radio button and text */
+            gap: 8px;
         }
         .selection input[type="radio"] {
             margin: 0;
@@ -141,7 +147,6 @@ $commodities_result = $con->query($commodities_query);
         }
         .container2 {
             max-width: 800px;
-            
         }
         .input-box {
             display: block;
@@ -172,56 +177,55 @@ $commodities_result = $con->query($commodities_query);
             margin-left: 5px;
             font-size: 16px;
         }
-.steps {
-    padding-right: 40px;
-    position: relative; /* Required for the vertical line */
-}
-.steps::before {
-    content: '';
-    position: absolute;
-    left: 22.5px; /* Center the line with the step circles (half of 45px circle width) */
-    top: 45px; /* Start from the bottom of the first step circle */
-    height: calc(100% - 45px - 100px); /* Height to connect Step 1 and Step 2 */
-    width: 1px;
-    background-color: #a45c40; /* Line color */
-}
-.step {
-    display: flex;
-    align-items: center;
-    margin-bottom: 250px; /* Increased margin to 250px */
-    position: relative; /* Ensure steps are above the line */
-}
-.step:last-child {
-    margin-bottom: 0; /* Remove margin for the last step */
-}
-.step-circle {
-    width: 45px;
-    height: 45px;
-    border-radius: 70%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    margin-right: 20px;
-    font-size: 20px;
-    z-index: 1; /* Ensure circles are above the line */
-    background-color: #d3d3d3; /* Default inactive color */
-    color: white;
-    position: relative;
-}
-.step-circle::before {
-    content: '✓'; /* Checkmark for active step */
-    display: none; /* Hidden by default */
-}
-.step-circle.active::before {
-    display: block; /* Show checkmark for active step */
-}
-.step-circle.inactive::before {
-    content: ''; /* No checkmark for inactive step */
-}
-.step-circle.active {
-    background-color: #a45c40; /* Active step color */
-}
-        /* Image Upload Styles */
+        .steps {
+            padding-right: 40px;
+            position: relative;
+        }
+        .steps::before {
+            content: '';
+            position: absolute;
+            left: 22.5px;
+            top: 45px;
+            height: calc(100% - 45px - 100px);
+            width: 1px;
+            background-color: #a45c40;
+        }
+        .step {
+            display: flex;
+            align-items: center;
+            margin-bottom: 250px;
+            position: relative;
+        }
+        .step:last-child {
+            margin-bottom: 0;
+        }
+        .step-circle {
+            width: 45px;
+            height: 45px;
+            border-radius: 70%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-right: 20px;
+            font-size: 20px;
+            z-index: 1;
+            background-color: #d3d3d3;
+            color: white;
+            position: relative;
+        }
+        .step-circle::before {
+            content: '✓';
+            display: none;
+        }
+        .step-circle.active::before {
+            display: block;
+        }
+        .step-circle.inactive::before {
+            content: '';
+        }
+        .step-circle.active {
+            background-color: #a45c40;
+        }
         .progress-bar-container {
             width: 100%;
             height: 8px;
@@ -265,7 +269,6 @@ $commodities_result = $con->query($commodities_query);
             cursor: pointer;
             font-size: 12px;
         }
-        /* Longitude & Latitude on the same line */
         .location-container {
             display: flex;
             gap: 20px;
@@ -284,24 +287,33 @@ $commodities_result = $con->query($commodities_query);
             display: flex;
             justify-content: space-between;
             margin-top: 20px;
-            gap: 60px; /* Adds space between the buttons */
+            gap: 60px;
         }
-        /* Additional styling for the dropdown */
-#primary_commodity {
-    font-size: 16px;
-    color: black; /* Set font color to black */
-    padding: 10px;
-    border-radius: 5px;
-    border: 1px solid #ccc;
-    background-color: white;
-}
-
-/* Ensures the options inside the dropdown are visible */
-#primary_commodity option {
-    color: black;
-}
-
-
+        /* Commodity Selector Styles */
+        .commodity-selector {
+            position: relative;
+            margin-top: 30px;
+        }
+        .select-box {
+            display: flex;
+            flex-direction: column;
+        }
+        .select-box select {
+            font-size: 16px;
+            color: black;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            background-color: white;
+            width: 100%;
+        }
+        .select-box option {
+            color: black;
+        }
+        /* Hidden input for storing selected commodities */
+        #selected_commodities {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -330,25 +342,30 @@ $commodities_result = $con->query($commodities_query);
                 <label><input type="radio" name="tradepoint"> Millers</label>
             </div>
             <form method="POST" action="add_market3.php" enctype="multipart/form-data">
- 
-                <label for="primary_commodity">Assign primary commodities</label>         
-                <select id="primary_commodity" name="primary_commodity" required>
-                    <option value="">Select commodity</option>
-                    <?php
-                    // Populate dropdown with commodities from the database
-                    if ($commodities_result->num_rows > 0) {
-                        while ($row = $commodities_result->fetch_assoc()) {
-                            echo "<option value='" . $row['id'] . "'>" . $row['commodity_name'] . "</option>";
-                        }
-                    } else {
-                        echo "<option value=''>No commodities available</option>";
-                    }
-                    ?>
-                </select>
+                <div class="commodity-selector">
+                    <label for="commodity_select">Assign primary commodities</label>
+                    <div class="select-box">
+                        <select id="commodity_select" multiple>
+                            <option value="">Select commodities</option>
+                            <?php
+                            // Repopulate dropdown with commodities from the database
+                            if ($commodities_result->num_rows > 0) {
+                                while ($row = $commodities_result->fetch_assoc()) {
+                                    echo "<option value='" . $row['id'] . "' data-name='" . $row['commodity_name'] . "'>" . $row['commodity_name'] . "</option>";
+                                }
+                            } else {
+                                echo "<option value=''>No commodities available</option>";
+                            }
+                            ?>
+                        </select>
+                        <!-- Hidden input to store selected commodity IDs for form submission -->
+                        <input type="hidden" id="selected_commodities" name="primary_commodity[]" value="">
+                    </div>
+                    <div class="tags-container" id="commodity_tags"></div>
+                </div>
                 
                 <label for="additional_datasource">Additional data sources *</label>
                 <input type="text" id="additional_datasource" name="additional_datasource" required>
-
 
                 <!-- Buttons on the same line -->
                 <div class="button-container">
@@ -359,6 +376,54 @@ $commodities_result = $con->query($commodities_query);
         </div>
     </div>
 
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const commoditySelect = document.getElementById('commodity_select');
+            const commodityTags = document.getElementById('commodity_tags');
+            const selectedCommoditiesInput = document.getElementById('selected_commodities');
+            let selectedCommodities = [];
 
+            // Function to update the tags display
+            function updateTags() {
+                commodityTags.innerHTML = '';
+                selectedCommoditiesInput.value = selectedCommodities.join(',');
+                
+                selectedCommodities.forEach(id => {
+                    const option = commoditySelect.querySelector(`option[value="${id}"]`);
+                    if (option) {
+                        const tag = document.createElement('div');
+                        tag.className = 'tag';
+                        tag.innerHTML = `
+                            ${option.textContent}
+                            <button type="button" onclick="removeCommodity('${id}')">×</button>
+                        `;
+                        commodityTags.appendChild(tag);
+                    }
+                });
+            }
+
+            // Function to remove a commodity
+            window.removeCommodity = function(id) {
+                selectedCommodities = selectedCommodities.filter(item => item !== id);
+                updateTags();
+            };
+
+            // Handle selection from dropdown
+            commoditySelect.addEventListener('change', function() {
+                Array.from(this.selectedOptions).forEach(option => {
+                    if (option.value && !selectedCommodities.includes(option.value)) {
+                        selectedCommodities.push(option.value);
+                    }
+                });
+                
+                // Reset the select
+                this.selectedIndex = 0;
+                updateTags();
+            });
+
+            // Initialize with any previously selected commodities
+            updateTags();
+        });
+    </script>
 </body>
 </html>

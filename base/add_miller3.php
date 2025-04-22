@@ -1,71 +1,43 @@
 <?php
 session_start();
-include '../admin/includes/config.php'; // DB connection
+include '../admin/includes/config.php'; // DB config
 
-if (!isset($_SESSION['email'])) {
-    header("Location: add_enumerator.php");
+// Redirect if required session values are not set
+if (!isset($_SESSION['miller_name'], $_SESSION['country'], $_SESSION['county_district'], $_SESSION['currency'])) {
+    header("Location: addtradepoint.php");
     exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = $_SESSION['name'];
-    $email = $_SESSION['email'];
-    $phone = $_SESSION['phone'];
-    $gender = $_SESSION['gender'];
+// Handle form submission
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['submit_millers'])) {
+    $selected_millers = $_POST['selected_millers'] ?? [];
+
+    $miller_name = $_SESSION['miller_name'];
     $country = $_SESSION['country'];
     $county_district = $_SESSION['county_district'];
-    $username = $_SESSION['username'];
-    $password = $_SESSION['password'];
+    $currency = $_SESSION['currency'];
 
-    $tradepoints = $_POST['tradepoints'];
+    if (!empty($selected_millers)) {
+        // Convert array of millers into a JSON string
+        $miller_array_json = json_encode($selected_millers);
 
-    $stmt = $con->prepare("INSERT INTO enumerators (name, email, phone, gender, country, county_district, username, password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("ssssssss", $name, $email, $phone, $gender, $country, $county_district, $username, $password);
-    $stmt->execute();
-    $enumerator_id = $stmt->insert_id;
+        // Prepare a single insert statement to store millers as an array
+        $stmt = $con->prepare("INSERT INTO miller_details (miller_name, miller, country, county_district, currency) VALUES (?, ?, ?, ?, ?)");
 
-    $tp_stmt = $con->prepare("INSERT INTO enumerator_tradepoints (enumerator_id, tradepoint_id) VALUES (?, ?)");
-    foreach ($tradepoints as $tp_id) {
-        $tp_stmt->bind_param("ii", $enumerator_id, $tp_id);
-        $tp_stmt->execute();
+        if ($stmt) {
+            $stmt->bind_param("sssss", $miller_name, $miller_array_json, $country, $county_district, $currency);
+            $stmt->execute();
+            $stmt->close();
+
+            unset($_SESSION['miller_name'], $_SESSION['country'], $_SESSION['county_district'], $_SESSION['currency']);
+            echo "<script>alert('Miller details saved successfully!'); window.location.href='sidebar.php';</script>";
+            exit;
+        } else {
+            echo "<script>alert('Failed to prepare statement');</script>";
+        }
+    } else {
+        echo "<script>alert('Please select at least one miller');</script>";
     }
-
-    session_unset();
-    session_destroy();
-
-    echo "<script>alert('Enumerator and assigned tradepoints saved successfully!'); window.location.href='sidebar.php';</script>";
-    exit;
-}
-
-$tradepoints = [];
-$sql = "SELECT 
-            id, 
-            market_name AS name, 
-            'Markets' AS tradepoint_type, 
-            country AS admin0, 
-            county_district AS admin1
-        FROM markets
-        UNION ALL
-        SELECT 
-            id, 
-            name AS name, 
-            'Border Points' AS tradepoint_type, 
-            country AS admin0, 
-            county AS admin1
-        FROM border_points
-        UNION ALL
-        SELECT 
-            id, 
-            miller_name AS name, 
-            'Miller' AS tradepoint_type,  
-            country AS admin0, 
-            county_district AS admin1
-        FROM miller_details
-        ORDER BY name ASC";
-
-$result = $con->query($sql);
-while ($row = $result->fetch_assoc()) {
-    $tradepoints[] = $row;
 }
 ?>
 
@@ -236,8 +208,6 @@ while ($row = $result->fetch_assoc()) {
 </head>
 <body>
     <div class="container">
-
-
         <!-- Steps -->
         <div class="steps">
             <div class="step">

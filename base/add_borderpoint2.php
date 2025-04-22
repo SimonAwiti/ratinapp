@@ -8,50 +8,59 @@ if (!isset($_SESSION['border_name'])) {
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // Insert border point info first
-    $stmt = $con->prepare("INSERT INTO border_points (name, country, county, longitude, latitude, radius, tradepoint) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("sssddds", 
+    // Handle image uploads first
+    $upload_dir = 'uploads/';
+    if (!is_dir($upload_dir)) {
+        mkdir($upload_dir, 0777, true);
+    }
+
+    $image_paths = array();
+    
+    foreach ($_FILES['borderImages']['tmp_name'] as $key => $tmp_name) {
+        if ($_FILES['borderImages']['error'][$key] === UPLOAD_ERR_OK) {
+            $image_name = basename($_FILES['borderImages']['name'][$key]);
+            $image_path = $upload_dir . time() . '_' . uniqid() . '_' . $image_name;
+
+            if (move_uploaded_file($tmp_name, $image_path)) {
+                $image_paths[] = $image_path;
+            }
+        }
+    }
+
+    // Convert array of image paths to JSON string
+    $images_json = json_encode($image_paths);
+
+    // Insert border point info with images array
+    $stmt = $con->prepare("INSERT INTO border_points 
+                          (name, country, county, longitude, latitude, radius, tradepoint, images) 
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssddsss", 
         $_SESSION['border_name'], 
         $_SESSION['border_country'], 
         $_SESSION['border_county'], 
         $_SESSION['longitude'], 
         $_SESSION['latitude'], 
         $_SESSION['radius'],
-        $_SESSION['tradepoint'] // This should already be set in Step 1
+        $_SESSION['tradepoint'],
+        $images_json
     );
     
-    if ($stmt->execute()) {
-        $border_point_id = $stmt->insert_id;
-
-        // Handle image uploads
-        $upload_dir = 'uploads/';
-        if (!is_dir($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
-
-        foreach ($_FILES['borderImages']['tmp_name'] as $key => $tmp_name) {
-            if ($_FILES['borderImages']['error'][$key] === UPLOAD_ERR_OK) {
-                $image_name = basename($_FILES['borderImages']['name'][$key]);
-                $image_path = $upload_dir . time() . '_' . $image_name;
-
-                if (move_uploaded_file($tmp_name, $image_path)) {
-                    $img_stmt = $con->prepare("INSERT INTO border_images (border_point_id, image_path) VALUES (?, ?)");
-                    $img_stmt->bind_param("is", $border_point_id, $image_path);
-                    $img_stmt->execute();
+        if ($stmt->execute()) {
+                // Clear session & redirect
+                session_unset();
+                echo "<script>alert('Border Point added successfully!'); window.location.href='addtradepoint.php';</script>";
+                exit;
+            } else {
+                // Delete any uploaded images if the database insert failed
+                foreach ($image_paths as $path) {
+                    if (file_exists($path)) {
+                        unlink($path);
+                    }
                 }
+                echo "<script>alert('Failed to save border point!'); window.history.back();</script>";
             }
-        }
-
-        // Clear session & redirect
-        session_unset();
-        echo "<script>alert('Border Point added successfully!'); window.location.href='addtradepoint.php';</script>";
-        exit;
-    } else {
-        echo "<script>alert('Failed to save border point!'); window.history.back();</script>";
-    }
 }
 ?>
-
 
 <!DOCTYPE html>
 <html lang="en">
@@ -60,7 +69,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <title>Add Border Point - Step 2</title>
     <link rel="stylesheet" href="assets/add_commodity.css" />
     <style>
-        body {
+ body {
             font-family: Arial, sans-serif;
             background-color: #f8f8f8;
             display: flex;
@@ -212,28 +221,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             cursor: pointer;
             font-size: 12px;
         }
-        /* Longitude & Latitude on the same line */
-        .location-container {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 15px;
-        }
-        .location-container label {
-            width: 100%;
-        }
-        .location-container input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-        }
-        .button-container {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 20px;
-            gap: 60px; /* Adds space between the buttons */
-        }
-
     </style>
 </head>
 <body>
@@ -245,9 +232,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         <div class="form-container">
             <h2>Add Border Point</h2>
             <p>Upload one or more images of the border point</p>
-            <form method="POST" action="" enctype="multipart/form-data">
+            <form method="POST" action="" enctype="multipart/form-data" id="borderForm">
                 <label for="borderImages">Upload Images *</label>
-                <input type="file" id="borderImages" name="borderImages[]" multiple accept="image/*" required>
+                <input type="file" id="borderImages" name="borderImages[]" multiple accept="image/*" required
+                       onchange="previewImages(this)">
+                
+                <div id="imagePreview"></div>
 
                 <div class="button-container">
                     <button type="button" class="next-btn" onclick="window.location.href='addtradepoint.php'">&larr; Previous</button>
@@ -256,5 +246,44 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             </form>
         </div>
     </div>
+
+    <script>
+        function previewImages(input) {
+            const preview = document.getElementById('imagePreview');
+            preview.innerHTML = '';
+            
+            if (input.files) {
+                for (let i = 0; i < input.files.length; i++) {
+                    const reader = new FileReader();
+                    
+                    reader.onload = function(e) {
+                        const previewImage = document.createElement('div');
+                        previewImage.className = 'preview-image';
+                        previewImage.innerHTML = `
+                            <img src="${e.target.result}" alt="Preview">
+                            <button type="button" class="remove-img" onclick="removeImage(${i})">×</button>
+                        `;
+                        preview.appendChild(previewImage);
+                    }
+                    
+                    reader.readAsDataURL(input.files[i]);
+                }
+            }
+        }
+
+        function removeImage(index) {
+            const input = document.getElementById('borderImages');
+            const files = Array.from(input.files);
+            files.splice(index, 1);
+            
+            // Create new DataTransfer to update files
+            const dataTransfer = new DataTransfer();
+            files.forEach(file => dataTransfer.items.add(file));
+            input.files = dataTransfer.files;
+            
+            // Refresh preview
+            previewImages(input);
+        }
+    </script>
 </body>
 </html>
