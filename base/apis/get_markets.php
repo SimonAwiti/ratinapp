@@ -19,15 +19,24 @@ $query = "SELECT
             m.additional_datasource, 
             m.image_url,
             m.tradepoint,
-            GROUP_CONCAT(c.commodity_name SEPARATOR ', ') AS commodities
+            GROUP_CONCAT(
+                CONCAT('{\"id\":', c.id, ',\"name\":\"', c.commodity_name, '\"}')
+                SEPARATOR ','
+            ) AS commodities_json
           FROM markets m
           LEFT JOIN commodities c ON FIND_IN_SET(c.id, m.primary_commodity)
           GROUP BY m.id";
+
 $result = $con->query($query);
 
 $markets = array();
 if ($result->num_rows > 0) {
     while($row = $result->fetch_assoc()) {
+        $commodities = [];
+        if (!empty($row['commodities_json'])) {
+            $commodities = json_decode('[' . $row['commodities_json'] . ']', true);
+        }
+
         $markets[] = array(
             "id" => $row['id'],
             "market_name" => $row['market_name'],
@@ -41,7 +50,7 @@ if ($result->num_rows > 0) {
                 "radius" => $row['radius']
             ),
             "currency" => $row['currency'],
-            "commodities" => $row['commodities'] ? explode(', ', $row['commodities']) : [],
+            "commodities" => $commodities,
             "additional_datasource" => $row['additional_datasource'],
             "image_url" => $row['image_url'],
             "tradepoint" => $row['tradepoint'],
