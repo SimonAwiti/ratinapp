@@ -21,21 +21,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $tradepoint_ids = $_POST['tradepoints_ids'] ?? [];
     $tradepoint_types = $_POST['tradepoints_types'] ?? [];
+    $longitude = $_POST['longitude'];
+    $latitude = $_POST['latitude'];
 
-    // Insert enumerator data
-    $stmt = $con->prepare("INSERT INTO enumerators (name, email, phone, gender, country, county_district, username, password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("ssssssss", $name, $email, $phone, $gender, $country, $county_district, $username, $password);
-    $stmt->execute();
-    $enumerator_id = $stmt->insert_id;
-
-    // Insert tradepoint assignments
-    $tp_stmt = $con->prepare("INSERT INTO enumerator_tradepoints (enumerator_id, tradepoint_id, tradepoint_type) VALUES (?, ?, ?)");
+    // Combine tradepoint_ids and tradepoint_types into an associative array
+    $tradepoints = [];
     for ($i = 0; $i < count($tradepoint_ids); $i++) {
-        $tp_id = $tradepoint_ids[$i];
-        $tp_type = $tradepoint_types[$i];
-        $tp_stmt->bind_param("iis", $enumerator_id, $tp_id, $tp_type);
-        $tp_stmt->execute();
+        $tradepoints[] = [
+            'id' => $tradepoint_ids[$i],
+            'type' => $tradepoint_types[$i]
+        ];
     }
+
+    // Insert enumerator data, including tradepoints as JSON
+    $stmt = $con->prepare("INSERT INTO enumerators 
+    (name, email, phone, gender, country, county_district, username, password, tradepoints, longitude, latitude) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+
+    $tradepoints_json = json_encode($tradepoints);
+    $stmt->bind_param("sssssssssss", $name, $email, $phone, $gender, $country, $county_district, $username, $password, $tradepoints_json, $longitude, $latitude);
+
+    $stmt->execute();
 
     session_unset();
     session_destroy();
@@ -83,18 +89,19 @@ while ($row = $result->fetch_assoc()) {
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: #f8f8f8;
-            height: 100vh;
+            background-color: #f8f8f8;
             display: flex;
             justify-content: center;
             align-items: center;
+            height: 100vh;
+            margin: 0;
         }
         .container {
             background: white;
             padding: 60px;
             border-radius: 8px;
-            width: 850px;
-            height: 600px;
+            width: 800px;
+            height: 700px; /* Fixed height */
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             display: flex;
             position: relative;
@@ -119,7 +126,11 @@ while ($row = $result->fetch_assoc()) {
             margin-top: 15px;
             margin-bottom: 20px;
         }
-        .form-group { margin-bottom: 20px; }
+        .form-row .form-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
         button {
             margin-top: 20px;
             width: 100%;
@@ -141,7 +152,7 @@ while ($row = $result->fetch_assoc()) {
             position: absolute;
             left: 22.5px;
             top: 45px;
-            height: calc(100% - 45px - 305px);
+            height: calc(100% - 45px - 385px);
             width: 1px;
             background-color: #a45c40;
         }
@@ -177,7 +188,18 @@ while ($row = $result->fetch_assoc()) {
             display: flex;
             flex-direction: column;
             flex: 1;
+            padding: 12px;
         }
+        .form-row {
+            display: flex;
+            gap: 40px;
+            margin-bottom: 15px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px; /* or set a specific width like 300px */
+        }
+
     </style>
 </head>
 <body>
@@ -196,6 +218,18 @@ while ($row = $result->fetch_assoc()) {
         <h2>Assign Tradepoints</h2>
         <form method="POST">
             <div class="form-group">
+
+                <div class="form-row">
+                    <div class="form-group">
+                    <label for="longitude">Longitude:</label>
+                    <input type="text" id="longitude" name="longitude" required>
+                    </div>
+                    <div class="form-group">
+                    <label for="latitude">Latitude:</label>
+                    <input type="text" id="latitude" name="latitude" required>
+                    </div>
+                </div>
+
                 <label for="tradepoint-select">Select Tradepoint(s):</label>
                 <select id="tradepoint-select">
                     <option value="">-- Select Tradepoint --</option>
