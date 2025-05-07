@@ -26,11 +26,15 @@ $query = "SELECT
             m.currency, 
             m.additional_datasource, 
             m.image_url,
-            GROUP_CONCAT(c.commodity_name SEPARATOR ', ') AS commodities
+            CONCAT('[', GROUP_CONCAT(
+                CONCAT('{\"id\":', c.id, ',\"name\":\"', c.commodity_name, '\"}')
+                SEPARATOR ','
+            ), ']') AS commodities_json
           FROM markets m
           LEFT JOIN commodities c ON FIND_IN_SET(c.id, m.primary_commodity)
           WHERE m.id = '$market_id'
           GROUP BY m.id";
+
 $result = $con->query($query);
 
 if ($result->num_rows === 0) {
@@ -40,6 +44,9 @@ if ($result->num_rows === 0) {
 }
 
 $row = $result->fetch_assoc();
+
+// Decode the JSON-like string into an array
+$commodities = $row['commodities_json'] ? json_decode($row['commodities_json'], true) : [];
 
 $market = array(
     "id" => $row['id'],
@@ -54,7 +61,7 @@ $market = array(
         "radius" => $row['radius']
     ),
     "currency" => $row['currency'],
-    "commodities" => $row['commodities'] ? explode(', ', $row['commodities']) : [],
+    "commodities" => $commodities,
     "additional_datasource" => $row['additional_datasource'],
     "image_url" => $row['image_url']
 );
