@@ -27,7 +27,9 @@ $query = "SELECT
             m.additional_datasource, 
             m.image_url,
             CONCAT('[', GROUP_CONCAT(
-                CONCAT('{\"id\":', c.id, ',\"name\":\"', c.commodity_name, '\"}')
+                CONCAT('{\"id\":', c.id, 
+                       ',\"name\":\"', c.commodity_name, 
+                       '\",\"variety\":\"', IFNULL(c.variety, ''), '\"}')
                 SEPARATOR ','
             ), ']') AS commodities_json
           FROM markets m
