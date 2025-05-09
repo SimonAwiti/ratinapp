@@ -134,7 +134,7 @@ if ($result) {
 <body>
     <div class="container">
         <!-- Close button on the top right -->
-        <button class="close-btn" onclick="window.location.href='dashboard.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='sidebar.php'">×</button>
 
         <div class="steps">
             <div class="step">

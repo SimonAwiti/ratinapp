@@ -14,8 +14,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $category_id = $_SESSION['category']; // now this is the category_id
     $commodity_name = $_SESSION['commodity_name'];
     $variety = $_SESSION['variety'];
-    $packaging = $_SESSION['packaging']; // array
-    $unit = $_SESSION['unit']; // array
+    $packaging_array = $_SESSION['packaging']; // array of sizes
+    $unit_array = $_SESSION['unit']; // array of units
 
     $hs_code = $_POST['hs_code'];
     $commodity_alias = $_POST['commodity_alias'];
@@ -32,33 +32,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Combine packaging and unit into arrays of objects
+    $combined_units = [];
+    for ($i = 0; $i < count($packaging_array); $i++) {
+        $combined_units[] = [
+            'size' => $packaging_array[$i],
+            'unit' => $unit_array[$i]
+        ];
+    }
+
+    // Encode the combined array as JSON
+    $units_json = json_encode($combined_units);
+
     // Start database transaction
     $con->begin_transaction();
     try {
-        $sql = "INSERT INTO commodities 
-            (commodity_name, category_id, variety, size, unit, hs_code, commodity_alias, country, image_url) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql = "INSERT INTO commodities
+            (commodity_name, category_id, variety, units, hs_code, commodity_alias, country, image_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"; // Removed 'size' column
+
         $stmt = $con->prepare($sql);
+        $stmt->bind_param(
+            'sississs',
+            $commodity_name,
+            $category_id,
+            $variety,
+            $units_json, // Insert the JSON string into the 'units' column
+            $hs_code,
+            $commodity_alias,
+            $country,
+            $image_url
+        );
 
-        for ($i = 0; $i < count($packaging); $i++) {
-            $size = $packaging[$i];
-            $measure_unit = $unit[$i];
-
-            $stmt->bind_param(
-                'sisssssss',
-                $commodity_name,
-                $category_id,
-                $variety,
-                $size,
-                $measure_unit,
-                $hs_code,
-                $commodity_alias,
-                $country,
-                $image_url
-            );
-
-            $stmt->execute();
-        }
+        $stmt->execute();
 
         $con->commit();
     } catch (Exception $e) {
@@ -71,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     session_destroy();
 
     // Redirect
-    header('Location: dashboard.php');
+    header('Location: sidebar.php');
     exit;
 }
 ?>
@@ -88,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
     <div class="container">
         <!-- Close button on the top right -->
-        <button class="close-btn" onclick="window.location.href='dashboard.php'">&times;</button>
+        <button class="close-btn" onclick="window.location.href='sidebar.php'">&times;</button>
 
         <div class="steps">
             <div class="step">
