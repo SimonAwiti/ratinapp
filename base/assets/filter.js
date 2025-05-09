@@ -49,12 +49,39 @@
 
     function deleteSelected() {
         let selectedIds = getSelectedIds();
+        console.log("Selected IDs:", selectedIds); // Check if IDs are being retrieved correctly
         if (selectedIds.length === 0) {
             alert("Select items to delete.");
             return;
         }
         if (confirm("Delete selected items?")) {
-            console.log("Deleted IDs:", selectedIds);
+            console.log("Confirmation: Yes"); // Check if confirmation is successful
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = 'delete_commodity.php';
+            console.log("Form created:", form); // Check if form is created
+            console.log("Form action:", form.action); // Check the form's action
+    
+            const idsInput = document.createElement('input');
+            idsInput.type = 'hidden';
+            idsInput.name = 'ids[]';
+            selectedIds.forEach(id => {
+                const newInput = idsInput.cloneNode();
+                newInput.value = id;
+                form.appendChild(newInput);
+                console.log("Added ID to form:", id, newInput); // Inspect the input element
+            });
+    
+            console.log("Form children before append:", form.children); // Check form contents
+    
+            document.body.appendChild(form);
+            console.log("Form appended to body:", form); // Check if form is in the DOM
+    
+            console.log("Attempting to submit form:", form);
+            form.submit();
+            console.log("Form submitted (maybe?)"); // See if this log appears
+        } else {
+            console.log("Confirmation: No");
         }
     }
 
