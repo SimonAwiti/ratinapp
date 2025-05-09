@@ -231,7 +231,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='dashboard.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='sidebar.php'">×</button>
         <div class="steps">
             <div class="step">
                 <div class="step-circle active"></div>
