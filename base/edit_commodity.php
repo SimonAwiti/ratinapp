@@ -1,38 +1,47 @@
 <?php
-include '../admin/includes/config.php'; // Include database configuration
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
-// Fetch the commodity data based on the ID from the URL
-if (isset($_GET['id'])) {
-    $id = intval($_GET['id']); // Ensure the ID is an integer
-    $sql = "SELECT * FROM commodities WHERE id = ?";
-    $stmt = $con->prepare($sql);
-    $stmt->bind_param('i', $id);
+include '../admin/includes/config.php'; // DB connection
+
+// Explicitly set character encoding
+mysqli_set_charset($con, "utf8mb4");
+
+// Get commodity ID from query string
+$id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+
+// Fetch commodity details
+$commodity = null;
+if ($id > 0) {
+    $stmt = $con->prepare("SELECT * FROM commodities WHERE id = ?");
+    $stmt->bind_param("i", $id);
     $stmt->execute();
     $result = $stmt->get_result();
     $commodity = $result->fetch_assoc();
-
-    if (!$commodity) {
-        die("Commodity not found.");
-    }
-} else {
-    die("Invalid request.");
+    $stmt->close();
 }
 
-// Handle form submission for updating the commodity
+if (!$commodity) {
+    die("Commodity not found.");
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $commodity_name = $_POST['commodity_name'];
-    $category = $_POST['category'];
+    $category_id = (int)$_POST['category']; // Explicitly cast to integer
     $variety = $_POST['variety'];
-    $packaging = $_POST['packaging'];
-    $unit = $_POST['unit'];
+
+    // Initialize packaging and unit arrays to empty if not set
+    $packaging_array = $_POST['packaging'] ?? [];
+    $unit_array = $_POST['unit'] ?? [];
+
     $hs_code = $_POST['hs_code'];
     $commodity_alias = $_POST['commodity_alias'];
     $country = $_POST['country'];
 
-    // Handle file upload
-    $image_url = $commodity['image_url']; // Keep the existing image if no new file is uploaded
+    $image_url = $commodity['image_url']; // Keep current image if no new upload
     if (isset($_FILES['commodity_image']) && $_FILES['commodity_image']['error'] === UPLOAD_ERR_OK) {
-        $upload_dir = 'uploads/'; // Ensure this directory exists and is writable
+        $upload_dir = 'uploads/';
         $image_name = basename($_FILES['commodity_image']['name']);
         $image_path = $upload_dir . $image_name;
         if (move_uploaded_file($_FILES['commodity_image']['tmp_name'], $image_path)) {
@@ -40,18 +49,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Update the commodity in the database
-    $sql = "UPDATE commodities 
-            SET commodity_name = ?, category = ?, variety = ?, size = ?, unit = ?, hs_code = ?, commodity_alias = ?, country = ?, image_url = ?
+    $combined_units = [];
+    if (is_array($packaging_array) && is_array($unit_array) && count($packaging_array) === count($unit_array)) {
+        for ($i = 0; $i < count($packaging_array); $i++) {
+            $combined_units[] = [
+                'size' => $packaging_array[$i],
+                'unit' => $unit_array[$i]
+            ];
+        }
+    }
+
+ 
+    $units_json = trim(json_encode($combined_units));
+    $sql = "UPDATE commodities
+            SET commodity_name = ?, category_id = ?, variety = ?, units = CAST(? AS JSON), hs_code = ?, commodity_alias = ?, country = ?, image_url = ?
             WHERE id = ?";
     $stmt = $con->prepare($sql);
     $stmt->bind_param(
-        'sssssssssi',
+        'sisissssi',
         $commodity_name,
-        $category,
+        $category_id,
         $variety,
-        $packaging,
-        $unit,
+        $units_json,
         $hs_code,
         $commodity_alias,
         $country,
@@ -60,8 +79,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     );
     $stmt->execute();
 
-    // Redirect to the commodities list page
-    header('Location: commodities.php');
+    if ($stmt->errno) {
+        echo "MySQL Error: " . $stmt->error . "<br>";
+        echo "SQL Query: " . $sql . "<br>";
+        echo "Bound Parameters: ";
+        var_dump([
+            $commodity_name,
+            $category_id,
+            $variety,
+            $units_json,
+            $hs_code,
+            $commodity_alias,
+            $country,
+            $image_url,
+            $id
+        ]);
+        exit;
+    }
+
+    header('Location: sidebar.php');
     exit;
 }
 ?>
@@ -70,174 +106,107 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Edit Commodity</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f8f8f8;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .container {
-            background: white;
-            padding: 60px;
-            border-radius: 8px;
-            width: 800px;
-            height: relative;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            display: flex;
-            position: relative; /* Required for absolute positioning of the close button */
-        }
-        .close-btn {
-            position: absolute;
-            top: 20px;
-            right: 20px; /* Positioned on the top right */
-            background: none;
-            border: none;
-            font-size: 24px;
-            cursor: pointer;
-            color: #a45c40;
-        }
-        .steps {
-            padding-right: 40px;
-            position: relative; /* Required for the vertical line */
-        }
-        .steps::before {
-            content: '';
-            position: absolute;
-            left: 22.5px; /* Center the line with the step circles (half of 45px circle width) */
-            top: 45px; /* Start from the bottom of the first step circle */
-            height: calc(250px - 45px + 45px); /* Height to connect Step 1 and Step 2 */
-            width: 1px;
-            background-color: #ccc; /* Line color */
-        }
-        .step {
-            display: flex;
-            align-items: center;
-            margin-bottom: 250px; /* Increased margin to 250px */
-            position: relative; /* Ensure steps are above the line */
-        }
-        .step:last-child {
-            margin-bottom: 0; /* Remove margin for the last step */
-        }
-        .step-circle {
-            width: 45px;
-            height: 45px;
-            border-radius: 70%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-right: 20px;
-            font-size: 20px;
-            z-index: 1; /* Ensure circles are above the line */
-            background-color: #d3d3d3; /* Default inactive color */
-            color: white;
-            position: relative;
-        }
-        .step-circle::before {
-            content: '✓'; /* Checkmark for active step */
-            display: none; /* Hidden by default */
-        }
-        .step-circle.active::before {
-            display: block; /* Show checkmark for active step */
-        }
-        .step-circle.inactive::before {
-            content: ''; /* No checkmark for inactive step */
-        }
-        .step-circle.active {
-            background-color: #a45c40; /* Active step color */
-        }
-        .form-container {
-            flex-grow: 1;
-        }
-        label {
-            font-weight: bold;
-            display: block;
-            margin-top: 10px;
-        }
-        input, select, .file-input {
-            width: 100%; /* Ensure full width */
-            padding: 12px; /* Consistent padding */
-            margin-top: 10px; /* Consistent margin */
-            border: 1px solid #ccc; /* Consistent border */
-            border-radius: 5px; /* Consistent border radius */
-            font-size: 16px; /* Consistent font size */
-            box-sizing: border-box; /* Include padding and border in width */
-        }
-        .file-input {
-            background-color: white; /* Match the background color */
-            cursor: pointer; /* Indicate it's clickable */
-        }
-        .button-container {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 20px;
-        }
-        .next-btn {
-            background-color: #a45c40;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            cursor: pointer;
-            border-radius: 5px;
-            width: 48%; /* Adjusted width to fit both buttons */
-        }
-    </style>
+    <link rel="stylesheet" href="assets/edit_commodity.css" />
+
 </head>
 <body>
-    <div class="container">
-        <!-- Close button on the top right -->
-        <button class="close-btn" onclick="window.location.href='commodities.php'">×</button>
+<div class="container">
+    <button class="close-btn" onclick="window.location.href='commodities.php'">×</button>
 
-        <div class="form-container">
-            <h2>Edit Commodity</h2>
-            <p>Update the details of the commodity</p>
-            <form method="POST" action="edit_commodity.php?id=<?= $id ?>" enctype="multipart/form-data">
-                <label for="category">Category *</label>
-                <select id="category" name="category" required>
-                    <option value="Oil seeds" <?= $commodity['category'] === 'Oil seeds' ? 'selected' : '' ?>>Oil seeds</option>
-                    <option value="Pulses" <?= $commodity['category'] === 'Pulses' ? 'selected' : '' ?>>Pulses</option>
-                    <option value="Cereals" <?= $commodity['category'] === 'Cereals' ? 'selected' : '' ?>>Cereals</option>
+    <div class="form-container">
+        <h2>Edit Commodity</h2>
+        <p>Update the details of the commodity</p>
+        <form method="POST" action="edit_commodity.php?id=<?= $id ?>" enctype="multipart/form-data">
+            <label for="category">Category *</label>
+            <select id="category" name="category" required>
+                <option value="1" <?= $commodity['category_id'] === 1 ? 'selected' : '' ?>>Oil seeds</option>
+                <option value="2" <?= $commodity['category_id'] === 2 ? 'selected' : '' ?>>Pulses</option>
+                <option value="3" <?= $commodity['category_id'] === 3 ? 'selected' : '' ?>>Cereals</option>
                 </select>
-                <label for="commodity-name">Commodity name *</label>
-                <input type="text" id="commodity-name" name="commodity_name" value="<?= htmlspecialchars($commodity['commodity_name']) ?>" required>
-                <label for="variety">Variety</label>
-                <input type="text" id="variety" name="variety" value="<?= htmlspecialchars($commodity['variety']) ?>" required>
-                <label>Commodity Packaging</label>
-                <input type="text" id="packaging" name="packaging" value="<?= htmlspecialchars($commodity['size']) ?>" required>
-                <label for="unit">Measuring unit</label>
-                <select id="unit" name="unit" required>
-                    <option value="Kg" <?= $commodity['unit'] === 'Kg' ? 'selected' : '' ?>>Kg</option>
-                    <option value="Tons" <?= $commodity['unit'] === 'Tons' ? 'selected' : '' ?>>Tons</option>
-                </select>
-                <label for="hs-code">HS Code*</label>
-                <input type="text" id="hs-code" name="hs_code" value="<?= htmlspecialchars($commodity['hs_code']) ?>" required>
-                <label for="commodity-alias">Commodity Alias</label>
-                <input type="text" id="commodity-alias" name="commodity_alias" value="<?= htmlspecialchars($commodity['commodity_alias']) ?>">
-                <label for="country">Country</label>
-                <select id="country" name="country" required>
-                    <option value="Rwanda" <?= $commodity['country'] === 'Rwanda' ? 'selected' : '' ?>>Rwanda</option>
-                    <option value="Uganda" <?= $commodity['country'] === 'Uganda' ? 'selected' : '' ?>>Uganda</option>
-                    <option value="Tanzania" <?= $commodity['country'] === 'Tanzania' ? 'selected' : '' ?>>Tanzania</option>
-                    <option value="Kenya" <?= $commodity['country'] === 'Kenya' ? 'selected' : '' ?>>Kenya</option>
-                </select>
-                <label for="commodity-image">Commodity Image</label>
-                <input type="file" id="commodity-image" name="commodity_image" accept="image/*">
-                <?php if ($commodity['image_url']): ?>
-                    <p>Current Image: <img src="<?= htmlspecialchars($commodity['image_url']) ?>" alt="Commodity Image" width="100"></p>
-                <?php endif; ?>
 
-                <!-- Buttons on the same line -->
-                <div class="button-container">
-                    <button type="button" class="next-btn" onclick="window.location.href='dashboard.php'">&larr; Cancel</button>
-                    <button type="submit" class="next-btn">Update &rarr;</button>
-                </div>
-            </form>
-        </div>
+            <label for="commodity-name">Commodity name *</label>
+            <input type="text" id="commodity-name" name="commodity_name" value="<?= htmlspecialchars($commodity['commodity_name'] ?? '') ?>" required>
+
+            <label for="variety">Variety</label>
+            <input type="text" id="variety" name="variety" value="<?= htmlspecialchars($commodity['variety'] ?? '') ?>">
+
+            <label>Packaging & Unit</label>
+            <?php
+            $units = json_decode($commodity['units'], true);
+            if ($units && is_array($units)) {
+                foreach ($units as $index => $unit) {
+                    $size = htmlspecialchars($unit['size'] ?? '');
+                    $unit_val = htmlspecialchars($unit['unit'] ?? '');
+                    echo '
+                    <div class="form-row form-row-3">
+                        <div class="packaging-unit-group">
+                            <label for="packaging' . $index . '">Size</label>
+                            <input type="text" name="packaging[]" id="packaging' . $index . '" value="' . $size . '">
+                        </div>
+                        <div class="packaging-unit-group">
+                            <label for="unit' . $index . '">Unit</label>
+                            <input type="text" name="unit[]" id="unit' . $index . '" value="' . $unit_val . '">
+                        </div>
+                        <button type="button" onclick="this.parentElement.remove()">Remove</button>
+                    </div>';
+                }
+            } else {
+                // Display one empty row if no data
+                echo '
+                <div class="form-row form-row-3">
+                    <div class="packaging-unit-group">
+                        <label>Size</label>
+                        <input type="text" name="packaging[]" value="">
+                    </div>
+                    <div class="packaging-unit-group">
+                        <label>Unit</label>
+                        <input type="text" name="unit[]" value="">
+                    </div>
+                    <button type="button" onclick="this.parentElement.remove()">Remove</button>
+                </div>';
+            }
+            ?>
+
+            <button type="button" id="addUnitBtn" onclick="addUnitRow()">Add More</button>
+
+            <label for="hs_code">HS Code</label>
+            <input type="text" name="hs_code" id="hs_code" value="<?= htmlspecialchars($commodity['hs_code'] ?? '') ?>">
+
+            <label for="commodity_alias">Alias</label>
+            <input type="text" name="commodity_alias" id="commodity_alias" value="<?= htmlspecialchars($commodity['commodity_alias'] ?? '') ?>">
+
+            <label for="country">Country</label>
+            <input type="text" name="country" id="country" value="<?= htmlspecialchars($commodity['country'] ?? '') ?>">
+
+            <label for="commodity_image">Commodity Image</label>
+            <input type="file" name="commodity_image" class="file-input">
+
+            <div class="button-container">
+                <button type="submit" class="update-btn">Update</button>
+                <button type="button" class="cancel-btn" onclick="window.location.href='commodities.php'">Cancel</button>
+            </div>
+        </form>
     </div>
+</div>
+
+<script>
+function addUnitRow() {
+    const row = document.createElement('div');
+    row.className = 'form-row form-row-3';
+    row.innerHTML = `
+        <div class="packaging-unit-group">
+            <label>Size</label>
+            <input type="text" name="packaging[]" value="">
+        </div>
+        <div class="packaging-unit-group">
+            <label>Unit</label>
+            <input type="text" name="unit[]" value="">
+        </div>
+        <button type="button" onclick="this.parentElement.remove()">Remove</button>
+    `;
+    document.querySelector('.form-container form').insertBefore(row, document.getElementById('addUnitBtn'));
+}
+</script>
 </body>
 </html>

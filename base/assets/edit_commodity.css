@@ -1,0 +1,131 @@
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f8f8f8;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+.container {
+    background: white;
+    padding: 60px;
+    border-radius: 8px;
+    width: 800px;
+    height: relative;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    display: flex;
+    position: relative; /* Required for absolute positioning of the close button */
+}
+.close-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px; /* Positioned on the top right */
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #a45c40;
+}
+.form-container {
+    flex-grow: 1;
+    display: grid; /* Enable CSS Grid for the form container */
+    grid-template-columns: 1fr; /* Default to single column */
+    gap: 15px; /* Spacing between grid items */
+}
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr; /* Default to single column for child elements */
+    gap: 10px;
+    align-items: center; /* Vertically align items */
+}
+.form-row-2 {
+    grid-template-columns: 1fr 1fr; /* Two equal columns */
+}
+.form-row-3 {
+    grid-template-columns: 1fr 1fr auto; /* Packaging & Unit containers | Remove Button */
+    align-items: center; /* Ensure vertical alignment of the *containers* */
+}
+.packaging-unit-group {
+    display: flex; /* Arrange label and input/select in a row */
+    align-items: center; /* Vertically align label and input/select *within* the container */
+    gap: 10px; /* Space between label and input/select */
+}
+.packaging-unit-group label {
+    width: auto; /* Allow label to take necessary width */
+    margin-top: 0; /* Reset default top margin */
+}
+.packaging-unit-group input[type="text"],
+.packaging-unit-group select {
+    flex-grow: 0; /* Prevent them from taking up all available space */
+    width: 80px; /* Set a fixed width for smaller size */
+}
+label {
+    font-weight: bold;
+    display: block;
+    margin-top: 10px;
+}
+input, select, .file-input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 16px;
+    box-sizing: border-box;
+    margin-top: 5px; /* Reduced margin */
+}
+.file-input {
+    background-color: white;
+    cursor: pointer;
+}
+.form-row-3 button {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 5px;
+    font-size: 14px;
+}
+.form-row-3 button:hover {
+    opacity: 0.8;
+}
+.button-container {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+.cancel-btn,
+.update-btn {
+    background-color: #f44336; /* Example red color for Cancel */
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    cursor: pointer;
+    border-radius: 5px;
+    font-size: 16px;
+    text-align: center;
+    text-decoration: none;
+    flex-grow: 1; /* Distribute available space equally */
+}
+.update-btn {
+    background-color: #4CAF50; /* Example green color for Update */
+}
+.cancel-btn:hover,
+.update-btn:hover {
+    opacity: 0.8;
+}
+#addUnitBtn {
+    background-color: #008CBA;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    cursor: pointer;
+    border-radius: 5px;
+    font-size: 16px;
+    margin-top: 10px;
+}
+#addUnitBtn:hover {
+    opacity: 0.8;
+}
