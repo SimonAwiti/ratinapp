@@ -19,27 +19,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = $_SESSION['username'];
     $password = $_SESSION['password'];
 
-    $tradepoint_ids = $_POST['tradepoints_ids'] ?? [];
-    $tradepoint_types = $_POST['tradepoints_types'] ?? [];
-    $longitude = $_POST['longitude'];
-    $latitude = $_POST['latitude'];
-
-    // Combine tradepoint_ids and tradepoint_types into an associative array
-    $tradepoints = [];
-    for ($i = 0; $i < count($tradepoint_ids); $i++) {
-        $tradepoints[] = [
-            'id' => $tradepoint_ids[$i],
-            'type' => $tradepoint_types[$i]
-        ];
-    }
+    $tradepoints_data = $_POST['tradepoints'] ?? []; // This will now contain an array of objects
 
     // Insert enumerator data, including tradepoints as JSON
     $stmt = $con->prepare("INSERT INTO enumerators 
-    (name, email, phone, gender, country, county_district, username, password, tradepoints, longitude, latitude) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    (name, email, phone, gender, country, county_district, username, password, tradepoints) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
-    $tradepoints_json = json_encode($tradepoints);
-    $stmt->bind_param("sssssssssss", $name, $email, $phone, $gender, $country, $county_district, $username, $password, $tradepoints_json, $longitude, $latitude);
+    $tradepoints_json = json_encode($tradepoints_data);
+    $stmt->bind_param("sssssssss", $name, $email, $phone, $gender, $country, $county_district, $username, $password, $tradepoints_json);
 
     $stmt->execute();
 
@@ -56,7 +44,10 @@ $sql = "SELECT
             market_name AS name, 
             'Markets' AS tradepoint_type, 
             country AS admin0, 
-            county_district AS admin1
+            county_district AS admin1,
+            longitude,
+            latitude,
+            radius
         FROM markets
         UNION ALL
         SELECT 
@@ -64,16 +55,24 @@ $sql = "SELECT
             name AS name, 
             'Border Points' AS tradepoint_type, 
             country AS admin0, 
-            county AS admin1
+            county AS admin1,
+            longitude,
+            latitude,
+            radius
         FROM border_points
         UNION ALL
         SELECT 
-            id, 
-            miller_name AS name, 
+            md.id, 
+            md.miller_name AS name, 
             'Miller' AS tradepoint_type,  
-            country AS admin0, 
-            county_district AS admin1
-        FROM miller_details
+            md.country AS admin0, 
+            md.county_district AS admin1,
+            m.longitude,
+            m.latitude,
+            m.radius
+        FROM miller_details md
+        JOIN millers m ON md.miller_name = m.miller_name  -- Join using miller_name
+        WHERE md.miller_name IS NOT NULL AND m.miller_name IS NOT NULL
         ORDER BY name ASC";
 
 $result = $con->query($sql);
@@ -101,7 +100,7 @@ while ($row = $result->fetch_assoc()) {
             padding: 60px;
             border-radius: 8px;
             width: 800px;
-            height: 700px; /* Fixed height */
+            height: 700px;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             display: flex;
             position: relative;
@@ -197,7 +196,7 @@ while ($row = $result->fetch_assoc()) {
         }
         input[type="text"] {
             width: 100%;
-            padding: 8px; /* or set a specific width like 300px */
+            padding: 8px;
         }
 
     </style>
@@ -218,25 +217,17 @@ while ($row = $result->fetch_assoc()) {
         <h2>Assign Tradepoints</h2>
         <form method="POST">
             <div class="form-group">
-
-                <div class="form-row">
-                    <div class="form-group">
-                    <label for="longitude">Longitude:</label>
-                    <input type="text" id="longitude" name="longitude" required>
-                    </div>
-                    <div class="form-group">
-                    <label for="latitude">Latitude:</label>
-                    <input type="text" id="latitude" name="latitude" required>
-                    </div>
-                </div>
-
                 <label for="tradepoint-select">Select Tradepoint(s):</label>
                 <select id="tradepoint-select">
                     <option value="">-- Select Tradepoint --</option>
                     <?php foreach ($tradepoints as $tp): ?>
-                        <option 
-                            value="<?= $tp['id'] ?>" 
-                            data-type="<?= $tp['tradepoint_type'] ?>">
+                        <option
+                            value="<?= $tp['id'] ?>"
+                            data-type="<?= $tp['tradepoint_type'] ?>"
+                            data-longitude="<?= $tp['longitude'] ?>"
+                            data-latitude="<?= $tp['latitude'] ?>"
+                            data-radius="<?= $tp['radius'] ?>"
+                        >
                             <?= htmlspecialchars("{$tp['name']} - {$tp['tradepoint_type']} ({$tp['admin1']}, {$tp['admin0']})") ?>
                         </option>
                     <?php endforeach; ?>
@@ -245,7 +236,6 @@ while ($row = $result->fetch_assoc()) {
 
             <div class="tags-container" id="selected-tradepoints"></div>
 
-            <!-- Hidden inputs will be appended here -->
             <div id="hidden-inputs"></div>
 
             <button type="submit">Finish</button>
@@ -257,15 +247,26 @@ while ($row = $result->fetch_assoc()) {
     const select = document.getElementById('tradepoint-select');
     const selectedContainer = document.getElementById('selected-tradepoints');
     const hiddenInputs = document.getElementById('hidden-inputs');
-    const selectedIds = new Set();
+    const selectedTradepoints = new Map();
 
     select.addEventListener('change', () => {
         const selectedId = select.value;
         const selectedText = select.options[select.selectedIndex].text;
         const selectedType = select.options[select.selectedIndex].getAttribute('data-type');
+        const longitude = select.options[select.selectedIndex].getAttribute('data-longitude');
+        const latitude = select.options[select.selectedIndex].getAttribute('data-latitude');
+        const radius = select.options[select.selectedIndex].getAttribute('data-radius');
 
-        if (selectedId && !selectedIds.has(selectedId)) {
-            selectedIds.add(selectedId);
+
+        if (selectedId && !selectedTradepoints.has(selectedId)) {
+            selectedTradepoints.set(selectedId, {
+                id: selectedId,
+                type: selectedType,
+                name: selectedText,
+                longitude: longitude,
+                latitude: latitude,
+                radius: radius
+            });
 
             // Create tag
             const tag = document.createElement('div');
@@ -276,31 +277,60 @@ while ($row = $result->fetch_assoc()) {
             close.textContent = '×';
             close.onclick = () => {
                 selectedContainer.removeChild(tag);
-                hiddenInputs.removeChild(hiddenInputId);
-                hiddenInputs.removeChild(hiddenInputType);
-                selectedIds.delete(selectedId);
+                removeHiddenInputs(selectedId);
+                selectedTradepoints.delete(selectedId);
             };
 
             tag.appendChild(close);
             selectedContainer.appendChild(tag);
 
-            // Hidden input for ID
-            const hiddenInputId = document.createElement('input');
-            hiddenInputId.type = 'hidden';
-            hiddenInputId.name = 'tradepoints_ids[]';
-            hiddenInputId.value = selectedId;
-            hiddenInputs.appendChild(hiddenInputId);
-
-            // Hidden input for Type
-            const hiddenInputType = document.createElement('input');
-            hiddenInputType.type = 'hidden';
-            hiddenInputType.name = 'tradepoints_types[]';
-            hiddenInputType.value = selectedType;
-            hiddenInputs.appendChild(hiddenInputType);
+            // Create hidden inputs for all tradepoint details
+            createHiddenInputs(selectedId);
         }
 
         select.value = "";
     });
+
+    function createHiddenInputs(selectedId) {
+        const tradepoint = selectedTradepoints.get(selectedId);
+
+        const hiddenInputId = document.createElement('input');
+        hiddenInputId.type = 'hidden';
+        hiddenInputId.name = 'tradepoints[' + selectedId + '][id]';
+        hiddenInputId.value = tradepoint.id;
+        hiddenInputs.appendChild(hiddenInputId);
+
+        const hiddenInputType = document.createElement('input');
+        hiddenInputType.type = 'hidden';
+        hiddenInputType.name = 'tradepoints[' + selectedId + '][type]';
+        hiddenInputType.value = tradepoint.type;
+        hiddenInputs.appendChild(hiddenInputType);
+
+        const hiddenInputLongitude = document.createElement('input');
+        hiddenInputLongitude.type = 'hidden';
+        hiddenInputLongitude.name = 'tradepoints[' + selectedId + '][longitude]';
+        hiddenInputLongitude.value = tradepoint.longitude;
+        hiddenInputs.appendChild(hiddenInputLongitude);
+
+        const hiddenInputLatitude = document.createElement('input');
+        hiddenInputLatitude.type = 'hidden';
+        hiddenInputLatitude.name = 'tradepoints[' + selectedId + '][latitude]';
+        hiddenInputLatitude.value = tradepoint.latitude;
+        hiddenInputs.appendChild(hiddenInputLatitude);
+
+         const hiddenInputRadius = document.createElement('input');
+        hiddenInputRadius.type = 'hidden';
+        hiddenInputRadius.name = 'tradepoints[' + selectedId + '][radius]';
+        hiddenInputRadius.value = tradepoint.radius;
+        hiddenInputs.appendChild(hiddenInputRadius);
+    }
+
+    function removeHiddenInputs(selectedId) {
+        const inputsToRemove = Array.from(hiddenInputs.querySelectorAll('input')).filter(input =>
+            input.name.startsWith('tradepoints[' + selectedId + ']')
+        );
+        inputsToRemove.forEach(input => hiddenInputs.removeChild(input));
+    }
 </script>
 </body>
 </html>

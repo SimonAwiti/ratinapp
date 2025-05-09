@@ -28,32 +28,38 @@ $user = $result->fetch_assoc();
 
 // Decode tradepoints from JSON
 $tradepoints = json_decode($user['tradepoints'], true);
-$tradepointNames = [];
+$tradepointDetails = [];
 
 foreach ($tradepoints as $tp) {
     $id = $tp['id'];
     $type = $tp['type'];
-    $name = '';
+    $details = null;
 
     if ($type === 'Markets') {
-        $stmt = $con->prepare("SELECT market_name FROM markets WHERE id = ?");
+        $stmt = $con->prepare("SELECT id, market_name as name, longitude, latitude, radius, country, county_district FROM markets WHERE id = ?");
     } elseif ($type === 'Border Points') {
-        $stmt = $con->prepare("SELECT name FROM border_points WHERE id = ?");
+        $stmt = $con->prepare("SELECT id, name, longitude, latitude, radius, country, county as county_district FROM border_points WHERE id = ?");
     } elseif ($type === 'Miller') {
-        $stmt = $con->prepare("SELECT miller_name FROM miller_details WHERE id = ?");
+        $stmt = $con->prepare("SELECT md.id, md.miller_name as name, m.longitude, m.latitude, m.radius, md.country, md.county_district 
+                                FROM miller_details md 
+                                JOIN millers m ON md.miller_name = m.miller_name
+                                WHERE md.id = ?");
     }
 
     $stmt->bind_param("i", $id);
     $stmt->execute();
-    $stmt->bind_result($name);
-    $stmt->fetch();
+    $result = $stmt->get_result();
+
+    if ($result->num_rows > 0) {
+        $details = $result->fetch_assoc();
+    }
     $stmt->close();
 
-    // Store the tradepoint with its name
-    $tradepointNames[] = [
+    // Store the tradepoint details
+    $tradepointDetails[] = [
         'id' => $id,
         'type' => $type,
-        'name' => $name
+        'details' => $details
     ];
 }
 
@@ -71,7 +77,7 @@ $response = [
         "county_district" => $user['county_district'],
         "username" => $user['username'],
         "created_at" => $user['created_at'],
-        "tradepoints" => $tradepointNames,
+        "tradepoints" => $tradepointDetails,
         "latitude" => $user['latitude'],
         "longitude" => $user['longitude'],
         "token" => $user['token']
