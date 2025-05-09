@@ -24,7 +24,7 @@ $query = "SELECT
           SELECT 
             id, 
             miller_name AS name, 
-            'Miller' AS tradepoint_type,  -- Assuming 'miller_name' is the column that holds the miller's name
+            'Millers' AS tradepoint_type,  -- Assuming 'miller_name' is the column that holds the miller's name
             country AS admin0, 
             county_district AS admin1   -- Assuming you have county_district in miller_details
           FROM miller_details
@@ -42,7 +42,7 @@ $startIndex = ($page - 1) * $itemsPerPage;
 $paginatedTradepoints = array_slice($tradepoints, $startIndex, $itemsPerPage);
 
 // Count types
-$typeCounts = ['Markets' => 0, 'Border Points' => 0, 'Miller' => 0];  // Add Miller count here
+$typeCounts = ['Markets' => 0, 'Border Points' => 0, 'Millers' => 0];  // Add Miller count here
 foreach ($tradepoints as $tp) {
     $typeCounts[$tp['tradepoint_type']] = ($typeCounts[$tp['tradepoint_type']] ?? 0) + 1;
 }
@@ -171,8 +171,8 @@ body {
 </style>
 
 <div class="stats-section">
-    <div class="text-wrapper-8"><h3>Markets Management</h3></div>
-    <p class="p">Manage everything related to Markets and Border Points</p>
+    <div class="text-wrapper-8"><h3>Tradepoint Management</h3></div>
+    <p class="p">Manage everything related to Markets, Millers and Border Points</p>
 
     <div class="stats-container">
         <div class="overlap-6">
@@ -184,6 +184,11 @@ body {
             <div class="overlap-8"><img class="frame-39" src="img/frame-26.svg" /></div>
             <div class="text-wrapper-36">Border Points</div>
             <div class="text-wrapper-37"><?= $typeCounts['Border Points'] ?? 0 ?></div>
+        </div>
+        <div class="overlap-7">
+            <div class="overlap-8"><img class="frame-39" src="img/frame-26.svg" /></div>
+            <div class="text-wrapper-36">Millers</div>
+            <div class="text-wrapper-37"><?= $typeCounts['Millers'] ?? 0 ?></div>
         </div>
     </div>
 </div>

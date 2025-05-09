@@ -1,5 +1,36 @@
-// filter2.js (updated)
+window.deleteSelected = function () {
+    let selectedIds = getSelectedIds();
+    if (selectedIds.length === 0) {
+        alert("Select items to delete.");
+        return;
+    }
 
+    if (confirm("Delete selected items?")) {
+        fetch('delete_tradepoints.php', { // Ensure the path is correct!
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json' // Important: Tell the server we're sending JSON
+            },
+            body: JSON.stringify({ ids: selectedIds }) // Convert the data to JSON
+        })
+        .then(response => response.json()) // Parse the JSON response
+        .then(data => {
+            if (data.success) {
+                alert(data.message); // Display the message from the PHP script
+                // Optionally, you can reload the page or update the table dynamically here
+                location.reload(); // Simplest way: reload the page
+            } else {
+                alert(data.message); // Display the error message
+            }
+        })
+        .catch(error => {
+            console.error("Error:", error); // Log network errors
+            alert("An error occurred while communicating with the server.");
+        });
+    }
+};
+
+//Keep the rest of the code in assets/filter2.js
 function filterMarketsTable() {
     const filterName = document.getElementById('filterName').value.toUpperCase();
     const filterCategory = document.getElementById('filterCategory').value.toUpperCase();
@@ -36,41 +67,6 @@ document.getElementById("selectAll")?.addEventListener("change", function () {
     checkboxes.forEach(checkbox => checkbox.checked = this.checked);
 });
 
-function getSelectedIds() {
-    return [...document.querySelectorAll(".row-checkbox:checked")].map(checkbox => checkbox.value);
-}
-
-window.deleteSelected = function () {
-    let selectedIds = getSelectedIds();
-    if (selectedIds.length === 0) {
-        alert("Select items to delete.");
-        return;
-    }
-
-    if (confirm("Delete selected items?")) {
-        fetch('../delete_tradepoints.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ids: selectedIds })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert("Deleted successfully.");
-                // Optionally reload data or page
-                location.reload();
-            } else {
-                alert("Failed to delete: " + data.message);
-            }
-        })
-        .catch(err => {
-            console.error("Error:", err);
-            alert("Something went wrong while deleting.");
-        });
-    }
-}
 
 
 window.exportSelected = function (type) {
@@ -100,4 +96,3 @@ window.updateItemsPerPage = function (limit) {
             console.error("Failed to fetch tradepoints content:", err);
         });
 };
-
