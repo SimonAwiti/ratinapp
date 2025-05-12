@@ -103,7 +103,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
                    ('$category', '$commodity', '$country_admin_0', '$market_id', '$market_name', '$packaging_unit', '$measuring_unit', 'Retail', '$retail_price_usd', '$subject', '$day', '$month', '$year', '$date_posted', '$status', '$variety', '$data_source')";
 
     if ($con->multi_query($sql) === TRUE) {
-        echo "<script>alert('New records created successfully'); window.location.href='dashboard.php';</script>";
+        echo "<script>alert('New records created successfully'); window.location.href='../base/sidebar.php';</script>";
     } else {
         echo "Error: " . $sql . "<br>" . $con->error;
     }
@@ -193,7 +193,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='dashboard.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
         <div class="steps">
             <div class="step">
                 <div class="step-circle active"></div>

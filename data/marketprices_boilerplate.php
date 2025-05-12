@@ -292,7 +292,7 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
 
         <div class="toolbar">
             <div class="toolbar-left">
-                <a href="add_marketprices.php" class="primary" style="display: inline-block; width: 302px; height: 52px; margin-right: 15px; text-align: center; line-height: 52px; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
+                <a href="../data/add_marketprices.php" class="primary" style="display: inline-block; width: 302px; height: 52px; margin-right: 15px; text-align: center; line-height: 52px; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
                     <i class="fa fa-plus" style="margin-right: 8px;"></i> Add New
                 </a>
                 <button>

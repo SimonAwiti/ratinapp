@@ -5,11 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard</title>
 
-    <!-- Bootstrap & FontAwesome -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
 
-    <!-- Custom Styles -->
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -101,7 +99,6 @@
 <body>
 
 <div class="wrapper">
-    <!-- Sidebar -->
     <div class="sidebar">
         <div class="logo">
             <img class="ratin-logo" src="img/Ratin-logo-1.png" alt="RATIN Logo">
@@ -124,17 +121,18 @@
             </a>
         </div>
 
-        <!-- Data Section -->
         <a href="#" class="nav-link" onclick="toggleSubmenu('dataSubmenu', this)">
             <span><i class="fa fa-chart-line"></i> Data</span> 
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="submenu" id="dataSubmenu">
+            <a href="#" class="nav-link" onclick="loadContent('../data/marketprices_boilerplate.php', 'Data', 'Market Prices')">
+                <i class="fa fa-store-alt"></i> Market Prices
+            </a>
             <a href="#" class="nav-link"><i class="fa fa-database"></i> Reports</a>
             <a href="#" class="nav-link"><i class="fa fa-table"></i> Analytics</a>
         </div>
 
-        <!-- Web Section -->
         <a href="#" class="nav-link" onclick="toggleSubmenu('webSubmenu', this)">
             <span><i class="fa fa-globe"></i> Web</span> 
             <i class="fa fa-chevron-down"></i>
@@ -143,7 +141,6 @@
             <a href="#" class="nav-link"><i class="fa fa-link"></i> Website</a>
         </div>
 
-        <!-- User Section -->
         <a href="#" class="nav-link" onclick="toggleSubmenu('userSubmenu', this)">
             <span><i class="fa fa-user-gear"></i> User</span> 
             <i class="fa fa-chevron-down"></i>
@@ -154,9 +151,7 @@
         </div>
     </div>
 
-    <!-- Main Content -->
     <div class="flex-grow-1">
-        <!-- Header -->
         <div class="header-container">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb" id="breadcrumb">
@@ -168,14 +163,12 @@
             </nav>
         </div>
 
-        <!-- Main Content -->
         <div class="content-container" id="mainContent">
             <?php include 'commodities.php'; ?>
         </div>
     </div>
 </div>
 
-<!-- JavaScript -->
 <script>
     function toggleSubmenu(submenuId, element) {
         let submenu = document.getElementById(submenuId);
@@ -228,14 +221,15 @@
             .then(html => {
                 document.getElementById("mainContent").innerHTML = html;
                 updateBreadcrumb(mainCategory, subCategory);
-
-                // Load specific script based on the page
+                // Dynamically adjust script loading based on the loaded content
                 if (page.includes('commodities')) {
                     loadScript('assets/filter.js');
                 } else if (page.includes('tradepoints')) {
                     loadScript('assets/filter2.js');
                 } else if (page.includes('enumerators')) {
-                    loadScript('assets/filter3.js'); // Make sure to create this file if needed
+                    loadScript('assets/filter3.js');
+                } else if (page.includes('marketprices')) {
+                    loadScript('assets/marketprices.js');
                 }
             })
             .catch(error => {
@@ -250,7 +244,7 @@
         script.type = 'text/javascript';
         script.onload = () => console.log(`${src} loaded successfully`);
         script.onerror = (error) => console.error(`Error loading script ${src}:`, error);
-        document.head.appendChild(script); // Add the script to the <head>
+        document.head.appendChild(script);
     }
 </script>
 
