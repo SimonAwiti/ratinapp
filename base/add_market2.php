@@ -3,9 +3,31 @@ session_start();
 include '../admin/includes/config.php'; // Include database configuration
 
 // Redirect if session data is missing
-if (!isset($_SESSION['market_name'])) {
+if (!isset($_SESSION['market_name']) || !isset($_SESSION['country'])) {
     header('Location: add_market.php');
     exit;
+}
+
+// Get country from session
+$selected_country = $_SESSION['country'];
+$autofill_currency = '';
+
+// Define a mapping for countries to currencies
+$currency_map = [
+    'Kenya' => 'KES',
+    'Uganda' => 'UGX',
+    'Tanzania' => 'TZS',
+    'Rwanda' => 'RWF',
+    // Add more country-currency mappings as needed
+    // IMPORTANT: Ensure these country names exactly match what's stored in $_SESSION['country']
+];
+
+// Determine the currency to autofill
+if (isset($currency_map[$selected_country])) {
+    $autofill_currency = $currency_map[$selected_country];
+} else {
+    // Fallback if country is not in the map
+    $autofill_currency = 'N/A'; // Or a default currency like 'USD' if preferred
 }
 
 // Handle form submission
@@ -13,7 +35,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $_SESSION['longitude'] = $_POST['longitude'];
     $_SESSION['latitude'] = $_POST['latitude'];
     $_SESSION['radius'] = $_POST['radius'];
-    $_SESSION['currency'] = $_POST['currency'];
+    // Directly use the autofilled currency, as there's no dropdown input for it
+    $_SESSION['currency'] = $autofill_currency;
 
     // Handle Image Upload (Using Commodity Image Handling Approach)
     $image_url = '';
@@ -39,11 +62,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     exit;
 }
 ?>
-
-
-
-<!-- Your HTML form would go here -->
-
 
 <!DOCTYPE html>
 <html lang="en">
@@ -112,55 +130,55 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             width: 1px;
             background-color: #ccc;
         }
-.steps {
-    padding-right: 40px;
-    position: relative; /* Required for the vertical line */
-}
-.steps::before {
-    content: '';
-    position: absolute;
-    left: 22.5px; /* Center the line with the step circles (half of 45px circle width) */
-    top: 45px; /* Start from the bottom of the first step circle */
-    height: calc(100% - 45px - 100px); /* Height to connect Step 1 and Step 2 */
-    width: 1px;
-    background-color: #a45c40; /* Line color */
-}
-.step {
-    display: flex;
-    align-items: center;
-    margin-bottom: 250px; /* Increased margin to 250px */
-    position: relative; /* Ensure steps are above the line */
-}
-.step:last-child {
-    margin-bottom: 0; /* Remove margin for the last step */
-}
-.step-circle {
-    width: 45px;
-    height: 45px;
-    border-radius: 70%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    margin-right: 20px;
-    font-size: 20px;
-    z-index: 1; /* Ensure circles are above the line */
-    background-color: #d3d3d3; /* Default inactive color */
-    color: white;
-    position: relative;
-}
-.step-circle::before {
-    content: '✓'; /* Checkmark for active step */
-    display: none; /* Hidden by default */
-}
-.step-circle.active::before {
-    display: block; /* Show checkmark for active step */
-}
-.step-circle.inactive::before {
-    content: ''; /* No checkmark for inactive step */
-}
-.step-circle.active {
-    background-color: #a45c40; /* Active step color */
-}
+        .steps {
+            padding-right: 40px;
+            position: relative; /* Required for the vertical line */
+        }
+        .steps::before {
+            content: '';
+            position: absolute;
+            left: 22.5px; /* Center the line with the step circles (half of 45px circle width) */
+            top: 45px; /* Start from the bottom of the first step circle */
+            height: calc(100% - 45px - 100px); /* Height to connect Step 1 and Step 2 */
+            width: 1px;
+            background-color: #a45c40; /* Line color */
+        }
+        .step {
+            display: flex;
+            align-items: center;
+            margin-bottom: 250px; /* Increased margin to 250px */
+            position: relative; /* Ensure steps are above the line */
+        }
+        .step:last-child {
+            margin-bottom: 0; /* Remove margin for the last step */
+        }
+        .step-circle {
+            width: 45px;
+            height: 45px;
+            border-radius: 70%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-right: 20px;
+            font-size: 20px;
+            z-index: 1; /* Ensure circles are above the line */
+            background-color: #d3d3d3; /* Default inactive color */
+            color: white;
+            position: relative;
+        }
+        .step-circle::before {
+            content: '✓'; /* Checkmark for active step */
+            display: none; /* Hidden by default */
+        }
+        .step-circle.active::before {
+            display: block; /* Show checkmark for active step */
+        }
+        .step-circle.inactive::before {
+            content: ''; /* No checkmark for inactive step */
+        }
+        .step-circle.active {
+            background-color: #a45c40; /* Active step color */
+        }
         /* Image Upload Styles */
         .progress-bar-container {
             width: 100%;
@@ -226,7 +244,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             margin-top: 20px;
             gap: 60px; /* Adds space between the buttons */
         }
-
+        /* Style for the read-only currency text */
+        .currency-display {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #e9ecef; /* Light grey background for read-only fields */
+            font-size: 1rem;
+            color: #495057;
+            margin-bottom: 15px; /* Match spacing of other form elements */
+            box-sizing: border-box; /* Include padding and border in width */
+            width: 100%; /* Take full width */
+        }
     </style>
 </head>
 <body>
@@ -255,7 +284,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <label><input type="radio" name="tradepoint"> Millers</label>
             </div>
             <form method="POST" action="add_market2.php" enctype="multipart/form-data">
-                <!-- Longitude & Latitude in one row -->
                 <div class="location-container">
                     <label for="longitude">Longitude *
                         <input type="text" id="longitude" name="longitude" required>
@@ -268,25 +296,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <label for="radius">Market radius *</label>
                 <input type="text" id="radius" name="radius" required>
 
-                <label for="currency">Currency *</label>
-                <select id="currency" name="currency" required>
-                    <option value="">Select currency</option>
-                    <option value="KES">KES</option>
-                    <option value="TSH">TSH</option>
-                </select>
+                <label>Currency *</label>
+                <div class="currency-display"><?= htmlspecialchars($autofill_currency) ?></div>
+                <label for="imageUpload">Upload Images *</label>
+                <input type="file" id="imageUpload" name="imageUpload" accept="image/*">
 
-                <!-- Image Upload Section -->
-                    <label for="imageUpload">Upload Images *</label>
-                    <input type="file" id="imageUpload" name="imageUpload" accept="image/*">
-                
-                <!-- Progress Bar -->
                 <div class="progress-bar-container">
                     <div class="progress-bar" id="progressBar"></div>
                 </div>
 
-                <!-- Buttons on the same line -->
                 <div class="button-container">
-                    <button type="button" class="next-btn" onclick="window.location.href='addtradepoint.php'">&larr; Previous</button>
+                    <button type="button" class="next-btn" onclick="window.location.href='add_market.php'">&larr; Previous</button>
                     <button type="submit" class="next-btn">Next &rarr;</button>
                 </div>
             </form>
@@ -300,7 +320,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             const progressBar = document.getElementById("progressBar");
             const progressContainer = document.querySelector(".progress-bar-container");
 
-            preview.innerHTML = ""; 
+            // If you want to show image previews, you need a div with id="imagePreview" in your HTML
+            // For example, right after the imageUpload input: <div id="imagePreview"></div>
+            // For now, I'm commenting out the preview related lines if imagePreview doesn't exist
+            // preview.innerHTML = "";
             if (files.length === 0) return;
 
             progressContainer.style.display = "block";
@@ -308,11 +331,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
             let uploaded = 0;
             const total = files.length;
-            
+
             Array.from(files).forEach((file, index) => {
                 const reader = new FileReader();
-                
+
                 reader.onload = function(event) {
+                    // If you want image previews, uncomment and ensure #imagePreview exists
+                    /*
                     const imgDiv = document.createElement("div");
                     imgDiv.classList.add("preview-image");
                     imgDiv.innerHTML = `
@@ -320,7 +345,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <button class="remove-img" onclick="removeImage(this)">✖</button>
                     `;
                     preview.appendChild(imgDiv);
-                    
+                    */
+
                     uploaded++;
                     progressBar.style.width = `${(uploaded / total) * 100}%`;
 
@@ -328,7 +354,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         setTimeout(() => { progressContainer.style.display = "none"; }, 500);
                     }
                 };
-                
+
                 reader.readAsDataURL(file);
             });
         });
@@ -336,6 +362,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         function removeImage(button) {
             button.parentElement.remove();
         }
+
+        // Set previous button href dynamically
+        document.querySelector('.button-container .next-btn:first-child').onclick = function() {
+            window.location.href = 'add_market.php'; // Corrected to add_market.php for step 1
+        };
     </script>
 </body>
 </html>
