@@ -245,7 +245,24 @@ body {
                         <td><?= htmlspecialchars($tp['admin0']) ?></td>
                         <td><?= htmlspecialchars($tp['admin1']) ?></td>
                         <td>
-                            <a href="edit_market.php?id=<?= $tp['id'] ?>">
+                            <?php
+                            $editPage = '';
+                            switch ($tp['tradepoint_type']) {
+                                case 'Markets':
+                                    $editPage = 'edit_market.php';
+                                    break;
+                                case 'Border Points':
+                                    $editPage = 'edit_borderpoint.php'; // New page for Border Points
+                                    break;
+                                case 'Millers':
+                                    $editPage = 'edit_miller.php';       // New page for Millers
+                                    break;
+                                default:
+                                    $editPage = '#'; // Fallback or error page
+                                    break;
+                            }
+                            ?>
+                            <a href="<?= htmlspecialchars($editPage) ?>?id=<?= htmlspecialchars($tp['id']) ?>">
                                 <button class="btn btn-sm btn-warning">
                                     <img src="img/edit.svg" alt="Edit" style="width: 20px; height: 20px;">
                                 </button>
