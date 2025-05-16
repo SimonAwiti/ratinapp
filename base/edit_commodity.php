@@ -199,6 +199,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border-radius: 5px;
             margin-bottom: 15px;
         }
+
+        /* --- New styles for side-by-side layout --- */
+        .form-row-side-by-side {
+            display: flex;
+            gap: 20px; /* Adjust spacing between the two columns */
+            margin-bottom: 15px; /* Spacing below this row */
+        }
+
+        .form-group-half {
+            flex: 1; /* Each group takes equal space */
+        }
     </style>
 </head>
 <body>
@@ -229,11 +240,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endforeach; ?>
             </select>
 
-            <label for="commodity-name">Commodity name *</label>
-            <input type="text" id="commodity-name" name="commodity_name" value="<?= htmlspecialchars($commodity['commodity_name'] ?? '') ?>" required>
-
-            <label for="variety">Variety</label>
-            <input type="text" id="variety" name="variety" value="<?= htmlspecialchars($commodity['variety'] ?? '') ?>">
+            <div class="form-row-side-by-side">
+                <div class="form-group-half">
+                    <label for="commodity-name">Commodity name *</label>
+                    <input type="text" id="commodity-name" name="commodity_name" value="<?= htmlspecialchars($commodity['commodity_name'] ?? '') ?>" required>
+                </div>
+                <div class="form-group-half">
+                    <label for="variety">Variety</label>
+                    <input type="text" id="variety" name="variety" value="<?= htmlspecialchars($commodity['variety'] ?? '') ?>">
+                </div>
+            </div>
 
             <label>Commodity Packaging & Unit</label>
             <div id="packaging-unit-container" class="dynamic-fields-container">
@@ -294,7 +310,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Assuming aliases and countries are stored as simple arrays of strings
                 $max_entries = max(count($commodity_aliases_decoded), count($countries_decoded));
                 if ($max_entries > 0) {
-                    for ($i = 0; $i < $max_entries; $i++) {
+                    for ($i = 0; $i < $max_entries; $i++) { // Corrected: $i instead of i
                         $alias_val = htmlspecialchars($commodity_aliases_decoded[$i] ?? '');
                         $country_val = htmlspecialchars($countries_decoded[$i] ?? '');
                         echo '
