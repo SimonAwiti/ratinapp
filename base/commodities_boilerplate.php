@@ -2,33 +2,56 @@
 // Include database configuration
 include '../admin/includes/config.php';
 
-// Fetch all data
-$query = $query = "
-    SELECT 
-        c.id, 
-        c.hs_code, 
-        cc.name AS category, 
-        c.commodity_name, 
-        c.variety, 
+// --- Fetch all data for the table (existing logic) ---
+$query = "
+    SELECT
+        c.id,
+        c.hs_code,
+        cc.name AS category,
+        c.commodity_name,
+        c.variety,
         c.image_url
-    FROM 
+    FROM
         commodities c
-    JOIN 
+    JOIN
         commodity_categories cc ON c.category_id = cc.id
 ";
 
 $result = $con->query($query);
 $commodities = $result->fetch_all(MYSQLI_ASSOC);
 
-// Pagination setup
+// Pagination setup (existing logic)
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
 $totalItems = count($commodities);
 $totalPages = ceil($totalItems / $itemsPerPage);
 $page = isset($_GET['page']) ? max(1, min($totalPages, intval($_GET['page']))) : 1;
 $startIndex = ($page - 1) * $itemsPerPage;
 
-// Slice data for current page
-$commodities = array_slice($commodities, $startIndex, $itemsPerPage);
+// Slice data for current page (existing logic)
+$commodities_paged = array_slice($commodities, $startIndex, $itemsPerPage); // Renamed to avoid confusion with total
+
+// --- New: Fetch counts for summary boxes ---
+
+// Total Commodities
+$total_commodities_query = "SELECT COUNT(*) AS total FROM commodities";
+$total_commodities_result = $con->query($total_commodities_query);
+$total_commodities = $total_commodities_result->fetch_assoc()['total'];
+
+// Count for Cereals (assuming 'Cereals' category has id 3 from your previous code)
+$cereals_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Cereals')";
+$cereals_result = $con->query($cereals_query);
+$cereals_count = $cereals_result->fetch_assoc()['total'];
+
+// Count for Pulses (assuming 'Pulses' category has id 2 from your previous code)
+$pulses_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Pulses')";
+$pulses_result = $con->query($pulses_query);
+$pulses_count = $pulses_result->fetch_assoc()['total'];
+
+// Count for Oil Seeds (assuming 'Oil seeds' category has id 1 from your previous code)
+$oil_seeds_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Oil seeds')";
+$oil_seeds_result = $con->query($oil_seeds_query);
+$oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -37,7 +60,6 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Commodities Table</title>
 
-    <!-- Bootstrap 5.3 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="assets/style.css" />
     <link rel="stylesheet" href="assets/globals.css" />
@@ -62,7 +84,7 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
             gap: 10px; /* Space between buttons */
         }
         .btn-add-new {
-            background-color:  rgba(180, 80, 50, 1);;
+            background-color:  rgba(180, 80, 50, 1);
             color: white;
             padding: 10px 20px; /* Larger button */
             font-size: 16px;
@@ -171,22 +193,22 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
         <div class="overlap-6">
             <div class="img-wrapper"><img class="frame-38" src="img/frame-3.svg" /></div>
             <div class="text-wrapper-34">Commodities</div>
-            <div class="text-wrapper-35">190</div>
+            <div class="text-wrapper-35"><?= $total_commodities ?></div>
         </div>
         <div class="overlap-7">
             <div class="overlap-8"><img class="frame-39" src="img/frame-26.svg" /></div>
             <div class="text-wrapper-36">Cereals</div>
-            <div class="text-wrapper-37">100</div>
+            <div class="text-wrapper-37"><?= $cereals_count ?></div>
         </div>
         <div class="overlap-9">
             <div class="overlap-10"><img class="frame-40" src="img/frame-27.svg" /></div>
             <div class="text-wrapper-38">Pulses</div>
-            <div class="text-wrapper-39">45</div>
+            <div class="text-wrapper-39"><?= $pulses_count ?></div>
         </div>
         <div class="overlap-9">
             <div class="overlap-10"><img class="frame-40" src="img/frame-3.svg" /></div>
             <div class="text-wrapper-38">Oil Seeds</div>
-            <div class="text-wrapper-39">100</div>
+            <div class="text-wrapper-39"><?= $oil_seeds_count ?></div>
         </div>
     </div>
 </div>
@@ -194,9 +216,7 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
 <div class="container">
     <div class="table-container">
 
-        <!-- Action Buttons -->
         <div class="btn-group">
-            <!-- Updated "Add New" Button -->
             <a href="add_commodity.php" class="btn btn-add-new">
                 <img src="img/frame-10.svg" alt="Add New" style="width: 22px; height: 22px; margin-right: 5px;">
                 Add New
@@ -206,7 +226,6 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
                 <img src="img/frame-8.svg" alt="Delete" style="width: 20px; height: 20px; margin-right: 3px;">Delete
             </button>
 
-            <!-- Export Dropdown -->
             <div class="dropdown">
                 <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                     <img src="img/frame-25.svg" alt="Export" style="width: 20px; height: 20px; margin-right: 3px;">
@@ -219,7 +238,6 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
             </div>
         </div>
 
-        <!-- Table -->
         <table class="table table-striped table-hover">
             <thead>
                 <tr style="background-color: #d3d3d3 !important; color: black !important;">
@@ -242,7 +260,7 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
                 </tr>
             </thead>
             <tbody id="commodityTable">
-                <?php foreach ($commodities as $commodity): ?>
+                <?php foreach ($commodities_paged as $commodity): // Use $commodities_paged here ?>
                     <tr>
                         <td>
                             <input type="checkbox" class="row-checkbox" value="<?php echo $commodity['id']; ?>">
@@ -270,7 +288,6 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
             </tbody>
         </table>
 
-        <!-- Pagination -->
         <div class="d-flex justify-content-between align-items-center">
             <div>
                 Displaying <?= $startIndex + 1 ?> to <?= min($startIndex + $itemsPerPage, $totalItems) ?> of <?= $totalItems ?> items
@@ -301,7 +318,6 @@ $commodities = array_slice($commodities, $startIndex, $itemsPerPage);
         </div>
     </div>
 </div>
-<!-- Bootstrap & JavaScript -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/filter.js"></script>
 </body>
