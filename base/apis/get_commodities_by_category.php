@@ -24,7 +24,7 @@ if ($categoryId <= 0) {
 try {
     // Prepare and execute query
     $stmt = $con->prepare("
-        SELECT id, commodity_name, variety, size, unit, hs_code, commodity_alias, country, image_url, created_at, category_id
+        SELECT id, commodity_name, variety, units, hs_code, commodity_alias, country, image_url, created_at, category_id
         FROM commodities
         WHERE category_id = ?
     ");
