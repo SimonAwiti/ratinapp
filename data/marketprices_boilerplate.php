@@ -284,6 +284,120 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
         }
 
     </style>
+    <script>
+        function confirmAction(action, ids) {
+            if (ids.length === 0) {
+                alert('Please select items to ' + action + '.');
+                return;
+            }
+
+            let message = 'Are you sure you want to ' + action + ' these items?';
+            if (confirm(message)) {
+                // Send an AJAX request to update the statuses
+                console.log('Action:', action);
+                console.log('IDs:', ids);
+
+                fetch('update_status.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: action,
+                        ids: ids,
+                    }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Response:', data);
+                    if (data.success) {
+                        alert('Items ' + action + ' successfully.');
+                        window.location.reload();
+                    } else {
+                        alert('Failed to ' + action + ' items: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while ' + action + ' items.');
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const selectAllCheckbox = document.getElementById('select-all');
+            const checkboxes = document.querySelectorAll('table tbody input[type="checkbox"]');
+            const approveButton = document.querySelector('.toolbar .approve');
+            const publishButton = document.querySelector('.toolbar .primary');
+            const deleteButton = document.querySelector('.toolbar button:nth-of-type(2)');
+
+
+            let selectedIds = [];
+
+            function updateSelectedIds() {
+                selectedIds = Array.from(checkboxes)
+                    .filter(checkbox => checkbox.checked)
+                    .map(checkbox => checkbox.getAttribute('data-id'));
+                console.log('Selected IDs:', selectedIds);
+                return selectedIds; // Return the selected IDs
+            }
+
+            checkboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', () => {
+                    updateSelectedIds();
+                    if (checkboxes.length === document.querySelectorAll('table tbody input[type="checkbox"]:checked').length) {
+                        selectAllCheckbox.checked = true;
+                    } else {
+                        selectAllCheckbox.checked = false;
+                    }
+                });
+            });
+
+            selectAllCheckbox.addEventListener('change', () => {
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = selectAllCheckbox.checked;
+                });
+                updateSelectedIds();
+            });
+
+
+          approveButton.addEventListener('click', () => {
+                const ids = updateSelectedIds(); // Get the selected IDs
+                console.log("Approve button clicked. IDs:", ids); // Log
+                confirmAction('approve', ids);
+            });
+
+            publishButton.addEventListener('click', () => {
+                const ids = updateSelectedIds(); // Get the selected IDs
+                console.log("Publish button clicked. IDs:", ids); // Log
+                // Check if selected items are approved before publishing
+                fetch('../data/check_status.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ids: ids }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.allApproved) {
+                        confirmAction('publish', ids);
+                    } else {
+                        alert('Please approve the selected items before publishing.');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while checking approval status.');
+                });
+            });
+
+            deleteButton.addEventListener('click', () => {
+                const ids = updateSelectedIds();  //get selected ids
+                confirmAction('delete', ids);
+            });
+        });
+    </script>
 </head>
 <body>
     <div class="container">
@@ -293,7 +407,7 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
         <div class="toolbar">
             <div class="toolbar-left">
                 <a href="../data/add_marketprices.php" class="primary" style="display: inline-block; width: 302px; height: 52px; margin-right: 15px; text-align: center; line-height: 52px; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
-                    <i class="fa fa-plus" style="margin-right: 8px;"></i> Add New
+                    <i class="fa fa-plus" style="margin-right: 6px;"></i> Add New
                 </a>
                 <button>
                     <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
@@ -321,7 +435,7 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
         <table>
             <thead>
                 <tr>
-                    <th><input type="checkbox" /></th>
+                    <th><input type="checkbox" id="select-all"/></th>
                     <th>Market</th>
                     <th>Commodity</th>
                     <th>Date</th>
@@ -353,7 +467,7 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
                             ?>
                             <tr>
                                 <?php if ($first_row): ?>
-                                    <td rowspan="<?php echo count($prices); ?>"><input type="checkbox" /></td>
+                                    <td rowspan="<?php echo count($prices); ?>"><input type="checkbox" data-id="<?php echo $prices[0]['id']; ?>"/></td>
                                     <td rowspan="<?php echo count($prices); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
                                     <td rowspan="<?php echo count($prices); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
                                     <td rowspan="<?php echo count($prices); ?>"><?php echo $date; ?></td>
