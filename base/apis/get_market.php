@@ -3,16 +3,30 @@
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 
-include_once '../../admin/includes/config.php';
+include_once '../../admin/includes/config.php'; // Adjust the path if needed
 
-if (!isset($_GET['id']) || empty($_GET['id'])) {
-    http_response_code(400);
-    echo json_encode(array("status" => "error", "message" => "Market ID is required"));
-    exit;
+// Function to handle errors and send JSON response
+function sendJsonResponse($status, $data = null, $message = null, $http_code = 200) {
+    http_response_code($http_code);
+    $response = array("status" => $status);
+    if ($data !== null) {
+        $response["data"] = $data;
+    }
+    if ($message !== null) {
+        $response["message"] = $message;
+    }
+    echo json_encode($response);
+    exit; // Stop execution after sending the response
 }
 
-$market_id = $con->real_escape_string($_GET['id']);
+// Check for required parameter
+if (!isset($_GET['id']) || empty($_GET['id'])) {
+    sendJsonResponse("error", null, "Market ID is required", 400);
+}
 
+$market_id = $_GET['id'];
+
+// Use a prepared statement to prevent SQL injection
 $query = "SELECT 
             m.id, 
             m.market_name, 
@@ -34,15 +48,23 @@ $query = "SELECT
             ), ']') AS commodities_json
           FROM markets m
           LEFT JOIN commodities c ON FIND_IN_SET(c.id, m.primary_commodity)
-          WHERE m.id = '$market_id'
+          WHERE m.id = ?
           GROUP BY m.id";
 
-$result = $con->query($query);
+$stmt = $con->prepare($query);
+
+if (!$stmt) {
+    // Log the error (optional, for server-side logging)
+    error_log("Database error: " . $con->error);
+    sendJsonResponse("error", null, "Failed to prepare statement", 500); // Internal Server Error
+}
+
+$stmt->bind_param("i", $market_id); // "i" for integer
+$stmt->execute();
+$result = $stmt->get_result();
 
 if ($result->num_rows === 0) {
-    http_response_code(404);
-    echo json_encode(array("status" => "error", "message" => "Market not found"));
-    exit;
+    sendJsonResponse("error", null, "Market not found", 404);
 }
 
 $row = $result->fetch_assoc();
@@ -68,11 +90,5 @@ $market = array(
     "image_url" => $row['image_url']
 );
 
-http_response_code(200);
-echo json_encode(array(
-    "status" => "success",
-    "data" => $market
-));
-
-$con->close();
+sendJsonResponse("success", $market); // 200 OK is implied
 ?>

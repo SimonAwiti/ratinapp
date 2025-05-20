@@ -110,7 +110,7 @@
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="submenu" id="baseSubmenu">
-            <a href="#" class="nav-link" onclick="loadContent('commodities.php', 'Base', 'Commodities')">
+            <a href="#" class="nav-link" onclick="loadContent('commodities_boilerplate.php', 'Base', 'Commodities')">
                 <i class="fa fa-circle" style="color:#8B4513;"></i> Commodities
             </a>
             <a href="#" class="nav-link" onclick="loadContent('tradepoints_boilerplate.php', 'Base', 'Trade Points')">
