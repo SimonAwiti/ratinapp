@@ -219,17 +219,41 @@
                 return response.text();
             })
             .then(html => {
+                // Set the innerHTML *before* trying to load/initialize scripts for it
                 document.getElementById("mainContent").innerHTML = html;
                 updateBreadcrumb(mainCategory, subCategory);
-                // Dynamically adjust script loading based on the loaded content
-                if (page.includes('commodities')) {
+
+                // Remove any previously added dynamic scripts
+                document.querySelectorAll('script.dynamic-script').forEach(script => script.remove());
+
+                // Load specific scripts based on page
+                if (page.includes('commodities_boilerplate.php')) {
                     loadScript('assets/filter.js');
-                } else if (page.includes('tradepoints')) {
+                } else if (page.includes('tradepoints_boilerplate.php')) {
                     loadScript('assets/filter2.js');
-                } else if (page.includes('enumerators')) {
+                } else if (page.includes('enumerator_boilerplate.php')) {
                     loadScript('assets/filter3.js');
-                } else if (page.includes('marketprices')) {
-                    loadScript('assets/marketprices.js');
+                } else if (page.includes('marketprices_boilerplate.php')) {
+                    // Dynamically load marketprices.js
+                    const script = document.createElement('script');
+                    script.src = 'assets/marketprices.js'; // Ensure this path is correct relative to sidebar.php
+                    script.type = 'text/javascript';
+                    script.className = 'dynamic-script';
+
+                    script.onload = () => {
+                        // This is the CRUCIAL part: Call the initialization function *only* when the script is loaded
+                        // and the new content is in the DOM.
+                        if (typeof initializeMarketPrices === 'function') {
+                            initializeMarketPrices();
+                        } else {
+                            console.error("initializeMarketPrices function not found after script load.");
+                        }
+                    };
+                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
+
+                    // Append the script to the body to execute it.
+                    // It's important that this happens *after* the HTML is in mainContent
+                    document.body.appendChild(script);
                 }
             })
             .catch(error => {
@@ -237,14 +261,15 @@
             });
     }
 
-    // Function to dynamically load a JavaScript file
+    // Function to dynamically load a JavaScript file (this is generally fine)
     function loadScript(src) {
         const script = document.createElement('script');
         script.src = src;
         script.type = 'text/javascript';
+        script.className = 'dynamic-script'; // Add a class to identify dynamic scripts
         script.onload = () => console.log(`${src} loaded successfully`);
         script.onerror = (error) => console.error(`Error loading script ${src}:`, error);
-        document.head.appendChild(script);
+        document.body.appendChild(script); // Append to body to ensure script execution order if needed
     }
 </script>
 
