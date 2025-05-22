@@ -378,7 +378,13 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
                         <td><?php echo $month_change; ?></td>
                         <td><?php echo getStatusDisplay($price['status']); ?></td>
                         <td><?php echo htmlspecialchars($price['data_source']); ?></td>
-                        <td class="actions">✏️ 🗑️</td>
+                        <td>
+                            <a href="../data/edit_marketprice.php?id=<?= $price['id'] ?>">
+                                <button class="btn btn-sm btn-warning">
+                                    <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
+                                </button>
+                            </a>
+                        </td>
                     </tr>
                     <?php
                     $first_row = false;
