@@ -58,23 +58,28 @@ function convertToUSD($amount, $country) {
 
 // Processing the form submission only when all fields are submitted
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'])) {
+    // --- DEBUGGING: Log POST data ---
+    error_log("--- Form Submission ---");
+    error_log("POST data received: " . print_r($_POST, true));
+    // -----------------------------------
+
     // Initialize variables and sanitize input
     $country = isset($_POST['country']) ? mysqli_real_escape_string($con, $_POST['country']) : '';
     $market_id = isset($_POST['market']) ? (int)$_POST['market'] : 0;
     $category_name = isset($_POST['category']) ? mysqli_real_escape_string($con, $_POST['category']) : ''; // This is the category name, not ID
     $commodity_id = isset($_POST['commodity']) ? (int)$_POST['commodity'] : 0;
     $packaging_unit = isset($_POST['packaging_unit']) ? mysqli_real_escape_string($con, $_POST['packaging_unit']) : '';
-    $measuring_unit = isset($_POST['measuring_unit']) ? mysqli_real_escape_string($con, $_POST['measuring_unit']) : ''; // Corrected variable name from measuring_string to measuring_unit
+    $measuring_unit = isset($_POST['measuring_unit']) ? mysqli_real_escape_string($con, $_POST['measuring_unit']) : '';
     $variety = isset($_POST['variety']) ? mysqli_real_escape_string($con, $_POST['variety']) : '';
     $data_source = isset($_POST['data_source']) ? mysqli_real_escape_string($con, $_POST['data_source']) : '';
     $wholesale_price = isset($_POST['wholesale_price']) ? (float)$_POST['wholesale_price'] : 0;
     $retail_price = isset($_POST['retail_price']) ? (float)$_POST['retail_price'] : 0;
 
-    // Validate required fields
+    // Validate required fields (variety and data_source are now optional in PHP based on NULLable columns)
     if (empty($country) || $market_id <= 0 || empty($category_name) || $commodity_id <= 0 ||
-        empty($packaging_unit) || empty($measuring_unit) || empty($variety) ||
-        empty($data_source) || $wholesale_price <= 0 || $retail_price <= 0) {
-        echo "<script>alert('Please fill all required fields with valid values.'); window.history.back();</script>";
+        empty($packaging_unit) || empty($measuring_unit) ||
+        $wholesale_price <= 0 || $retail_price <= 0) {
+        echo "<script>alert('Please fill all required fields with valid values (except Variety and Data Source which are optional).'); window.history.back();</script>";
         exit;
     }
 
@@ -124,15 +129,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
 
     $stmt = $con->prepare($sql);
     if ($stmt) {
-        // CORRECTED LINE: The type definition string now accurately matches the 32 bind variables.
+        // CORRECTED LINE from previous debugging: The type definition string now accurately matches the 32 bind variables.
         $stmt->bind_param(
             "sssisssdsiiisssssssisssdsiiissss", // 16 variables * 2 rows = 32 characters
-            $category_name, $commodity_name, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $wholesale_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source,
-            $category_name, $commodity_name, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $retail_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source
+            $category_name, $commodity_id, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $wholesale_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source,
+            $category_name, $commodity_id, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $retail_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source
         );
 
         if ($stmt->execute()) {
-            echo "<script>alert('New records created successfully'); window.location.href='marketprices_boilerplate.php';</script>";
+            echo "<script>alert('New records created successfully'); window.location.href='../base/sidebar.php';</script>";
         } else {
             error_log("Error inserting market prices: " . $stmt->error);
             echo "<script>alert('Error inserting records: " . $stmt->error . "');</script>";
@@ -280,7 +285,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
                             <option value="Cereals">Cereals</option>
                             <option value="Pulses">Pulses</option>
                             <option value="Oil seeds">Oil Seeds</option>
-                        </select>
+                            </select>
                     </div>
                     <div class="form-group">
                         <label for="commodity">Commodity *</label>
@@ -310,13 +315,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
                     <div class="form-group">
                         <label for="variety">Variety *</label>
                         <input type="text" name="variety" id="variety"
-                               value="<?php echo isset($_POST['variety']) ? htmlspecialchars($_POST['variety']) : ''; ?>">
-                    </div>
+                               value="<?php echo isset($_POST['variety']) ? htmlspecialchars($_POST['variety']) : ''; ?>"> </div>
                     <div class="form-group">
                         <label for="data_source">Data Source *</label>
                         <input type="text" name="data_source" id="data_source"
-                               value="<?php echo isset($_POST['data_source']) ? htmlspecialchars($_POST['data_source']) : ''; ?>">
-                    </div>
+                               value="<?php echo isset($_POST['data_source']) ? htmlspecialchars($_POST['data_source']) : ''; ?>"> </div>
                 </div>
 
                 <div class="form-row">
@@ -338,24 +341,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
             </form>
         </div>
     </div>
-    <script>
+<script>
         document.addEventListener('DOMContentLoaded', function() {
             const marketSelect = document.getElementById('market');
             const commoditySelect = document.getElementById('commodity');
             const categorySelect = document.getElementById('category');
             const dataSourceInput = document.getElementById('data_source');
 
-            function loadMarketDetails(marketId) {
-                // Reset/clear fields while loading
-                commoditySelect.innerHTML = '<option value="" disabled selected>Loading...</option>';
-                // Keep the "Select Category" option, but deselect others temporarily
-                categorySelect.value = ""; // This will select the first suitable "value=''" option
-                dataSourceInput.value = '';
+            // Store fetched commodities data to easily look up category/data_source when commodity changes
+            let currentMarketCommodities = []; 
+
+            function loadCommoditiesForMarket(marketId) {
+                // Reset commodity dropdown and auto-filled fields
+                commoditySelect.innerHTML = '<option value="" disabled selected>Loading commodities...</option>'; // Changed text
+                categorySelect.value = ""; // Clear selected category
+                dataSourceInput.value = ''; // Clear data source
+                currentMarketCommodities = []; // Clear stored data
 
                 if (!marketId) {
                     commoditySelect.innerHTML = '<option value="" disabled selected>Select Market first</option>';
-                    categorySelect.value = ""; // Ensure "Select Category" is shown
-                    dataSourceInput.value = '';
                     return;
                 }
 
@@ -367,91 +371,101 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
                         return response.json();
                     })
                     .then(data => {
-                        // Clear previous options from commodity dropdown
-                        commoditySelect.innerHTML = '';
-                        // Reset category to default before trying to select
-                        categorySelect.value = ""; // Ensures "Select Category" is the initial selection
-                        dataSourceInput.value = '';
-
-                        if (data.success && data.data) {
-                            const marketDetails = data.data;
-
-                            // --- Populate Commodity dropdown ---
-                            if (marketDetails.commodity_id && marketDetails.commodity_name) {
+                        commoditySelect.innerHTML = '<option value="" disabled selected>Select Commodity</option>';
+                        if (data.success && data.data && data.data.length > 0) {
+                            currentMarketCommodities = data.data; // Store all commodities returned
+                            
+                            // Populate commodity dropdown
+                            data.data.forEach(commodity => {
                                 const option = document.createElement('option');
-                                option.value = marketDetails.commodity_id;
-                                option.textContent = marketDetails.commodity_name;
+                                option.value = commodity.commodity_id;
+                                option.textContent = commodity.commodity_name;
                                 commoditySelect.appendChild(option);
-                            } else {
-                                commoditySelect.innerHTML = '<option value="" disabled selected>No primary commodity found</option>';
-                            }
+                            });
 
-                            // --- Automatically set Category ---
-                            if (marketDetails.category) {
-                                const dbCategory = marketDetails.category.trim(); // Trim whitespace from DB value
-                                let foundCategory = false;
-
-                                // Iterate through existing options to find a match and set it selected
-                                for (let i = 0; i < categorySelect.options.length; i++) {
-                                    const option = categorySelect.options[i];
-                                    // Compare trimmed option value or textContent with trimmed DB category
-                                    if (option.value.trim() === dbCategory || option.textContent.trim() === dbCategory) {
-                                        option.selected = true; // Select this option
-                                        foundCategory = true;
-                                        break; // Stop after finding the first match
-                                    } else {
-                                        option.selected = false; // Deselect other options
-                                    }
-                                }
-
-                                if (!foundCategory) {
-                                    console.warn(`Category "${dbCategory}" from DB is not a predefined option by value or textContent.`);
-                                    // If no match found, ensure the default "Select Category" is chosen
-                                    categorySelect.value = "";
-                                }
-
-                            } else {
-                                console.log("No category returned for this market. Resetting category dropdown.");
-                                categorySelect.value = ""; // Ensure "Select Category" is displayed
-                            }
-
-                            // --- Automatically set Data Source ---
-                            if (marketDetails.data_source) {
-                                dataSourceInput.value = marketDetails.data_source.trim(); // Trim whitespace
+                            // Auto-select the first commodity if only one is returned, or if desired
+                            // For Rongai, this will populate with both 34 and 35
+                            if (data.data.length > 0) { // Check if any commodities are loaded
+                                commoditySelect.value = data.data[0].commodity_id; // Select the first one by default
+                                setCategoryAndDataSourceForCommodity(data.data[0].commodity_id);
                             }
 
                         } else {
-                            // Handle cases where no data is returned for the market
-                            commoditySelect.innerHTML = '<option value="" disabled selected>No details found</option>';
-                            categorySelect.value = ""; // Reset category to default
-                            dataSourceInput.value = '';
+                            commoditySelect.innerHTML = '<option value="" disabled selected>No commodities found for this market</option>';
                             if (data.message) {
                                 console.warn("Server message:", data.message);
                             }
                         }
                     })
                     .catch(error => {
-                        console.error('Error fetching market details:', error);
-                        commoditySelect.innerHTML = '<option value="" disabled selected>Error loading commodity</option>';
-                        categorySelect.value = ""; // Reset category on error
-                        dataSourceInput.value = ''; // Clear on error
+                        console.error('Error fetching commodities:', error);
+                        commoditySelect.innerHTML = '<option value="" disabled selected>Error loading commodities</option>';
                     });
             }
 
+            function setCategoryAndDataSourceForCommodity(commodityId) {
+                categorySelect.value = ""; // Reset before setting
+                dataSourceInput.value = ''; // Reset before setting
+
+                if (!commodityId) {
+                    return; // No commodity selected
+                }
+
+                // Find the selected commodity's details from the `currentMarketCommodities` array
+                const selectedCommodity = currentMarketCommodities.find(
+                    commodity => String(commodity.commodity_id) === String(commodityId)
+                );
+
+                if (selectedCommodity) {
+                    // Set Category dropdown based on 'category_name' from fetched data
+                    if (selectedCommodity.category_name) {
+                        const dbCategory = selectedCommodity.category_name.trim();
+                        let foundCategory = false;
+                        for (let i = 0; i < categorySelect.options.length; i++) {
+                            const option = categorySelect.options[i];
+                            if (option.value.trim() === dbCategory || option.textContent.trim() === dbCategory) {
+                                option.selected = true;
+                                foundCategory = true;
+                                break;
+                            }
+                        }
+                        if (!foundCategory) {
+                            console.warn(`Category "${dbCategory}" from selected commodity is not a predefined option in the form.`);
+                            categorySelect.value = ""; 
+                        }
+                    } else {
+                        console.log("No category_name found for this commodity in fetched data.");
+                        categorySelect.value = ""; 
+                    }
+
+                    // Set Data Source input field based on 'data_source' from fetched data
+                    if (selectedCommodity.data_source) {
+                       dataSourceInput.value = selectedCommodity.data_source.trim();
+                    } else {
+                       console.log("No data source found for this commodity from markets table.");
+                       dataSourceInput.value = ''; 
+                    }
+                } else {
+                    console.warn(`Commodity with ID ${commodityId} not found in fetched list.`);
+                }
+            }
+
+
             // Event listener for when the market selection changes
             marketSelect.addEventListener('change', function() {
-                loadMarketDetails(this.value);
+                loadCommoditiesForMarket(this.value);
+            });
+
+            // Event listener for when the commodity selection changes
+            commoditySelect.addEventListener('change', function() {
+                setCategoryAndDataSourceForCommodity(this.value);
             });
 
             // Initial load: If a market was pre-selected (e.g., after a form submission error)
-            // or if the first market is automatically selected, load its details.
             if (marketSelect.value) {
-                loadMarketDetails(marketSelect.value);
+                loadCommoditiesForMarket(marketSelect.value);
             } else {
-                // If no market is selected initially, prompt the user to select one
                 commoditySelect.innerHTML = '<option value="" disabled selected>Select Market first</option>';
-                categorySelect.value = ""; // Ensure "Select Market first" is shown
-                dataSourceInput.value = '';
             }
         });
     </script>
