@@ -7,7 +7,8 @@ function getPricesData($con, $limit = 10, $offset = 0) {
     $sql = "SELECT
                 p.id,
                 p.market,
-                c.commodity_name,
+                p.commodity, -- This is now the commodity ID from market_prices
+                c.commodity_name, -- This will fetch the name from the commodities table
                 p.price_type,
                 p.Price,
                 p.date_posted,
@@ -16,7 +17,7 @@ function getPricesData($con, $limit = 10, $offset = 0) {
             FROM
                 market_prices p
             LEFT JOIN
-                commodities c ON p.commodity = c.id
+                commodities c ON p.commodity = c.id -- Correct join: p.commodity (ID) = c.id
             ORDER BY
                 p.date_posted DESC
             LIMIT $limit OFFSET $offset";
@@ -79,21 +80,20 @@ function getStatusDisplay($status) {
  * Calculates the Day-over-Day (DoD) price change.
  *
  * @param float $currentPrice The current day's price.
- * @param string $commodity The commodity.
+ * @param int $commodityId The commodity ID (now correctly passed as an ID).
  * @param string $market The market.
  * @param string $priceType The price type (e.g., 'Wholesale', 'Retail').
  * @param mysqli $con The database connection.
  *
  * @return string The DoD change as a percentage (e.g., '2.04%') or 'N/A' if data is insufficient.
  */
-function calculateDoDChange($currentPrice, $commodity, $market, $priceType, $con) {
+function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $con) {
     // Get yesterday's date
     $yesterday = date('Y-m-d', strtotime('-1 day'));
 
-    // Query to fetch yesterday's price for the same commodity, market, and price type
-    // Note: Assuming commodity name in table for simplicity, ideally use commodity ID
+    // Query to fetch yesterday's price for the same commodity ID, market, and price type
     $sql = "SELECT Price FROM market_prices
-            WHERE commodity = (SELECT id FROM commodities WHERE commodity_name = '" . $con->real_escape_string($commodity) . "')
+            WHERE commodity = " . (int)$commodityId . " -- Use commodity ID from market_prices
             AND market = '" . $con->real_escape_string($market) . "'
             AND price_type = '" . $con->real_escape_string($priceType) . "'
             AND DATE(date_posted) = '$yesterday'";
@@ -122,22 +122,21 @@ function calculateDoDChange($currentPrice, $commodity, $market, $priceType, $con
  * Calculates the Day-over-Month (DoM) price change.
  *
  * @param float $currentPrice The current day's price.
- * @param string $commodity The commodity.
+ * @param int $commodityId The commodity ID (now correctly passed as an ID).
  * @param string $market The market.
  * @param string $priceType.
  * @param mysqli $con The database connection.
  *
  * @return string The DoM change as a percentage or 'N/A' if data is insufficient.
  */
-function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con) {
+function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $con) {
     // Get the date range for the previous month
     $firstDayOfLastMonth = date('Y-m-01', strtotime('-1 month'));
     $lastDayOfLastMonth = date('Y-m-t', strtotime('-1 month'));
 
-    // Query to get the average price for the previous month
-    // Note: Assuming commodity name in table for simplicity, ideally use commodity ID
+    // Query to get the average price for the previous month using commodity ID
     $sql = "SELECT AVG(Price) as avg_price FROM market_prices
-            WHERE commodity = (SELECT id FROM commodities WHERE commodity_name = '" . $con->real_escape_string($commodity) . "')
+            WHERE commodity = " . (int)$commodityId . " -- Use commodity ID from market_prices
             AND market = '" . $con->real_escape_string($market) . "'
             AND price_type = '" . $con->real_escape_string($priceType) . "'
             AND DATE(date_posted) BETWEEN '$firstDayOfLastMonth' AND '$lastDayOfLastMonth'";
@@ -346,8 +345,8 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
                 $grouped_data = [];
                 foreach ($prices_data as $price) {
                     $date = date('Y-m-d', strtotime($price['date_posted']));
-                    // Create a unique key for each group (Market, Commodity, Date)
-                    $group_key = $date . '_' . $price['market'] . '_' . $price['commodity_name'];
+                    // Group by commodity ID for consistency
+                    $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'];
                     $grouped_data[$group_key][] = $price;
                 }
 
@@ -358,9 +357,9 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
                     $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
 
                     foreach($prices_in_group as $price):
-                        // Calculate day and month change
-                        $day_change = calculateDoDChange($price['Price'], $price['commodity_name'], $price['market'], $price['price_type'], $con);
-                        $month_change = calculateDoMChange($price['Price'], $price['commodity_name'], $price['market'], $price['price_type'], $con);
+                        // Pass 'commodity' (which is now the ID) to the functions
+                        $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
+                        $month_change = calculateDoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
                     ?>
                     <tr>
                         <?php if ($first_row): ?>
@@ -371,8 +370,7 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
                                 />
                             </td>
                             <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
-                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
-                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
+                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td> <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
                         <?php endif; ?>
                         <td><?php echo htmlspecialchars($price['price_type']); ?></td>
                         <td><?php echo htmlspecialchars($price['Price']); ?></td>
