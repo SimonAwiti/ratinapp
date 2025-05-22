@@ -7,7 +7,8 @@ function getPricesData($con, $limit = 10, $offset = 0) {
     $sql = "SELECT
                 p.id,
                 p.market,
-                c.commodity_name,
+                p.commodity, -- This is now the commodity ID from market_prices
+                c.commodity_name, -- This will fetch the name from the commodities table
                 p.price_type,
                 p.Price,
                 p.date_posted,
@@ -16,7 +17,7 @@ function getPricesData($con, $limit = 10, $offset = 0) {
             FROM
                 market_prices p
             LEFT JOIN
-                commodities c ON p.commodity = c.id
+                commodities c ON p.commodity = c.id -- Correct join: p.commodity (ID) = c.id
             ORDER BY
                 p.date_posted DESC
             LIMIT $limit OFFSET $offset";
@@ -31,7 +32,7 @@ function getPricesData($con, $limit = 10, $offset = 0) {
         }
         $result->free();
     } else {
-        echo "Error fetching prices data: " . $con->error;
+        error_log("Error fetching prices data: " . $con->error); // Log error instead of echoing
     }
     return $data;
 }
@@ -68,6 +69,8 @@ function getStatusDisplay($status) {
             return '<span class="status-dot status-published"></span> Published';
         case 'approved':
             return '<span class="status-dot status-approved"></span> Approved';
+        case 'unpublished': // Add this new status display
+            return '<span class="status-dot status-unpublished"></span> Unpublished';
         default:
             return '<span class="status-dot"></span> Unknown';
     }
@@ -77,22 +80,22 @@ function getStatusDisplay($status) {
  * Calculates the Day-over-Day (DoD) price change.
  *
  * @param float $currentPrice The current day's price.
- * @param string $commodity The commodity.
+ * @param int $commodityId The commodity ID (now correctly passed as an ID).
  * @param string $market The market.
  * @param string $priceType The price type (e.g., 'Wholesale', 'Retail').
  * @param mysqli $con The database connection.
  *
  * @return string The DoD change as a percentage (e.g., '2.04%') or 'N/A' if data is insufficient.
  */
-function calculateDoDChange($currentPrice, $commodity, $market, $priceType, $con) {
+function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $con) {
     // Get yesterday's date
     $yesterday = date('Y-m-d', strtotime('-1 day'));
 
-    // Query to fetch yesterday's price for the same commodity, market, and price type
+    // Query to fetch yesterday's price for the same commodity ID, market, and price type
     $sql = "SELECT Price FROM market_prices
-            WHERE commodity = (SELECT id FROM commodities WHERE commodity_name = '$commodity')
-            AND market = '$market'
-            AND price_type = '$priceType'
+            WHERE commodity = " . (int)$commodityId . " -- Use commodity ID from market_prices
+            AND market = '" . $con->real_escape_string($market) . "'
+            AND price_type = '" . $con->real_escape_string($priceType) . "'
             AND DATE(date_posted) = '$yesterday'";
 
     $result = $con->query($sql);
@@ -119,23 +122,23 @@ function calculateDoDChange($currentPrice, $commodity, $market, $priceType, $con
  * Calculates the Day-over-Month (DoM) price change.
  *
  * @param float $currentPrice The current day's price.
- * @param string $commodity The commodity.
+ * @param int $commodityId The commodity ID (now correctly passed as an ID).
  * @param string $market The market.
  * @param string $priceType.
  * @param mysqli $con The database connection.
  *
  * @return string The DoM change as a percentage or 'N/A' if data is insufficient.
  */
-function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con) {
+function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $con) {
     // Get the date range for the previous month
     $firstDayOfLastMonth = date('Y-m-01', strtotime('-1 month'));
     $lastDayOfLastMonth = date('Y-m-t', strtotime('-1 month'));
 
-    // Query to get the average price for the previous month
+    // Query to get the average price for the previous month using commodity ID
     $sql = "SELECT AVG(Price) as avg_price FROM market_prices
-            WHERE commodity = (SELECT id FROM commodities WHERE commodity_name = '$commodity')
-            AND market = '$market'
-            AND price_type = '$priceType'
+            WHERE commodity = " . (int)$commodityId . " -- Use commodity ID from market_prices
+            AND market = '" . $con->real_escape_string($market) . "'
+            AND price_type = '" . $con->real_escape_string($priceType) . "'
             AND DATE(date_posted) BETWEEN '$firstDayOfLastMonth' AND '$lastDayOfLastMonth'";
 
     $result = $con->query($sql);
@@ -163,7 +166,7 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" integrity="sha512-...your-integrity..." crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <title>Data Management</title>
     <style>
         body {
@@ -217,7 +220,7 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
           color: white;
         }
         .toolbar .unpublish {
-          background-color: rgba(180, 80, 50, 1);
+          background-color: rgba(180, 80, 50, 1); /* Keep this color, it's distinct from green approve */
           color: white;
         }
         table {
@@ -253,6 +256,9 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
         .status-approved {
             background-color: green;
         }
+        .status-unpublished { /* New status color */
+            background-color: grey;
+        }
         .actions {
             display: flex;
             gap: 8px;
@@ -284,120 +290,6 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
         }
 
     </style>
-    <script>
-        function confirmAction(action, ids) {
-            if (ids.length === 0) {
-                alert('Please select items to ' + action + '.');
-                return;
-            }
-
-            let message = 'Are you sure you want to ' + action + ' these items?';
-            if (confirm(message)) {
-                // Send an AJAX request to update the statuses
-                console.log('Action:', action);
-                console.log('IDs:', ids);
-
-                fetch('update_status.php', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        action: action,
-                        ids: ids,
-                    }),
-                })
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Response:', data);
-                    if (data.success) {
-                        alert('Items ' + action + ' successfully.');
-                        window.location.reload();
-                    } else {
-                        alert('Failed to ' + action + ' items: ' + data.message);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('An error occurred while ' + action + ' items.');
-                });
-            }
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const selectAllCheckbox = document.getElementById('select-all');
-            const checkboxes = document.querySelectorAll('table tbody input[type="checkbox"]');
-            const approveButton = document.querySelector('.toolbar .approve');
-            const publishButton = document.querySelector('.toolbar .primary');
-            const deleteButton = document.querySelector('.toolbar button:nth-of-type(2)');
-
-
-            let selectedIds = [];
-
-            function updateSelectedIds() {
-                selectedIds = Array.from(checkboxes)
-                    .filter(checkbox => checkbox.checked)
-                    .map(checkbox => checkbox.getAttribute('data-id'));
-                console.log('Selected IDs:', selectedIds);
-                return selectedIds; // Return the selected IDs
-            }
-
-            checkboxes.forEach(checkbox => {
-                checkbox.addEventListener('change', () => {
-                    updateSelectedIds();
-                    if (checkboxes.length === document.querySelectorAll('table tbody input[type="checkbox"]:checked').length) {
-                        selectAllCheckbox.checked = true;
-                    } else {
-                        selectAllCheckbox.checked = false;
-                    }
-                });
-            });
-
-            selectAllCheckbox.addEventListener('change', () => {
-                checkboxes.forEach(checkbox => {
-                    checkbox.checked = selectAllCheckbox.checked;
-                });
-                updateSelectedIds();
-            });
-
-
-          approveButton.addEventListener('click', () => {
-                const ids = updateSelectedIds(); // Get the selected IDs
-                console.log("Approve button clicked. IDs:", ids); // Log
-                confirmAction('approve', ids);
-            });
-
-            publishButton.addEventListener('click', () => {
-                const ids = updateSelectedIds(); // Get the selected IDs
-                console.log("Publish button clicked. IDs:", ids); // Log
-                // Check if selected items are approved before publishing
-                fetch('../data/check_status.php', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ ids: ids }),
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.allApproved) {
-                        confirmAction('publish', ids);
-                    } else {
-                        alert('Please approve the selected items before publishing.');
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('An error occurred while checking approval status.');
-                });
-            });
-
-            deleteButton.addEventListener('click', () => {
-                const ids = updateSelectedIds();  //get selected ids
-                confirmAction('delete', ids);
-            });
-        });
-    </script>
 </head>
 <body>
     <div class="container">
@@ -409,7 +301,7 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
                 <a href="../data/add_marketprices.php" class="primary" style="display: inline-block; width: 302px; height: 52px; margin-right: 15px; text-align: center; line-height: 52px; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
                     <i class="fa fa-plus" style="margin-right: 6px;"></i> Add New
                 </a>
-                <button>
+                <button class="delete-btn">
                     <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
                 </button>
                 <button>
@@ -453,39 +345,45 @@ function calculateDoMChange($currentPrice, $commodity, $market, $priceType, $con
                 $grouped_data = [];
                 foreach ($prices_data as $price) {
                     $date = date('Y-m-d', strtotime($price['date_posted']));
-                    $grouped_data[$date][$price['market']][$price['commodity_name']][] = $price;
+                    // Group by commodity ID for consistency
+                    $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'];
+                    $grouped_data[$group_key][] = $price;
                 }
 
-                foreach ($grouped_data as $date => $market_data) {
-                    foreach($market_data as $market => $commodity_data) {
-                        foreach($commodity_data as $commodity => $prices):
-                            $first_row = true;
-                            foreach($prices as $price):
-                                // Calculate day and month change
-                                $day_change = calculateDoDChange($price['Price'], $price['commodity_name'], $price['market'], $price['price_type'], $con);
-                                $month_change = calculateDoMChange($price['Price'], $price['commodity_name'], $price['market'], $price['price_type'], $con);
-                            ?>
-                            <tr>
-                                <?php if ($first_row): ?>
-                                    <td rowspan="<?php echo count($prices); ?>"><input type="checkbox" data-id="<?php echo $prices[0]['id']; ?>"/></td>
-                                    <td rowspan="<?php echo count($prices); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
-                                    <td rowspan="<?php echo count($prices); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
-                                    <td rowspan="<?php echo count($prices); ?>"><?php echo $date; ?></td>
-                                <?php endif; ?>
-                                <td><?php echo htmlspecialchars($price['price_type']); ?></td>
-                                <td><?php echo htmlspecialchars($price['Price']); ?></td>
-                                <td><?php echo $day_change; ?></td>
-                                <td><?php echo $month_change; ?></td>
-                                <td><?php echo getStatusDisplay($price['status']); ?></td>
-                                <td><?php echo htmlspecialchars($price['data_source']); ?></td>
-                                <td class="actions">✏️ 🗑️</td>
-                            </tr>
-                            <?php
-                            $first_row = false;
-                            endforeach;
-                        endforeach;
-                    }
-                }
+                foreach ($grouped_data as $group_key => $prices_in_group):
+                    $first_row = true;
+                    // Collect all individual price IDs for this group
+                    $group_price_ids = array_column($prices_in_group, 'id');
+                    $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
+
+                    foreach($prices_in_group as $price):
+                        // Pass 'commodity' (which is now the ID) to the functions
+                        $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
+                        $month_change = calculateDoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
+                    ?>
+                    <tr>
+                        <?php if ($first_row): ?>
+                            <td rowspan="<?php echo count($prices_in_group); ?>">
+                                <input type="checkbox"
+                                       data-group-key="<?php echo $group_key; ?>"
+                                       data-price-ids="<?php echo $group_price_ids_json; ?>"
+                                />
+                            </td>
+                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
+                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td> <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
+                        <?php endif; ?>
+                        <td><?php echo htmlspecialchars($price['price_type']); ?></td>
+                        <td><?php echo htmlspecialchars($price['Price']); ?></td>
+                        <td><?php echo $day_change; ?></td>
+                        <td><?php echo $month_change; ?></td>
+                        <td><?php echo getStatusDisplay($price['status']); ?></td>
+                        <td><?php echo htmlspecialchars($price['data_source']); ?></td>
+                        <td class="actions">✏️ 🗑️</td>
+                    </tr>
+                    <?php
+                    $first_row = false;
+                    endforeach;
+                endforeach;
                 ?>
             </tbody>
         </table>

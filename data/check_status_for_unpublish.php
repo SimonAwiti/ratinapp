@@ -1,12 +1,12 @@
 <?php
-// check_status.php
+// check_status_for_unpublish.php
 include '../admin/includes/config.php';
 
 header('Content-Type: application/json');
 
-$response = ['allApproved' => false, 'message' => ''];
+$response = ['allPublished' => false, 'message' => ''];
 
-error_log("Received request to check_status.php");
+error_log("Received request to check_status_for_unpublish.php");
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $input = json_decode(file_get_contents('php://input'), true);
@@ -20,12 +20,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    // Sanitize IDs
     $id_list = implode(',', array_map('intval', $ids));
     error_log("Processed ID list: $id_list");
 
-    // Check if any items are not approved
-    $sql = "SELECT COUNT(*) as not_approved_count FROM market_prices WHERE id IN ($id_list) AND status != 'approved'";
+    $sql = "SELECT COUNT(*) as not_published_count FROM market_prices WHERE id IN ($id_list) AND status != 'published'";
     error_log("Executing SQL: $sql");
 
     $result = $con->query($sql);
@@ -34,14 +32,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $row = $result->fetch_assoc();
         error_log("Query result: " . print_r($row, true));
         
-        if ($row['not_approved_count'] == 0) {
-            $response['allApproved'] = true;
-            $response['message'] = 'All selected items are approved.';
+        if ($row['not_published_count'] == 0) {
+            $response['allPublished'] = true;
+            $response['message'] = 'All items are published and can be unpublished.';
         } else {
-            $response['message'] = 'One or more selected items are not in "approved" status.';
+            $response['message'] = 'Some items are not in "Published" status.';
         }
     } else {
-        $response['message'] = 'Database error checking approval status: ' . $con->error;
+        $response['message'] = 'Database error: ' . $con->error;
         error_log("Database error: " . $con->error);
     }
 } else {
