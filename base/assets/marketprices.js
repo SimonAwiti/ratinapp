@@ -1,7 +1,11 @@
 // marketprices.js
 
-// Moved the confirmAction function outside of initializeMarketPrices
-// as it's a utility function that doesn't strictly need to be "initialized"
+/**
+ * Displays a confirmation dialog and sends a request to update item status or delete items.
+ *
+ * @param {string} action - The action to perform ('approve', 'publish', 'unpublish', 'delete').
+ * @param {Array<number>} ids - An array of item IDs to apply the action to.
+ */
 function confirmAction(action, ids) {
     if (ids.length === 0) {
         alert('Please select items to ' + action + '.');
@@ -22,84 +26,96 @@ function confirmAction(action, ids) {
         })
         .then(response => {
             if (!response.ok) {
-                // If the server response is not OK, try to read the error message
+                // Attempt to parse JSON error message from server response
                 return response.json().catch(() => {
-                    throw new Error(`HTTP error! status: ${response.status} - No JSON response.`);
+                    // If JSON parsing fails, throw a generic error with status
+                    throw new Error(`HTTP error! status: ${response.status} - No JSON response from server.`);
                 });
             }
-            return response.json();
+            return response.json(); // Parse the successful JSON response
         })
         .then(data => {
             if (data.success) {
                 alert('Items ' + action + ' successfully.');
-                // Instead of full page reload, you might want to update the table dynamically
+                // Reload the page to reflect the changes
                 window.location.reload();
             } else {
+                // Display the error message from the server
                 alert('Failed to ' + action + ' items: ' + (data.message || 'Unknown error.'));
             }
         })
         .catch(error => {
-            console.error('Fetch error:', error); // Log the actual error for debugging
+            // Catch network errors or errors from the .then() blocks
+            console.error('Fetch error during ' + action + ':', error);
             alert('An error occurred while ' + action + ' items: ' + error.message);
         });
     }
 }
 
-
+/**
+ * Initializes all event listeners for the market prices table.
+ * This function should be called *after* the market prices HTML content is loaded into the DOM.
+ */
 function initializeMarketPrices() {
-    // Only initialize if the elements actually exist in the DOM
+    console.log("Initializing Market Prices functionality...");
+
     const selectAllCheckbox = document.getElementById('select-all');
+    // Select all group checkboxes based on their data attribute
     const groupCheckboxes = document.querySelectorAll('table tbody input[type="checkbox"][data-group-key]');
 
-    // If these elements aren't present, it means marketprices_boilerplate.php isn't loaded yet
-    // or has been removed. So, we exit.
+    // Exit if essential elements are not found, meaning the content isn't loaded yet.
     if (!selectAllCheckbox || groupCheckboxes.length === 0) {
-        // console.log("Market prices elements not found, skipping initialization.");
+        console.log("Market prices elements (checkboxes) not found, skipping initialization.");
         return;
     }
 
+    // A Set to store unique price IDs for the currently selected rows
     let selectedPriceIdsForAction = new Set();
 
+    /**
+     * Updates the `selectedPriceIdsForAction` Set based on currently checked group checkboxes.
+     * @returns {Array<number>} An array of the unique selected price IDs.
+     */
     function updateSelectedIdsForAction() {
-        selectedPriceIdsForAction.clear();
+        selectedPriceIdsForAction.clear(); // Clear previous selections
         groupCheckboxes.forEach(checkbox => {
             if (checkbox.checked) {
                 try {
+                    // Parse the JSON string from data-price-ids attribute
                     const groupPriceIds = JSON.parse(checkbox.getAttribute('data-price-ids'));
                     groupPriceIds.forEach(id => selectedPriceIdsForAction.add(id));
                 } catch (e) {
-                    console.error("Error parsing data-price-ids:", e);
+                    console.error("Error parsing data-price-ids for checkbox:", checkbox, e);
                 }
             }
         });
-        return Array.from(selectedPriceIdsForAction);
+        return Array.from(selectedPriceIdsForAction); // Convert Set to Array
     }
 
-    // Ensure listeners are only added once per element if this function is called multiple times
-    // This is a safety measure, but the primary solution is to call initializeMarketPrices only once.
-    // We'll remove existing listeners if they exist to prevent duplicates.
-    // This part is more complex to implement robustly without storing references to the listeners.
-    // A simpler approach is to ensure initializeMarketPrices is only called once per content load.
-
-    // Add event listeners (ensure they are attached to the *newly loaded* elements)
-    if (selectAllCheckbox) { // Check if it exists before adding listener
+    // Event listener for the "Select All" checkbox
+    if (selectAllCheckbox) {
         selectAllCheckbox.addEventListener('change', () => {
+            const isChecked = selectAllCheckbox.checked;
             groupCheckboxes.forEach(checkbox => {
-                checkbox.checked = selectAllCheckbox.checked;
+                checkbox.checked = isChecked; // Set all group checkboxes to match "Select All"
             });
-            updateSelectedIdsForAction();
+            updateSelectedIdsForAction(); // Update the selected IDs
         });
     }
 
+    // Event listener for individual group checkboxes
     groupCheckboxes.forEach(checkbox => {
         checkbox.addEventListener('change', () => {
-            updateSelectedIdsForAction();
+            updateSelectedIdsForAction(); // Update selected IDs on individual checkbox change
+            // Check if all group checkboxes are checked to update "Select All" checkbox state
             const allChecked = Array.from(groupCheckboxes).every(cb => cb.checked);
-            if (selectAllCheckbox) { // Check if it exists
+            if (selectAllCheckbox) {
                 selectAllCheckbox.checked = allChecked;
             }
         });
     });
+
+    // --- Button Event Listeners ---
 
     // Approve button
     const approveButton = document.querySelector('.toolbar .approve');
@@ -120,6 +136,7 @@ function initializeMarketPrices() {
                 return;
             }
 
+            // First, check if all selected items are approved before publishing
             fetch('../data/check_status.php', {
                 method: 'POST',
                 headers: {
@@ -149,12 +166,12 @@ function initializeMarketPrices() {
         });
     }
 
-    // Delete button (assuming this is the one with type 2 in the toolbar-left)
-    const deleteButton = document.querySelector('.toolbar-left button:nth-of-type(2)');
+    // Delete button (assuming it now has the class 'delete-btn')
+    const deleteButton = document.querySelector('.toolbar .delete-btn');
     if (deleteButton) {
         deleteButton.addEventListener('click', () => {
             const ids = updateSelectedIdsForAction();
-            confirmAction('delete', ids);
+            confirmAction('delete', ids); // Call confirmAction with 'delete'
         });
     }
 
@@ -169,6 +186,7 @@ function initializeMarketPrices() {
                 return;
             }
 
+            // First, check if all selected items are currently published before unpublishing
             fetch('../data/check_status_for_unpublish.php', {
                 method: 'POST',
                 headers: {
@@ -199,4 +217,6 @@ function initializeMarketPrices() {
     }
 }
 
-// NO self-execution here. initializeMarketPrices will be called by sidebar.php
+// IMPORTANT: This script no longer calls initializeMarketPrices() itself.
+// It relies on sidebar.php's loadContent function to call initializeMarketPrices()
+// once the marketprices_boilerplate.php content and this script are both loaded into the DOM.
