@@ -138,6 +138,12 @@
                     <i class="fa fa-database"></i> Add Data Source
                 </a>
             </div>
+            
+            <!-- Simplified XBT Volumes section without subsections -->
+            <a href="#" class="nav-link" onclick="loadContent('../data/xbtvol_boilerplate.php', 'Data', 'XBT Volumes')">
+                <i class="fa fa-exchange-alt"></i> XBT Volumes
+            </a>
+            
             <a href="#" class="nav-link"><i class="fa fa-table"></i> Reports</a>
             <a href="#" class="nav-link"><i class="fa fa-chart-bar"></i> Analytics</a>
         </div>
@@ -221,21 +227,21 @@
         });
     });
 
-    function loadContent(page, mainCategory, subCategory) {
+function loadContent(page, mainCategory, subCategory) {
         fetch(page)
             .then(response => {
                 if (!response.ok) throw new Error('Failed to load page');
                 return response.text();
             })
             .then(html => {
-                // Set the innerHTML *before* trying to load/initialize scripts for it
+                // 1. Insert the new HTML content into the DOM
                 document.getElementById("mainContent").innerHTML = html;
                 updateBreadcrumb(mainCategory, subCategory);
 
-                // Remove any previously added dynamic scripts
+                // 2. Remove any previously added dynamic scripts
                 document.querySelectorAll('script.dynamic-script').forEach(script => script.remove());
 
-                // Load specific scripts based on page
+                // 3. Dynamically load and initialize scripts based on the page
                 if (page.includes('commodities_boilerplate.php')) {
                     loadScript('assets/filter.js');
                 } else if (page.includes('tradepoints_boilerplate.php')) {
@@ -243,15 +249,12 @@
                 } else if (page.includes('enumerator_boilerplate.php')) {
                     loadScript('assets/filter3.js');
                 } else if (page.includes('marketprices_boilerplate.php')) {
-                    // Dynamically load marketprices.js
+                    // This block is correct
                     const script = document.createElement('script');
-                    script.src = 'assets/marketprices.js'; // Ensure this path is correct relative to sidebar.php
+                    script.src = 'assets/marketprices.js';
                     script.type = 'text/javascript';
                     script.className = 'dynamic-script';
-
                     script.onload = () => {
-                        // This is the CRUCIAL part: Call the initialization function *only* when the script is loaded
-                        // and the new content is in the DOM.
                         if (typeof initializeMarketPrices === 'function') {
                             initializeMarketPrices();
                         } else {
@@ -259,9 +262,23 @@
                         }
                     };
                     script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
+                    document.body.appendChild(script);
+                } else if (page.includes('xbtvol_boilerplate.php')) { // Corrected from xbtvolumes_boilerplate.php
+                    // This is the crucial part for xbtvols.js
+                    const script = document.createElement('script');
+                    script.src = 'assets/xbtvols.js'; // Ensure this path is correct
+                    script.type = 'text/javascript';
+                    script.className = 'dynamic-script';
 
-                    // Append the script to the body to execute it.
-                    // It's important that this happens *after* the HTML is in mainContent
+                    script.onload = () => {
+                        // **Call the initialization function *after* the script has loaded**
+                        if (typeof initializeXBTVolumes === 'function') {
+                            initializeXBTVolumes();
+                        } else {
+                            console.error("initializeXBTVolumes function not found after script load.");
+                        }
+                    };
+                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
                     document.body.appendChild(script);
                 }
             })
@@ -270,15 +287,15 @@
             });
     }
 
-    // Function to dynamically load a JavaScript file (this is generally fine)
+    // Your existing loadScript function is good for general scripts without specific initialization needs
     function loadScript(src) {
         const script = document.createElement('script');
         script.src = src;
         script.type = 'text/javascript';
-        script.className = 'dynamic-script'; // Add a class to identify dynamic scripts
+        script.className = 'dynamic-script';
         script.onload = () => console.log(`${src} loaded successfully`);
         script.onerror = (error) => console.error(`Error loading script ${src}:`, error);
-        document.body.appendChild(script); // Append to body to ensure script execution order if needed
+        document.body.appendChild(script);
     }
 </script>
 
