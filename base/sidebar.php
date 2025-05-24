@@ -122,15 +122,24 @@
         </div>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('dataSubmenu', this)">
-            <span><i class="fa fa-chart-line"></i> Data</span> 
+            <span><i class="fa fa-chart-line"></i> Data</span>
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="submenu" id="dataSubmenu">
-            <a href="#" class="nav-link" onclick="loadContent('../data/marketprices_boilerplate.php', 'Data', 'Market Prices')">
-                <i class="fa fa-store-alt"></i> Market Prices
+            <a href="#" class="nav-link" onclick="toggleSubmenu('marketPricesSubmenu', this)">
+                <span><i class="fa fa-store-alt"></i> Market Prices</span>
+                <i class="fa fa-chevron-down"></i>
             </a>
-            <a href="#" class="nav-link"><i class="fa fa-database"></i> Reports</a>
-            <a href="#" class="nav-link"><i class="fa fa-table"></i> Analytics</a>
+            <div class="submenu" id="marketPricesSubmenu" style="padding-left: 20px;">
+                <a href="#" class="nav-link" onclick="loadContent('../data/marketprices_boilerplate.php', 'Data', 'Market Prices')">
+                    <i class="fa fa-list"></i> Prices
+                </a>
+                <a href="../data/add_datasource.php" class="nav-link">
+                    <i class="fa fa-database"></i> Add Data Source
+                </a>
+            </div>
+            <a href="#" class="nav-link"><i class="fa fa-table"></i> Reports</a>
+            <a href="#" class="nav-link"><i class="fa fa-chart-bar"></i> Analytics</a>
         </div>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('webSubmenu', this)">
