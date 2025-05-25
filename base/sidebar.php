@@ -106,7 +106,7 @@
         <h6>Management</h6>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('baseSubmenu', this)">
-            <span><i class="fa fa-table"></i> Base</span> 
+            <span><i class="fa fa-table"></i> Base</span>
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="submenu" id="baseSubmenu">
@@ -133,28 +133,25 @@
                 <a href="#" class="nav-link" onclick="loadContent('../data/marketprices_boilerplate.php', 'Data', 'Market Prices')">
                     <i class="fa fa-list"></i> Prices
                 </a>
-                <a href="../data/add_datasource.php" class="nav-link">
-                    <i class="fa fa-database"></i> Add Data Source
+                <a href="#" class="nav-link" onclick="loadContent('../data/datasource_boilerplate.php', 'Data', 'Data Sources')">
+                    <i class="fa fa-database"></i> Data Sources
                 </a>
             </div>
-            <!-- XBT Volumes section -->
             <a href="#" class="nav-link" onclick="loadContent('../data/xbtvol_boilerplate.php', 'Data', 'XBT Volumes')">
                 <i class="fa fa-exchange-alt"></i> XBT Volumes
             </a>
 
-            <!-- Miller Prices section -->
             <a href="#" class="nav-link" onclick="loadContent('../data/miller_price_boilerplate.php', 'Data', 'Miller Prices')">
                 <i class="fa fa-industry"></i> Miller Prices
             </a>
-            
-            <!-- Currency Rates section -->
+
             <a href="#" class="nav-link" onclick="loadContent('../data/currencies_boilerplate.php', 'Data', 'Currency Rates')">
                 <i class="fa fa-money-bill-wave"></i> Currency Rates
             </a>
         </div>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('webSubmenu', this)">
-            <span><i class="fa fa-globe"></i> Web</span> 
+            <span><i class="fa fa-globe"></i> Web</span>
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="submenu" id="webSubmenu">
@@ -162,7 +159,7 @@
         </div>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('userSubmenu', this)">
-            <span><i class="fa fa-user-gear"></i> User</span> 
+            <span><i class="fa fa-user-gear"></i> User</span>
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="submenu" id="userSubmenu">
@@ -217,7 +214,7 @@
             link.addEventListener("click", function () {
                 // Remove active class from all links
                 sidebarLinks.forEach(l => l.classList.remove("active"));
-                
+
                 // Add active class to clicked link
                 this.classList.add("active");
 
@@ -305,6 +302,20 @@
                             initializeCurrencies();
                         } else {
                             console.error("initializeCurrencies function not found after script load.");
+                        }
+                    };
+                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
+                    document.body.appendChild(script);
+                } else if (page.includes('datasource_boilerplate.php')) { // NEW: For Data Sources
+                    const script = document.createElement('script');
+                    script.src = 'assets/data_sources.js'; // Assuming you'll have a data_sources.js
+                    script.type = 'text/javascript';
+                    script.className = 'dynamic-script';
+                    script.onload = () => {
+                        if (typeof initializeDataSources === 'function') { // Assuming an initializeDataSources function
+                            initializeDataSources();
+                        } else {
+                            console.error("initializeDataSources function not found after script load.");
                         }
                     };
                     script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
