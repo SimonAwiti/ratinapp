@@ -148,6 +148,10 @@
                 <i class="fa fa-industry"></i> Miller Prices
             </a>
             
+            <!-- Currency Rates section -->
+            <a href="#" class="nav-link" onclick="loadContent('../data/currencies_boilerplate.php', 'Data', 'Currency Rates')">
+                <i class="fa fa-money-bill-wave"></i> Currency Rates
+            </a>
             
             <a href="#" class="nav-link"><i class="fa fa-table"></i> Reports</a>
             <a href="#" class="nav-link"><i class="fa fa-chart-bar"></i> Analytics</a>
@@ -291,6 +295,20 @@
                             initializeXBTVolumes();
                         } else {
                             console.error("initializeXBTVolumes function not found after script load.");
+                        }
+                    };
+                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
+                    document.body.appendChild(script);
+                } else if (page.includes('currencies_boilerplate.php')) {
+                    const script = document.createElement('script');
+                    script.src = 'assets/currencies.js';
+                    script.type = 'text/javascript';
+                    script.className = 'dynamic-script';
+                    script.onload = () => {
+                        if (typeof initializeCurrencies === 'function') {
+                            initializeCurrencies();
+                        } else {
+                            console.error("initializeCurrencies function not found after script load.");
                         }
                     };
                     script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
