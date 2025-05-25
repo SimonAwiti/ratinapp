@@ -138,11 +138,16 @@
                     <i class="fa fa-database"></i> Add Data Source
                 </a>
             </div>
-            
-            <!-- Simplified XBT Volumes section without subsections -->
+            <!-- XBT Volumes section -->
             <a href="#" class="nav-link" onclick="loadContent('../data/xbtvol_boilerplate.php', 'Data', 'XBT Volumes')">
                 <i class="fa fa-exchange-alt"></i> XBT Volumes
             </a>
+
+            <!-- Miller Prices section -->
+            <a href="#" class="nav-link" onclick="loadContent('../data/miller_price_boilerplate.php', 'Data', 'Miller Prices')">
+                <i class="fa fa-industry"></i> Miller Prices
+            </a>
+            
             
             <a href="#" class="nav-link"><i class="fa fa-table"></i> Reports</a>
             <a href="#" class="nav-link"><i class="fa fa-chart-bar"></i> Analytics</a>
@@ -227,7 +232,7 @@
         });
     });
 
-function loadContent(page, mainCategory, subCategory) {
+    function loadContent(page, mainCategory, subCategory) {
         fetch(page)
             .then(response => {
                 if (!response.ok) throw new Error('Failed to load page');
@@ -249,7 +254,6 @@ function loadContent(page, mainCategory, subCategory) {
                 } else if (page.includes('enumerator_boilerplate.php')) {
                     loadScript('assets/filter3.js');
                 } else if (page.includes('marketprices_boilerplate.php')) {
-                    // This block is correct
                     const script = document.createElement('script');
                     script.src = 'assets/marketprices.js';
                     script.type = 'text/javascript';
@@ -263,15 +267,26 @@ function loadContent(page, mainCategory, subCategory) {
                     };
                     script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
                     document.body.appendChild(script);
-                } else if (page.includes('xbtvol_boilerplate.php')) { // Corrected from xbtvolumes_boilerplate.php
-                    // This is the crucial part for xbtvols.js
+                } else if (page.includes('miller_price_boilerplate.php')) {
                     const script = document.createElement('script');
-                    script.src = 'assets/xbtvols.js'; // Ensure this path is correct
+                    script.src = 'assets/miller_prices.js';
                     script.type = 'text/javascript';
                     script.className = 'dynamic-script';
-
                     script.onload = () => {
-                        // **Call the initialization function *after* the script has loaded**
+                        if (typeof initializeMillerPrices === 'function') {
+                            initializeMillerPrices();
+                        } else {
+                            console.error("initializeMillerPrices function not found after script load.");
+                        }
+                    };
+                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
+                    document.body.appendChild(script);
+                } else if (page.includes('xbtvol_boilerplate.php')) {
+                    const script = document.createElement('script');
+                    script.src = 'assets/xbtvols.js';
+                    script.type = 'text/javascript';
+                    script.className = 'dynamic-script';
+                    script.onload = () => {
                         if (typeof initializeXBTVolumes === 'function') {
                             initializeXBTVolumes();
                         } else {
@@ -287,7 +302,6 @@ function loadContent(page, mainCategory, subCategory) {
             });
     }
 
-    // Your existing loadScript function is good for general scripts without specific initialization needs
     function loadScript(src) {
         const script = document.createElement('script');
         script.src = src;
