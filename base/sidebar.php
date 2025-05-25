@@ -127,8 +127,7 @@
         </a>
         <div class="submenu" id="dataSubmenu">
             <a href="#" class="nav-link" onclick="toggleSubmenu('marketPricesSubmenu', this)">
-                <span><i class="fa fa-store-alt"></i> Market Prices</span>
-                <i class="fa fa-chevron-down"></i>
+                <i class="fa fa-store-alt"></i> Market Prices</i>
             </a>
             <div class="submenu" id="marketPricesSubmenu" style="padding-left: 20px;">
                 <a href="#" class="nav-link" onclick="loadContent('../data/marketprices_boilerplate.php', 'Data', 'Market Prices')">
@@ -152,9 +151,6 @@
             <a href="#" class="nav-link" onclick="loadContent('../data/currencies_boilerplate.php', 'Data', 'Currency Rates')">
                 <i class="fa fa-money-bill-wave"></i> Currency Rates
             </a>
-            
-            <a href="#" class="nav-link"><i class="fa fa-table"></i> Reports</a>
-            <a href="#" class="nav-link"><i class="fa fa-chart-bar"></i> Analytics</a>
         </div>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('webSubmenu', this)">
