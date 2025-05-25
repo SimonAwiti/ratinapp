@@ -172,16 +172,19 @@
         <div class="header-container">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb" id="breadcrumb">
-                    <li class="breadcrumb-item"><a href="#"><i class="fa fa-home"></i></a></li>
-                    <li class="breadcrumb-item"><a href="#">Management</a></li>
-                    <li class="breadcrumb-item active" id="mainCategory">Base</li>
-                    <li class="breadcrumb-item active" aria-current="page" id="subCategory">Commodities</li>
+                    <li class="breadcrumb-item">
+                        <a href="#" onclick="loadContent('landing_page.php', 'Dashboard', 'Home'); return false;">
+                            <i class="fa fa-home"></i>
+                        </a>
+                    </li>
+                    <li class="breadcrumb-item active" id="mainCategory">Dashboard</li>
+                    <li class="breadcrumb-item active" aria-current="page" id="subCategory">Home</li>
                 </ol>
             </nav>
         </div>
 
         <div class="content-container" id="mainContent">
-            <?php include 'commodities.php'; ?>
+            <?php include 'landing_page.php'; // This line now includes your landing page by default ?>
         </div>
     </div>
 </div>
@@ -195,16 +198,43 @@
             submenu.style.display = "none";
             icon.classList.remove("rotate");
         } else {
+            // Close other open submenus before opening the current one
+            document.querySelectorAll('.submenu').forEach(otherSubmenu => {
+                if (otherSubmenu.id !== submenuId) {
+                    otherSubmenu.style.display = 'none';
+                    let otherIcon = otherSubmenu.previousElementSibling.querySelector("i.fa-chevron-down");
+                    if (otherIcon) otherIcon.classList.remove("rotate");
+                }
+            });
+
             submenu.style.display = "block";
             icon.classList.add("rotate");
         }
     }
 
     function updateBreadcrumb(mainCategory, subCategory) {
-        document.getElementById("mainCategory").textContent = mainCategory;
-        document.getElementById("subCategory").textContent = subCategory;
-        const pageTitle = document.getElementById("pageTitle");
-        if (pageTitle) pageTitle.textContent = subCategory;
+        // Clear previous breadcrumbs (except the home icon)
+        const breadcrumbList = document.getElementById("breadcrumb");
+        while (breadcrumbList.children.length > 1) { // Keep the home icon
+            breadcrumbList.removeChild(breadcrumbList.lastChild);
+        }
+
+        // Add main category if it's not "Dashboard" for the landing page
+        if (mainCategory && mainCategory !== 'Dashboard') {
+            const mainCatItem = document.createElement('li');
+            mainCatItem.className = 'breadcrumb-item active';
+            mainCatItem.textContent = mainCategory;
+            breadcrumbList.appendChild(mainCatItem);
+        }
+
+        // Add sub category
+        if (subCategory) {
+            const subCatItem = document.createElement('li');
+            subCatItem.className = 'breadcrumb-item active';
+            subCatItem.setAttribute('aria-current', 'page');
+            subCatItem.textContent = subCategory;
+            breadcrumbList.appendChild(subCatItem);
+        }
     }
 
     document.addEventListener("DOMContentLoaded", function () {
@@ -214,19 +244,16 @@
             link.addEventListener("click", function () {
                 // Remove active class from all links
                 sidebarLinks.forEach(l => l.classList.remove("active"));
-
                 // Add active class to clicked link
                 this.classList.add("active");
 
-                // If submenu, update breadcrumb
-                let parentMenu = this.closest(".submenu");
-                if (parentMenu) {
-                    let mainCategory = parentMenu.previousElementSibling.textContent.trim();
-                    let subCategory = this.textContent.trim();
-                    updateBreadcrumb(mainCategory, subCategory);
-                }
+                // Note: The breadcrumb update is now handled by loadContent
+                // so we don't need redundant updateBreadcrumb calls here.
             });
         });
+
+        // Initialize the breadcrumb for the default landing page
+        updateBreadcrumb('Dashboard', 'Home');
     });
 
     function loadContent(page, mainCategory, subCategory) {
@@ -306,7 +333,7 @@
                     };
                     script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
                     document.body.appendChild(script);
-                } else if (page.includes('datasource_boilerplate.php')) { // NEW: For Data Sources
+                } else if (page.includes('datasource_boilerplate.php')) {
                     const script = document.createElement('script');
                     script.src = 'assets/data_sources.js'; // Assuming you'll have a data_sources.js
                     script.type = 'text/javascript';
@@ -321,6 +348,9 @@
                     script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
                     document.body.appendChild(script);
                 }
+                // If it's the landing page, no specific script is usually needed
+                // unless you have dynamic elements on the landing page itself.
+
             })
             .catch(error => {
                 document.getElementById("mainContent").innerHTML = `<div class="alert alert-danger">Error loading content: ${error}</div>`;
