@@ -2,42 +2,128 @@
 // Include database configuration
 include '../admin/includes/config.php';
 
-// Fetch enumerators with their assigned tradepoints
+// Function to fetch the actual name of a tradepoint based on ID and type
+function getTradepointName($con, $id, $type) {
+    $tableName = '';
+    $nameColumn = '';
+
+    // Determine the table and name column based on the type
+    switch ($type) {
+        case 'Market':
+        case 'Markets': // Handle both singular and plural if necessary based on your data
+            $tableName = 'markets';
+            $nameColumn = 'market_name';
+            break;
+        case 'Border Point':
+        case 'Border Points': // Handle both singular and plural
+            $tableName = 'border_points';
+            $nameColumn = 'name';
+            break;
+        case 'Miller':
+        case 'Miller': // Handle both singular and plural
+            $tableName = 'miller_details';
+            $nameColumn = 'miller_name';
+            break;
+        default:
+            return "Unknown Type: " . htmlspecialchars($type);
+    }
+
+    if (!empty($tableName) && !empty($nameColumn)) {
+        // Prepare a safe query to prevent SQL injection
+        $stmt = $con->prepare("SELECT " . $nameColumn . " FROM " . $tableName . " WHERE id = ? LIMIT 1");
+        if ($stmt) {
+            $stmt->bind_param("i", $id); // Assuming ID is an integer
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result && $result->num_rows > 0) {
+                $row = $result->fetch_assoc();
+                $stmt->close();
+                return $row[$nameColumn];
+            }
+            $stmt->close();
+        } else {
+            error_log("Failed to prepare statement for tradepoint name lookup: " . $con->error);
+        }
+    }
+    return "ID: " . htmlspecialchars($id) . " (Name Not Found)"; // Fallback if name not found or type is unknown
+}
+
+
+// Fetch enumerators with their assigned tradepoints (JSON string)
 $query = "
-    SELECT 
-        e.id,
-        e.name,
-        e.email,
-        e.phone,
-        e.gender,
-        e.country,
-        e.county_district,
-        et.tradepoint_id,
-        tp.tradepoint_type,
-        tp.tradepoint
-    FROM enumerators e
-    LEFT JOIN enumerator_tradepoints et ON e.id = et.enumerator_id
-    LEFT JOIN (
-        SELECT id AS tradepoint_id, market_name AS tradepoint, 'Markets' AS tradepoint_type FROM markets
-        UNION ALL
-        SELECT id AS tradepoint_id, name AS tradepoint, 'Border Points' AS tradepoint_type FROM border_points
-        UNION ALL
-        SELECT id AS tradepoint_id, miller_name AS tradepoint, 'Miller' AS tradepoint_type FROM miller_details
-    ) tp ON et.tradepoint_id = tp.tradepoint_id AND et.tradepoint_type = tp.tradepoint_type
+    SELECT
+        id,
+        name,
+        email,
+        phone,
+        gender,
+        country,
+        county_district,
+        tradepoints, -- Directly select the JSON column
+        latitude,
+        longitude,
+        token
+    FROM enumerators
+    ORDER BY name ASC
 ";
 
 $result = $con->query($query);
-$enumerators = $result->fetch_all(MYSQLI_ASSOC);
+$enumerators_raw = [];
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $enumerators_raw[] = $row;
+    }
+}
+
+// Process tradepoints for each enumerator
+foreach ($enumerators_raw as &$enum) { // Use & for reference to modify original array
+    $assigned_tradepoints_array = [];
+    if (!empty($enum['tradepoints'])) {
+        $tradepoints_json = json_decode($enum['tradepoints'], true);
+
+        if (json_last_error() === JSON_ERROR_NONE && is_array($tradepoints_json)) {
+            foreach ($tradepoints_json as $key => $tp_data) {
+                // Ensure 'id' and 'type' keys exist within the nested array
+                if (isset($tp_data['id']) && isset($tp_data['type'])) {
+                    $tradepoint_id = $tp_data['id'];
+                    $tradepoint_type = $tp_data['type'];
+
+                    // Fetch the actual name using the new function
+                    $actual_name = getTradepointName($con, $tradepoint_id, $tradepoint_type);
+
+                    // Format for display: "Actual Name (Type)"
+                    if (!empty($actual_name) && $actual_name !== "ID: " . htmlspecialchars($tradepoint_id) . " (Name Not Found)") {
+                        $assigned_tradepoints_array[] = htmlspecialchars($actual_name) . " (" . htmlspecialchars($tradepoint_type) . ")";
+                    } else {
+                        // Fallback if name is not found
+                        $assigned_tradepoints_array[] = "ID: " . htmlspecialchars($tradepoint_id) . " (" . htmlspecialchars($tradepoint_type) . ")";
+                    }
+                } else {
+                    // Handle cases where 'id' or 'type' might be missing in a tradepoint entry
+                    $assigned_tradepoints_array[] = "Malformed Tradepoint Data";
+                }
+            }
+        } else {
+            // Handle JSON decoding error or non-array JSON
+            $assigned_tradepoints_array[] = 'Invalid JSON or No Tradepoints Defined';
+        }
+    } else {
+        $assigned_tradepoints_array[] = 'No Tradepoints';
+    }
+    // Store as a pipe-separated string for display
+    $enum['formatted_tradepoints'] = implode('|||', $assigned_tradepoints_array);
+}
+unset($enum); // Unset the reference to avoid unintended modifications
 
 // Pagination setup
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
-$totalItems = count($enumerators);
+$totalItems = count($enumerators_raw);
 $totalPages = ceil($totalItems / $itemsPerPage);
 $page = isset($_GET['page']) ? max(1, min($totalPages, intval($_GET['page']))) : 1;
 $startIndex = ($page - 1) * $itemsPerPage;
 
 // Slice data for current page
-$enumerators = array_slice($enumerators, $startIndex, $itemsPerPage);
+$enumerators_display = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -164,6 +250,19 @@ $enumerators = array_slice($enumerators, $startIndex, $itemsPerPage);
         .btn-primary:hover {
             background-color: darkred;
         }
+        /* New styles for tradepoint tags */
+        .tradepoints-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        .tradepoint-tag {
+            background-color: #e0e0e0;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            white-space: nowrap; /* Prevent tags from breaking */
+        }
     </style>
 </head>
 <body>
@@ -221,9 +320,7 @@ $enumerators = array_slice($enumerators, $startIndex, $itemsPerPage);
                         <th>Name</th>
                         <th>Admin 0</th>
                         <th>Admin 1</th>
-                        <th>Tradepoint</th>
-                        <th>Tradepoint Type</th>
-                        <th>Actions</th>
+                        <th>Assigned Tradepoints</th> <th>Actions</th>
                     </tr>
                     <tr class="filter-row" style="background-color: white !important; color: black !important;">
                         <th></th>
@@ -231,12 +328,11 @@ $enumerators = array_slice($enumerators, $startIndex, $itemsPerPage);
                         <th><input type="text" class="filter-input" id="filterAdmin0" placeholder="Filter Admin 0"></th>
                         <th><input type="text" class="filter-input" id="filterAdmin1" placeholder="Filter Admin 1"></th>
                         <th><input type="text" class="filter-input" id="filterTradepoint" placeholder="Filter Tradepoint"></th>
-                        <th><input type="text" class="filter-input" id="filterType" placeholder="Filter Type"></th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody id="enumeratorTable">
-                    <?php foreach ($enumerators as $enum): ?>
+                    <?php foreach ($enumerators_display as $enum): ?>
                         <tr>
                             <td>
                                 <input type="checkbox" class="row-checkbox" value="<?php echo $enum['id']; ?>">
@@ -244,8 +340,23 @@ $enumerators = array_slice($enumerators, $startIndex, $itemsPerPage);
                             <td><?= htmlspecialchars($enum['name']) ?></td>
                             <td><?= htmlspecialchars($enum['country']) ?></td>
                             <td><?= htmlspecialchars($enum['county_district']) ?></td>
-                            <td><?= htmlspecialchars($enum['tradepoint']) ?></td>
-                            <td><?= htmlspecialchars($enum['tradepoint_type']) ?></td>
+                            <td>
+                                <div class="tradepoints-list">
+                                    <?php
+                                    // Split the formatted string into individual tradepoint entries
+                                    if (!empty($enum['formatted_tradepoints'])) {
+                                        $tradepoints_display = explode('|||', $enum['formatted_tradepoints']);
+                                        foreach ($tradepoints_display as $tp_entry):
+                                    ?>
+                                            <span class="tradepoint-tag"><?= htmlspecialchars($tp_entry) ?></span>
+                                    <?php
+                                        endforeach;
+                                    } else {
+                                        echo 'N/A';
+                                    }
+                                    ?>
+                                </div>
+                            </td>
                             <td>
                                 <a href="edit_enumerator.php?id=<?= $enum['id'] ?>">
                                     <button class="btn btn-sm btn-warning">
