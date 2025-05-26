@@ -445,7 +445,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['create_admin'])) {
             </button>
             
             <div class="text-center">
-                <a href="base/sidebar.php" class="back-link">
+                <a href="../base/sidebar.php" class="back-link">
                     <i class="fas fa-arrow-left"></i> Back to Dashboard
                 </a>
             </div>

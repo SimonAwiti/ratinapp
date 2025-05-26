@@ -179,6 +179,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
         </a>
         <div class="submenu" id="userSubmenu">
             <a href="#" class="nav-link"><i class="fa fa-user"></i> Profile</a>
+            <a href="../admin/create_admin.php" class="nav-link"><i class="fa fa-user-gear"></i> Create Admin</a>
             <a href="../admin/logout.php" class="nav-link"><i class="fa fa-sign-out"></i> Logout</a>
         </div>
     </div>
