@@ -149,6 +149,10 @@
             <a href="#" class="nav-link" onclick="loadContent('../data/currencies_boilerplate.php', 'Data', 'Currency Rates')">
                 <i class="fa fa-money-bill-wave"></i> Currency Rates
             </a>
+
+            <a href="#" class="nav-link" onclick="loadContent('../data/countries_boilerplate.php', 'Data', 'Countries')">
+                <i class="fa fa-globe-africa"></i> Countries
+            </a>
         </div>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('webSubmenu', this)">
@@ -334,6 +338,20 @@
                             initializeCurrencies();
                         } else {
                             console.error("initializeCurrencies function not found after script load.");
+                        }
+                    };
+                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
+                    document.body.appendChild(script);
+                } else if (page.includes('countries_boilerplate.php')) {
+                    const script = document.createElement('script');
+                    script.src = 'assets/countries.js';
+                    script.type = 'text/javascript';
+                    script.className = 'dynamic-script';
+                    script.onload = () => {
+                        if (typeof initializeCountries === 'function') {
+                            initializeCountries();
+                        } else {
+                            console.error("initializeCountries function not found after script load.");
                         }
                     };
                     script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
