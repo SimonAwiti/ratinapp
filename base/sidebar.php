@@ -126,10 +126,11 @@
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="submenu" id="dataSubmenu">
-            <a href="#" class="nav-link" onclick="toggleSubmenu('marketPricesSubmenu', this)">
-                <i class="fa fa-store-alt"></i> Market Prices</i>
+            <a href="#" class="nav-link" onclick="toggleSubmenu('marketPricesSubmenu', this, event)">
+                <span><i class="fa fa-store-alt"></i> Market Prices</span>
+                <i class="fa fa-chevron-down"></i>
             </a>
-            <div class="submenu" id="marketPricesSubmenu" style="padding-left: 20px;">
+            <div class="submenu" id="marketPricesSubmenu">
                 <a href="#" class="nav-link" onclick="loadContent('../data/marketprices_boilerplate.php', 'Data', 'Market Prices')">
                     <i class="fa fa-list"></i> Prices
                 </a>
@@ -193,23 +194,27 @@
     function toggleSubmenu(submenuId, element) {
         let submenu = document.getElementById(submenuId);
         let icon = element.querySelector("i.fa-chevron-down");
-
+        
+        // Toggle the current submenu
         if (submenu.style.display === "block") {
             submenu.style.display = "none";
             icon.classList.remove("rotate");
         } else {
-            // Close other open submenus before opening the current one
-            document.querySelectorAll('.submenu').forEach(otherSubmenu => {
-                if (otherSubmenu.id !== submenuId) {
-                    otherSubmenu.style.display = 'none';
-                    let otherIcon = otherSubmenu.previousElementSibling.querySelector("i.fa-chevron-down");
-                    if (otherIcon) otherIcon.classList.remove("rotate");
-                }
-            });
-
             submenu.style.display = "block";
             icon.classList.add("rotate");
         }
+        
+        // Close other submenus at the same level
+        let parentMenu = element.closest('.submenu') || document.querySelector('.sidebar');
+        parentMenu.querySelectorAll('.submenu').forEach(otherSubmenu => {
+            if (otherSubmenu.id !== submenuId && otherSubmenu !== submenu.parentElement) {
+                otherSubmenu.style.display = "none";
+                let otherIcon = otherSubmenu.previousElementSibling?.querySelector("i.fa-chevron-down");
+                if (otherIcon) otherIcon.classList.remove("rotate");
+            }
+        });
+        
+        return false; // Prevent default action and stop propagation
     }
 
     function updateBreadcrumb(mainCategory, subCategory) {
