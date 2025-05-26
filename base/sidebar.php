@@ -1,3 +1,13 @@
+<?php
+session_start();
+
+// Check if user is logged in and has admin privileges
+if (!isset($_SESSION['admin_logged_in'])) {
+    header("Location: ../admin/index.php");
+    exit;
+}
+
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -149,6 +159,10 @@
             <a href="#" class="nav-link" onclick="loadContent('../data/currencies_boilerplate.php', 'Data', 'Currency Rates')">
                 <i class="fa fa-money-bill-wave"></i> Currency Rates
             </a>
+
+            <a href="#" class="nav-link" onclick="loadContent('../data/countries_boilerplate.php', 'Data', 'Countries')">
+                <i class="fa fa-globe-africa"></i> Countries
+            </a>
         </div>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('webSubmenu', this)">
@@ -165,7 +179,7 @@
         </a>
         <div class="submenu" id="userSubmenu">
             <a href="#" class="nav-link"><i class="fa fa-user"></i> Profile</a>
-            <a href="#" class="nav-link"><i class="fa fa-sign-out"></i> Logout</a>
+            <a href="../admin/logout.php" class="nav-link"><i class="fa fa-sign-out"></i> Logout</a>
         </div>
     </div>
 
@@ -334,6 +348,20 @@
                             initializeCurrencies();
                         } else {
                             console.error("initializeCurrencies function not found after script load.");
+                        }
+                    };
+                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
+                    document.body.appendChild(script);
+                } else if (page.includes('countries_boilerplate.php')) {
+                    const script = document.createElement('script');
+                    script.src = 'assets/countries.js';
+                    script.type = 'text/javascript';
+                    script.className = 'dynamic-script';
+                    script.onload = () => {
+                        if (typeof initializeCountries === 'function') {
+                            initializeCountries();
+                        } else {
+                            console.error("initializeCountries function not found after script load.");
                         }
                     };
                     script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
