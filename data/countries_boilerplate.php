@@ -258,32 +258,5 @@ $total_pages = ceil($total_records / $limit);
             </div>
         </div>
     </div>
-    <script>
-        // Basic functionality for select all checkboxes
-        document.getElementById('select-all').addEventListener('change', function() {
-            const checkboxes = document.querySelectorAll('tbody input[type="checkbox"]');
-            checkboxes.forEach(checkbox => {
-                checkbox.checked = this.checked;
-            });
-        });
-
-        // Delete functionality would go here
-        document.querySelector('.delete-btn').addEventListener('click', function() {
-            const selectedIds = Array.from(document.querySelectorAll('tbody input[type="checkbox"]:checked'))
-                                    .map(checkbox => checkbox.dataset.id);
-            
-            if (selectedIds.length === 0) {
-                alert('Please select at least one country to delete.');
-                return;
-            }
-            
-            if (confirm(`Are you sure you want to delete ${selectedIds.length} selected countries?`)) {
-                // AJAX call to delete would go here
-                console.log('Countries to delete:', selectedIds);
-                // After successful deletion, you might want to reload the page
-                // window.location.reload();
-            }
-        });
-    </script>
 </body>
 </html>
