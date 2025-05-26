@@ -104,6 +104,17 @@ if (!isset($_SESSION['admin_logged_in'])) {
         .content-container {
             padding: 19px;
         }
+
+        .user-display {
+            display: flex;
+            align-items: center;
+            gap: 8px; /* Space between icon and username */
+            font-weight: bold;
+            color: #8B4513;
+        }
+        .user-display i {
+            font-size: 1.2em; /* Adjust icon size as needed */
+        }
     </style>
 </head>
 <body>
@@ -121,13 +132,13 @@ if (!isset($_SESSION['admin_logged_in'])) {
         </a>
         <div class="submenu" id="baseSubmenu">
             <a href="#" class="nav-link" onclick="loadContent('commodities_boilerplate.php', 'Base', 'Commodities')">
-                <i class="fa fa-circle" style="color:#8B4513;"></i> Commodities
+                <i class="fa fa-box-open" style="color:#8B4513;"></i> Commodities
             </a>
             <a href="#" class="nav-link" onclick="loadContent('tradepoints_boilerplate.php', 'Base', 'Trade Points')">
-                <i class="fa fa-circle text-secondary"></i> Trade Points
+                <i class="fa fa-map-marker-alt" style="color:#8B4513;"></i> Trade Points
             </a>
             <a href="#" class="nav-link" onclick="loadContent('enumerator_boilerplate.php', 'Base', 'Enumerators')">
-                <i class="fa fa-circle text-secondary"></i> Enumerators
+                <i class="fa fa-users" style="color:#8B4513;"></i> Enumerators
             </a>
         </div>
 
@@ -179,8 +190,8 @@ if (!isset($_SESSION['admin_logged_in'])) {
         </a>
         <div class="submenu" id="userSubmenu">
             <a href="#" class="nav-link"><i class="fa fa-user"></i> Profile</a>
-            <a href="../admin/create_admin.php" class="nav-link"><i class="fa fa-user-gear"></i> Create Admin</a>
-            <a href="../admin/logout.php" class="nav-link"><i class="fa fa-sign-out"></i> Logout</a>
+            <a href="../admin/create_admin.php" class="nav-link"><i class="fa fa-user-plus"></i> Create Admin</a>
+            <a href="../admin/logout.php" class="nav-link"><i class="fa fa-sign-out-alt"></i> Logout</a>
         </div>
     </div>
 
@@ -197,6 +208,11 @@ if (!isset($_SESSION['admin_logged_in'])) {
                     <li class="breadcrumb-item active" aria-current="page" id="subCategory">Home</li>
                 </ol>
             </nav>
+            <?php if (isset($_SESSION['admin_username'])): ?>
+                <div class="user-display">
+                    <i class="fa fa-user-circle"></i> <span><?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
+                </div>
+            <?php endif; ?>
         </div>
 
         <div class="content-container" id="mainContent">
