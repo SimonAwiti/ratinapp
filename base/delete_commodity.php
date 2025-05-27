@@ -26,17 +26,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ids'])) {
 
         if ($con->query($sql) === TRUE) {
             echo '<pre>Deletion successful.</pre>';
-            header("Location: commodities.php?delete_success=true");
+            header("Location: sidebar.php?delete_success=true");
             exit();
         } else {
             echo '<pre>Deletion failed. MySQL Error:</pre>';
             echo '<pre>' . $con->error . '</pre>';
-            header("Location: commodities.php?delete_error=" . urlencode($con->error));
+            header("Location: sidebar.php?delete_error=" . urlencode($con->error));
             exit();
         }
     } else {
         echo '<pre>No valid IDs to delete.</pre>';
-        header("Location: commodities.php?delete_empty=true");
+        header("Location: sidebar.php?delete_empty=true");
         exit();
     }
 

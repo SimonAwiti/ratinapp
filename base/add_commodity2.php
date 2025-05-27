@@ -8,6 +8,18 @@ if (!isset($_SESSION['category'])) {
     exit;
 }
 
+// Fetch countries from database
+$countries = [];
+$country_query = "SELECT country_name FROM countries ORDER BY country_name ASC";
+$country_result = $con->query($country_query);
+if ($country_result) {
+    while ($row = $country_result->fetch_assoc()) {
+        $countries[] = $row['country_name'];
+    }
+}
+
+$error_message = '';
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Retrieve data from session and form
@@ -19,74 +31,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $hs_code = $_POST['hs_code'];
 
-    // Retrieve arrays for commodity aliases and countries
-    // Use empty array if not set, to ensure json_encode works correctly
-    $commodity_aliases_array = isset($_POST['commodity_alias']) ? $_POST['commodity_alias'] : [];
-    $country_array = isset($_POST['country']) ? $_POST['country'] : [];
+    // Check for duplicate commodity (same category, commodity name, and variety)
+    $duplicate_check_sql = "SELECT id FROM commodities WHERE category_id = ? AND commodity_name = ? AND variety = ?";
+    $duplicate_stmt = $con->prepare($duplicate_check_sql);
+    $duplicate_stmt->bind_param('iss', $category_id, $commodity_name, $variety);
+    $duplicate_stmt->execute();
+    $duplicate_result = $duplicate_stmt->get_result();
+    
+    if ($duplicate_result->num_rows > 0) {
+        $error_message = "A commodity with the same category, name, and variety already exists. Please choose different details.";
+    } else {
+        // Retrieve arrays for commodity aliases and countries
+        // Use empty array if not set, to ensure json_encode works correctly
+        $commodity_aliases_array = isset($_POST['commodity_alias']) ? $_POST['commodity_alias'] : [];
+        $country_array = isset($_POST['country']) ? $_POST['country'] : [];
 
+        // Handle file upload
+        $image_url = '';
+        if (isset($_FILES['commodity_image']) && $_FILES['commodity_image']['error'] === UPLOAD_ERR_OK) {
+            $upload_dir = 'uploads/';
+            $image_name = basename($_FILES['commodity_image']['name']);
+            $image_path = $upload_dir . $image_name;
+            if (move_uploaded_file($_FILES['commodity_image']['tmp_name'], $image_path)) {
+                $image_url = $image_path;
+            }
+        }
 
-    // Handle file upload
-    $image_url = '';
-    if (isset($_FILES['commodity_image']) && $_FILES['commodity_image']['error'] === UPLOAD_ERR_OK) {
-        $upload_dir = 'uploads/';
-        $image_name = basename($_FILES['commodity_image']['name']);
-        $image_path = $upload_dir . $image_name;
-        if (move_uploaded_file($_FILES['commodity_image']['tmp_name'], $image_path)) {
-            $image_url = $image_path;
+        // Combine packaging and unit into arrays of objects
+        $combined_units = [];
+        for ($i = 0; $i < count($packaging_array); $i++) {
+            $combined_units[] = [
+                'size' => $packaging_array[$i],
+                'unit' => $unit_array[$i]
+            ];
+        }
+
+        // Encode the combined array as JSON
+        $units_json = json_encode($combined_units);
+
+        // Encode commodity aliases and countries as JSON
+        $commodity_aliases_json = json_encode($commodity_aliases_array);
+        $countries_json = json_encode($country_array);
+
+        // Start database transaction
+        $con->begin_transaction();
+        try {
+            $sql = "INSERT INTO commodities
+                (commodity_name, category_id, variety, units, hs_code, commodity_alias, country, image_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+
+            $stmt = $con->prepare($sql);
+            $stmt->bind_param(
+                'sississs',
+                $commodity_name,
+                $category_id,
+                $variety,
+                $units_json,
+                $hs_code,
+                $commodity_aliases_json, // Insert JSON string for aliases
+                $countries_json,         // Insert JSON string for countries
+                $image_url
+            );
+
+            $stmt->execute();
+
+            $con->commit();
+            
+            // Clear session
+            session_unset();
+            session_destroy();
+
+            // Redirect
+            header('Location: sidebar.php');
+            exit;
+            
+        } catch (Exception $e) {
+            $con->rollback();
+            $error_message = "Database error: " . $e->getMessage();
         }
     }
-
-    // Combine packaging and unit into arrays of objects
-    $combined_units = [];
-    for ($i = 0; $i < count($packaging_array); $i++) {
-        $combined_units[] = [
-            'size' => $packaging_array[$i],
-            'unit' => $unit_array[$i]
-        ];
-    }
-
-    // Encode the combined array as JSON
-    $units_json = json_encode($combined_units);
-
-    // Encode commodity aliases and countries as JSON
-    $commodity_aliases_json = json_encode($commodity_aliases_array);
-    $countries_json = json_encode($country_array);
-
-    // Start database transaction
-    $con->begin_transaction();
-    try {
-        $sql = "INSERT INTO commodities
-            (commodity_name, category_id, variety, units, hs_code, commodity_alias, country, image_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-
-        $stmt = $con->prepare($sql);
-        $stmt->bind_param(
-            'sississs',
-            $commodity_name,
-            $category_id,
-            $variety,
-            $units_json,
-            $hs_code,
-            $commodity_aliases_json, // Insert JSON string for aliases
-            $countries_json,         // Insert JSON string for countries
-            $image_url
-        );
-
-        $stmt->execute();
-
-        $con->commit();
-    } catch (Exception $e) {
-        $con->rollback();
-        die("Database error: " . $e->getMessage());
-    }
-
-    // Clear session
-    session_unset();
-    session_destroy();
-
-    // Redirect
-    header('Location: sidebar.php');
-    exit;
 }
 ?>
 
@@ -159,6 +182,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flex-direction: column;
             gap: 10px;
         }
+        /* Error message styling */
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border: 1px solid #f5c6cb;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
@@ -178,25 +210,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="form-container">
             <h2>Add Commodity</h2>
             <p>Provide the necessary details to add a new commodity</p>
+            
+            <?php if ($error_message): ?>
+                <div class="error-message">
+                    <?php echo htmlspecialchars($error_message); ?>
+                </div>
+            <?php endif; ?>
+            
             <form method="POST" action="add_commodity2.php" enctype="multipart/form-data">
                 <label for="hs-code">HS Code*</label>
-                <input type="text" id="hs-code" name="hs_code" required>
+                <input type="text" id="hs-code" name="hs_code" value="<?php echo isset($_POST['hs_code']) ? htmlspecialchars($_POST['hs_code']) : ''; ?>" required>
 
                 <div id="alias-country-container">
                     <div class="alias-country-group">
                         <div style="flex: 1;">
                             <label>Commodity Alias</label>
-                            <input type="text" name="commodity_alias[]">
+                            <input type="text" name="commodity_alias[]" value="<?php echo isset($_POST['commodity_alias'][0]) ? htmlspecialchars($_POST['commodity_alias'][0]) : ''; ?>">
                         </div>
                         <div style="flex: 1;">
                             <label>Country</label>
                             <select name="country[]" required>
                                 <option value="">Select country</option>
-                                <option value="Rwanda">Rwanda</option>
-                                <option value="Uganda">Uganda</option>
-                                <option value="Tanzania">Tanzania</option>
-                                <option value="Kenya">Kenya</option>
-                                </select>
+                                <?php foreach ($countries as $country): ?>
+                                    <option value="<?php echo htmlspecialchars($country); ?>" 
+                                        <?php echo (isset($_POST['country'][0]) && $_POST['country'][0] === $country) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($country); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
                         <button type="button" class="remove-btn" onclick="removeAliasCountry(this)">×</button>
                     </div>
@@ -216,11 +257,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <script>
+        // Store countries array for JavaScript use
+        const countries = <?php echo json_encode($countries); ?>;
+        
         // Function to add more commodity alias and country fields
         function addMoreAliasCountry() {
             const container = document.getElementById('alias-country-container');
             const newGroup = document.createElement('div');
             newGroup.className = 'alias-country-group';
+            
+            // Build country options dynamically
+            let countryOptions = '<option value="">Select country</option>';
+            countries.forEach(country => {
+                countryOptions += `<option value="${country}">${country}</option>`;
+            });
+            
             newGroup.innerHTML = `
                 <div style="flex: 1;">
                     <label>Commodity Alias</label>
@@ -229,12 +280,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div style="flex: 1;">
                     <label>Country</label>
                     <select name="country[]" required>
-                        <option value="">Select country</option>
-                        <option value="Rwanda">Rwanda</option>
-                        <option value="Uganda">Uganda</option>
-                        <option value="Tanzania">Tanzania</option>
-                        <option value="Kenya">Kenya</option>
-                        </select>
+                        ${countryOptions}
+                    </select>
                 </div>
                 <button type="button" class="remove-btn" onclick="removeAliasCountry(this)">×</button>
             `;
