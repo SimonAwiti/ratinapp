@@ -51,7 +51,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $_SESSION['country'] = $_POST['country'];
         $_SESSION['county_district'] = $_POST['county_district'];
 
-        header("Location: add_market2.php");
+        header("Location: addtradepoint2.php");
         exit;
     }
 
@@ -75,7 +75,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $_SESSION['latitude'] = $_POST['latitude'];
         $_SESSION['radius'] = $_POST['radius'];
 
-        header("Location: add_borderpoint2.php");
+        header("Location: addtradepoint2.php");
         exit;
     }
 
@@ -98,7 +98,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $_SESSION['county_district'] = $_POST['miller_county_district'];
         $_SESSION['currency'] = $miller_currency; // Store the collected currency
 
-        header("Location: add_miller2.php");
+        header("Location: addtradepoint2.php");
         exit;
     }
 }
@@ -384,6 +384,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             font-size: 14px;
         }
         
+        /* Error messages */
+        .error-message {
+            color: #dc3545;
+            font-size: 14px;
+            margin-top: 5px;
+            display: none;
+        }
+        
         /* Responsive design */
         @media (max-width: 768px) {
             .container {
@@ -475,6 +483,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             </div>
 
             <form id="tradepoint-form" method="POST" action="">
+                <!-- Add hidden input for tradepoint type -->
+                <input type="hidden" id="tradepoint-type" name="tradepoint" value="Markets">
+                
                 <!-- Markets Section -->
                 <div class="tradepoint-section active" id="market-fields">
                     <div class="section-header">
@@ -485,6 +496,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <div class="form-group-full">
                         <label for="market_name" class="required">Name of Market</label>
                         <input type="text" id="market_name" name="market_name" placeholder="Enter market name">
+                        <div class="error-message" id="market_name_error">Market name is required</div>
                     </div>
 
                     <div class="form-row">
@@ -495,6 +507,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <option value="Consumer">Consumer</option>
                                 <option value="Producer">Producer</option>
                             </select>
+                            <div class="error-message" id="category_error">Market category is required</div>
                         </div>
                         <div class="form-group">
                             <label for="type" class="required">Market Type</label>
@@ -503,6 +516,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <option value="Primary">Primary</option>
                                 <option value="Secondary">Secondary</option>
                             </select>
+                            <div class="error-message" id="type_error">Market type is required</div>
                         </div>
                     </div>
 
@@ -517,10 +531,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                     </option>
                                 <?php endforeach; ?>
                             </select>
+                            <div class="error-message" id="country_error">Country is required</div>
                         </div>
                         <div class="form-group">
                             <label for="county_district" class="required">County/District (Admin 1)</label>
                             <input type="text" id="county_district" name="county_district" placeholder="Enter county or district">
+                            <div class="error-message" id="county_district_error">County/District is required</div>
                         </div>
                     </div>
                 </div>
@@ -535,6 +551,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <div class="form-group-full">
                         <label for="border_name" class="required">Name of Border</label>
                         <input type="text" id="border_name" name="border_name" placeholder="Enter border point name">
+                        <div class="error-message" id="border_name_error">Border name is required</div>
                     </div>
 
                     <div class="form-row">
@@ -548,10 +565,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                     </option>
                                 <?php endforeach; ?>
                             </select>
+                            <div class="error-message" id="border_country_error">Country is required</div>
                         </div>
                         <div class="form-group">
                             <label for="border_county" class="required">County/District (Admin 1)</label>
                             <input type="text" id="border_county" name="border_county" placeholder="Enter county or district">
+                            <div class="error-message" id="border_county_error">County/District is required</div>
                         </div>
                     </div>
 
@@ -559,16 +578,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <div class="form-group">
                             <label for="longitude" class="required">Longitude</label>
                             <input type="number" step="any" id="longitude" name="longitude" placeholder="e.g., 36.8219">
+                            <div class="error-message" id="longitude_error">Longitude is required</div>
                         </div>
                         <div class="form-group">
                             <label for="latitude" class="required">Latitude</label>
                             <input type="number" step="any" id="latitude" name="latitude" placeholder="e.g., -1.2921">
+                            <div class="error-message" id="latitude_error">Latitude is required</div>
                         </div>
                     </div>
 
                     <div class="form-group-full">
                         <label for="radius" class="required">Border Radius (km)</label>
                         <input type="number" id="radius" name="radius" placeholder="Enter radius in kilometers">
+                        <div class="error-message" id="radius_error">Border radius is required</div>
                     </div>
                 </div>
 
@@ -582,6 +604,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <div class="form-group-full">
                         <label for="miller_name" class="required">Town Name</label>
                         <input type="text" id="miller_name" name="miller_name" placeholder="Enter town name">
+                        <div class="error-message" id="miller_name_error">Town name is required</div>
                     </div>
 
                     <div class="form-row">
@@ -595,10 +618,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                     </option>
                                 <?php endforeach; ?>
                             </select>
+                            <div class="error-message" id="miller_country_error">Country is required</div>
                         </div>
                         <div class="form-group">
                             <label for="miller_county_district" class="required">County/District (Admin 1)</label>
                             <input type="text" id="miller_county_district" name="miller_county_district" placeholder="Enter county or district">
+                            <div class="error-message" id="miller_county_district_error">County/District is required</div>
                         </div>
                     </div>
 
@@ -606,6 +631,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <label for="miller_currency_display" class="required">Currency</label>
                         <div class="currency-display" id="miller_currency_display">Select a country to see currency</div>
                         <input type="hidden" id="miller_currency_display_value" name="miller_currency_display_value">
+                        <div class="error-message" id="miller_currency_error">Please select a country with available currency</div>
                     </div>
                 </div>
 
@@ -644,9 +670,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         function showRelevantFields() {
             const selected = document.querySelector('input[name="tradepoint"]:checked').value;
             
+            // Update hidden input
+            document.getElementById('tradepoint-type').value = selected;
+            
             // Hide all sections
             document.querySelectorAll('.tradepoint-section').forEach(section => {
                 section.classList.remove('active');
+            });
+            
+            // Clear all error messages
+            document.querySelectorAll('.error-message').forEach(error => {
+                error.style.display = 'none';
             });
             
             // Show selected section
@@ -660,101 +694,152 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             }
         }
 
+        function validateField(fieldId, errorId, customValidation = null) {
+            const field = document.getElementById(fieldId);
+            const error = document.getElementById(errorId);
+            
+            if (!field) return true;
+            
+            let isValid = true;
+            
+            if (customValidation) {
+                isValid = customValidation(field);
+            } else {
+                isValid = field.value.trim() !== '';
+            }
+            
+            if (isValid) {
+                error.style.display = 'none';
+                field.style.borderColor = '#ccc';
+            } else {
+                error.style.display = 'block';
+                field.style.borderColor = '#dc3545';
+            }
+            
+            return isValid;
+        }
+
         // Initialize on page load
-        window.onload = function() {
+        document.addEventListener('DOMContentLoaded', function() {
             showRelevantFields();
+            
             // Attach event listener to miller_country select for real-time updates
             document.getElementById('miller_country').addEventListener('change', updateMillerCurrency);
-        };
-
-        // Listen to tradepoint radio changes
-        document.querySelectorAll('input[name="tradepoint"]').forEach(radio => {
-            radio.addEventListener('change', showRelevantFields);
-        });
-
-        // Form validation
-        document.getElementById('tradepoint-form').addEventListener('submit', function(e) {
-            const selected = document.querySelector('input[name="tradepoint"]:checked').value;
-            let isValid = true;
-            let firstErrorField = null;
-
-            if (selected === 'Markets') {
-                const requiredFields = [
-                    {id: 'market_name', name: 'Market Name'},
-                    {id: 'category', name: 'Market Category'},
-                    {id: 'type', name: 'Market Type'},
-                    {id: 'country', name: 'Country'},
-                    {id: 'county_district', name: 'County/District'}
-                ];
-                
-                requiredFields.forEach(field => {
-                    const element = document.getElementById(field.id);
-                    if (!element.value.trim()) {
-                        if (!firstErrorField) firstErrorField = element;
-                        isValid = false;
-                    }
-                });
-            }
-            else if (selected === 'Border Points') {
-                const requiredFields = [
-                    {id: 'border_name', name: 'Border Name'},
-                    {id: 'border_country', name: 'Country'},
-                    {id: 'border_county', name: 'County/District'},
-                    {id: 'longitude', name: 'Longitude'},
-                    {id: 'latitude', name: 'Latitude'},
-                    {id: 'radius', name: 'Border Radius'}
-                ];
-                
-                requiredFields.forEach(field => {
-                    const element = document.getElementById(field.id);
-                    if (!element.value.trim()) {
-                        if (!firstErrorField) firstErrorField = element;
-                        isValid = false;
-                    }
-                });
-            }
-            else if (selected === 'Millers') {
-                const requiredFields = [
-                    {id: 'miller_name', name: 'Town Name'},
-                    {id: 'miller_country', name: 'Country'},
-                    {id: 'miller_county_district', name: 'County/District'}
-                ];
-                
-                requiredFields.forEach(field => {
-                    const element = document.getElementById(field.id);
-                    if (!element.value.trim()) {
-                        if (!firstErrorField) firstErrorField = element;
-                        isValid = false;
-                    }
-                });
-                
-                // Check currency
-                const currencyValue = document.getElementById('miller_currency_display_value').value;
-                if (!currencyValue || currencyValue === 'N/A') {
-                    if (!firstErrorField) firstErrorField = document.getElementById('miller_country');
-                    isValid = false;
-                }
-            }
-
-            if (!isValid) {
-                e.preventDefault();
-                alert('Please fill in all required fields.');
-                if (firstErrorField) {
-                    firstErrorField.focus();
-                    firstErrorField.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }
-        });
-
-        // Add smooth transitions for better UX
-        document.querySelectorAll('input, select').forEach(element => {
-            element.addEventListener('focus', function() {
-                this.style.transform = 'scale(1.02)';
-                this.style.transition = 'transform 0.2s ease';
-            });
             
-            element.addEventListener('blur', function() {
-                this.style.transform = 'scale(1)';
+            // Listen to tradepoint radio changes
+            document.querySelectorAll('input[name="tradepoint"]').forEach(radio => {
+                radio.addEventListener('change', showRelevantFields);
+            });
+
+            // Form validation
+            document.getElementById('tradepoint-form').addEventListener('submit', function(e) {
+                const selected = document.querySelector('input[name="tradepoint"]:checked').value;
+                let isValid = true;
+                let firstErrorField = null;
+
+                // Clear all previous error messages
+                document.querySelectorAll('.error-message').forEach(error => {
+                    error.style.display = 'none';
+                });
+
+                if (selected === 'Markets') {
+                    const fields = [
+                        'market_name',
+                        'category', 
+                        'type',
+                        'country',
+                        'county_district'
+                    ];
+                    
+                    fields.forEach(fieldId => {
+                        const errorId = fieldId + '_error';
+                        const fieldValid = validateField(fieldId, errorId);
+                        if (!fieldValid) {
+                            isValid = false;
+                            if (!firstErrorField) {
+                                firstErrorField = document.getElementById(fieldId);
+                            }
+                        }
+                    });
+                }
+                else if (selected === 'Border Points') {
+                    const fields = [
+                        'border_name',
+                        'border_country',
+                        'border_county',
+                        'longitude',
+                        'latitude',
+                        'radius'
+                    ];
+                    
+                    fields.forEach(fieldId => {
+                        const errorId = fieldId + '_error';
+                        const fieldValid = validateField(fieldId, errorId);
+                        if (!fieldValid) {
+                            isValid = false;
+                            if (!firstErrorField) {
+                                firstErrorField = document.getElementById(fieldId);
+                            }
+                        }
+                    });
+                }
+                else if (selected === 'Millers') {
+                    const fields = [
+                        'miller_name',
+                        'miller_country',
+                        'miller_county_district'
+                    ];
+                    
+                    fields.forEach(fieldId => {
+                        const errorId = fieldId + '_error';
+                        const fieldValid = validateField(fieldId, errorId);
+                        if (!fieldValid) {
+                            isValid = false;
+                            if (!firstErrorField) {
+                                firstErrorField = document.getElementById(fieldId);
+                            }
+                        }
+                    });
+                    
+                    // Check currency
+                    const currencyValue = document.getElementById('miller_currency_display_value').value;
+                    if (!currencyValue || currencyValue === 'N/A') {
+                        isValid = false;
+                        document.getElementById('miller_currency_error').style.display = 'block';
+                        if (!firstErrorField) {
+                            firstErrorField = document.getElementById('miller_country');
+                        }
+                    }
+                }
+
+                if (!isValid) {
+                    e.preventDefault();
+                    if (firstErrorField) {
+                        firstErrorField.focus();
+                        firstErrorField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                    return false;
+                }
+                
+                return true;
+            });
+
+            // Add real-time validation
+            const inputs = document.querySelectorAll('input, select');
+            inputs.forEach(input => {
+                input.addEventListener('blur', function() {
+                    const errorId = this.id + '_error';
+                    if (document.getElementById(errorId)) {
+                        validateField(this.id, errorId);
+                    }
+                });
+                
+                input.addEventListener('input', function() {
+                    const errorId = this.id + '_error';
+                    if (document.getElementById(errorId)) {
+                        validateField(this.id, errorId);
+                    }
+                });
             });
         });
     </script>
