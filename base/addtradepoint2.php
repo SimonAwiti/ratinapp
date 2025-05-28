@@ -71,7 +71,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
 
         $_SESSION['image_url'] = $image_url;
-        header("Location: add_tradepoint3.php");
+        header("Location: addtradepoint3.php");
         exit;
 
     } elseif ($tradepoint_type == "Border Points") {
@@ -151,7 +151,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         
         // Go to step 3
         if (isset($_POST['next_step'])) {
-            header("Location: add_miller3.php");
+            header("Location: addtradepoint3.php");
             exit;
         }
         
