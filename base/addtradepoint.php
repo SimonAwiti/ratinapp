@@ -5,6 +5,33 @@ include '../admin/includes/config.php';
 // Explicitly set character encoding
 mysqli_set_charset($con, "utf8mb4");
 
+// Function to check if market already exists
+function checkMarketExists($con, $name, $category, $type) {
+    $stmt = $con->prepare("SELECT id FROM markets WHERE market_name = ? AND category = ? AND type = ?");
+    $stmt->bind_param("sss", $name, $category, $type);
+    $stmt->execute();
+    $stmt->store_result();
+    return $stmt->num_rows > 0;
+}
+
+// Function to check if border point already exists
+function checkBorderExists($con, $name) {
+    $stmt = $con->prepare("SELECT id FROM border_points WHERE name = ?");
+    $stmt->bind_param("s", $name);
+    $stmt->execute();
+    $stmt->store_result();
+    return $stmt->num_rows > 0;
+}
+
+// Function to check if miller already exists
+function checkMillerExists($con, $name) {
+    $stmt = $con->prepare("SELECT id FROM millers WHERE miller_name = ?");
+    $stmt->bind_param("s", $name);
+    $stmt->execute();
+    $stmt->store_result();
+    return $stmt->num_rows > 0;
+}
+
 // Fetch countries from database
 $countries = [];
 $country_query = "SELECT country_name FROM countries ORDER BY country_name ASC";
@@ -45,6 +72,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             exit();
         }
 
+        // Check if market already exists
+        if (checkMarketExists($con, $_POST['market_name'], $_POST['category'], $_POST['type'])) {
+            echo "<script>alert('A market with this name, category and type already exists!'); window.history.back();</script>";
+            exit();
+        }
+
         $_SESSION['market_name'] = $_POST['market_name'];
         $_SESSION['category'] = $_POST['category'];
         $_SESSION['type'] = $_POST['type'];
@@ -65,6 +98,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             empty($_POST['radius'])
         ) {
             echo "<script>alert('All border point fields are required!'); window.history.back();</script>";
+            exit();
+        }
+
+        // Check if border point already exists
+        if (checkBorderExists($con, $_POST['border_name'])) {
+            echo "<script>alert('A border point with this name already exists!'); window.history.back();</script>";
             exit();
         }
 
@@ -90,6 +129,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             empty($miller_currency) // Validate the hidden currency field
         ) {
             echo "<script>alert('All miller fields are required!'); window.history.back();</script>";
+            exit();
+        }
+
+        // Check if miller already exists
+        if (checkMillerExists($con, $_POST['miller_name'])) {
+            echo "<script>alert('This town already has millers added, consider editing the town!'); window.history.back();</script>";
             exit();
         }
 
