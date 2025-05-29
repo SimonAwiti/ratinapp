@@ -59,18 +59,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $_SESSION['radius'] = $_POST['radius'];
         $_SESSION['currency'] = $autofill_currency;
 
-        // Handle single image upload for markets
-        $image_url = '';
-        if (isset($_FILES['imageUpload']) && $_FILES['imageUpload']['error'] === UPLOAD_ERR_OK) {
-            $image_name = basename($_FILES['imageUpload']['name']);
-            $image_path = $upload_dir . time() . '_' . uniqid() . '_' . $image_name;
+        // Handle multiple image upload for markets
+        $image_paths = array();
+        
+        if (isset($_FILES['marketImages'])) {
+            foreach ($_FILES['marketImages']['tmp_name'] as $key => $tmp_name) {
+                if ($_FILES['marketImages']['error'][$key] === UPLOAD_ERR_OK) {
+                    $image_name = basename($_FILES['marketImages']['name'][$key]);
+                    $image_path = $upload_dir . time() . '_' . uniqid() . '_' . $image_name;
 
-            if (move_uploaded_file($_FILES['imageUpload']['tmp_name'], $image_path)) {
-                $image_url = $image_path;
+                    if (move_uploaded_file($tmp_name, $image_path)) {
+                        $image_paths[] = $image_path;
+                    }
+                }
             }
         }
 
-        $_SESSION['image_url'] = $image_url;
+        // Convert array of image paths to JSON string
+        $_SESSION['image_urls'] = json_encode($image_paths);
         header("Location: addtradepoint3.php");
         exit;
 
@@ -646,8 +652,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     </div>
 
                     <div class="form-group-full">
-                        <label for="radius" class="required">Market Radius (km)</label>
-                        <input type="number" id="radius" name="radius" placeholder="Enter radius in kilometers" required>
+                        <label for="radius" class="required">Market Radius (m)</label>
+                        <input type="number" id="radius" name="radius" placeholder="Enter radius in meters" required>
                     </div>
 
                     <div class="form-group-full">
@@ -658,8 +664,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     </div>
 
                     <div class="form-group-full">
-                        <label for="imageUpload" class="required">Upload Market Image</label>
-                        <input type="file" id="imageUpload" name="imageUpload" accept="image/*" required>
+                        <label for="marketImages" class="required">Upload Market Images</label>
+                        <input type="file" id="marketImages" name="marketImages[]" multiple accept="image/*" required>
                         <div class="progress-bar-container">
                             <div class="progress-bar" id="progressBar"></div>
                         </div>
@@ -697,23 +703,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     
                     <div class="form-group-full">
                         <label for="miller" class="required">Miller Description</label>
-                        <input id="miller" name="miller" rows="4" placeholder="Add miller name" required></input>
+                        <input id="miller" name="miller" rows="4" placeholder="Add miller name" ></input>
                     </div>
                     
                     <div class="form-row">
                         <div class="form-group">
                             <label for="longitude" class="required">Longitude</label>
-                            <input type="number" step="any" id="longitude" name="longitude" placeholder="e.g., 36.8219" required>
+                            <input type="number" step="any" id="longitude" name="longitude" placeholder="e.g., 36.8219" >
                         </div>
                         <div class="form-group">
                             <label for="latitude" class="required">Latitude</label>
-                            <input type="number" step="any" id="latitude" name="latitude" placeholder="e.g., -1.2921" required>
+                            <input type="number" step="any" id="latitude" name="latitude" placeholder="e.g., -1.2921" >
                         </div>
                     </div>
 
                     <div class="form-group-full">
-                        <label for="radius" class="required">Service Radius (km)</label>
-                        <input type="number" id="radius" name="radius" placeholder="Enter service radius in kilometers" required>
+                        <label for="radius" class="required">Service Radius (m)</label>
+                        <input type="number" id="radius" name="radius" placeholder="Enter service radius in meters" >
                     </div>
                     
                     <div class="button-container">
@@ -754,7 +760,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         let fileInputId = '';
         
         if (tradepointType === 'Markets') {
-            fileInputId = 'imageUpload';
+            fileInputId = 'marketImages';
         } else if (tradepointType === 'Border Points') {
             fileInputId = 'borderImages';
         } else if (tradepointType === 'Millers') {
@@ -860,7 +866,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     {id: 'longitude', name: 'Longitude'},
                     {id: 'latitude', name: 'Latitude'},
                     {id: 'radius', name: 'Market Radius'},
-                    {id: 'imageUpload', name: 'Image Upload', type: 'file'}
+                    {id: 'marketImages', name: 'Market Images', type: 'file'}
                 ];
                 
                 requiredFields.forEach(field => {
