@@ -15,7 +15,7 @@ $tradepoint_type = $_SESSION['tradepoint'];
 
 // Validate required session data based on tradepoint type
 if ($tradepoint_type == "Markets") {
-    $required_fields = ['market_name', 'category', 'type', 'country', 'county_district', 'longitude', 'latitude', 'radius', 'currency', 'image_url'];
+    $required_fields = ['market_name', 'category', 'type', 'country', 'county_district', 'longitude', 'latitude', 'radius', 'currency', 'image_urls'];
     foreach ($required_fields as $field) {
         if (!isset($_SESSION[$field])) {
             header('Location: addtradepoint.php');
@@ -36,6 +36,16 @@ if ($tradepoint_type == "Markets") {
     exit;
 }
 
+// Fetch data sources from database
+$data_sources = [];
+$data_source_query = "SELECT data_source_name FROM data_sources ORDER BY data_source_name ASC";
+$data_source_result = $con->query($data_source_query);
+if ($data_source_result) {
+    while ($row = $data_source_result->fetch_assoc()) {
+        $data_sources[] = $row['data_source_name'];
+    }
+}
+
 // Handle form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
@@ -54,7 +64,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             // Insert data into the database using a transaction
             $con->begin_transaction();
             try {
-                $sql = "INSERT INTO markets (market_name, category, type, country, county_district, longitude, latitude, radius, currency, primary_commodity, additional_datasource, image_url, tradepoint) 
+                $sql = "INSERT INTO markets (market_name, category, type, country, county_district, longitude, latitude, radius, currency, primary_commodity, additional_datasource, image_urls, tradepoint) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
                 $stmt = $con->prepare($sql);
@@ -72,7 +82,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     $_SESSION['currency'], 
                     $commodities_str, 
                     $additional_datasource,
-                    $_SESSION['image_url'],
+                    $_SESSION['image_urls'],
                     $tradepoint
                 );
 
@@ -128,10 +138,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 }
 
-// Fetch commodities from the database (for Markets)
+// Fetch commodities with their varieties from the database (for Markets)
 $commodities_result = null;
 if ($tradepoint_type == "Markets") {
-    $commodities_query = "SELECT id, commodity_name FROM commodities";
+    $commodities_query = "SELECT id, commodity_name, variety FROM commodities";
     $commodities_result = $con->query($commodities_query);
 }
 
@@ -558,7 +568,11 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                                 <?php
                                 if ($commodities_result && $commodities_result->num_rows > 0) {
                                     while ($row = $commodities_result->fetch_assoc()) {
-                                        echo "<option value='" . $row['id'] . "' data-name='" . htmlspecialchars($row['commodity_name']) . "'>" . htmlspecialchars($row['commodity_name']) . "</option>";
+                                        $display_name = $row['commodity_name'];
+                                        if (!empty($row['variety'])) {
+                                            $display_name .= " (" . $row['variety'] . ")";
+                                        }
+                                        echo "<option value='" . $row['id'] . "' data-name='" . htmlspecialchars($display_name) . "'>" . htmlspecialchars($display_name) . "</option>";
                                     }
                                 } else {
                                     echo "<option value=''>No commodities available</option>";
@@ -576,7 +590,12 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                 
                 <div class="form-group-full">
                     <label for="additional_datasource" class="required">Additional Data Sources</label>
-                    <input type="text" id="additional_datasource" name="additional_datasource" placeholder="Enter additional data sources" required>
+                    <select id="additional_datasource" name="additional_datasource" required>
+                        <option value="">Select data source</option>
+                        <?php foreach ($data_sources as $source): ?>
+                            <option value="<?= htmlspecialchars($source) ?>"><?= htmlspecialchars($source) ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
                 <?php endif; ?>
 
@@ -610,7 +629,7 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                 <?php endif; ?>
 
                 <div class="button-container">
-                    <button type="button" class="prev-btn" onclick="window.location.href='add_tradepoint2.php'">
+                    <button type="button" class="prev-btn" onclick="window.location.href='addtradepoint2.php'">
                         <i class="fas fa-arrow-left"></i> Previous
                     </button>
                     <button type="submit" class="finish-btn">
@@ -702,7 +721,7 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                         const tag = document.createElement('div');
                         tag.className = 'tag';
                         tag.innerHTML = `
-                            ${option.textContent}
+                            ${option.dataset.name}
                             <button type="button" onclick="removeCommodity('${id}')">×</button>
                         `;
                         commodityTags.appendChild(tag);
