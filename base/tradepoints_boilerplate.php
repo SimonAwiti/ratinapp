@@ -1,4 +1,5 @@
 <?php
+session_start();
 include '../admin/includes/config.php';
 
 $query = "SELECT 
@@ -42,15 +43,17 @@ $startIndex = ($page - 1) * $itemsPerPage;
 $paginatedTradepoints = array_slice($tradepoints, $startIndex, $itemsPerPage);
 
 // Count types
-$typeCounts = ['Markets' => 0, 'Border Points' => 0, 'Millers' => 0];  // Add Miller count here
+$typeCounts = ['Markets' => 0, 'Border Points' => 0, 'Millers' => 0];
 foreach ($tradepoints as $tp) {
     $typeCounts[$tp['tradepoint_type']] = ($typeCounts[$tp['tradepoint_type']] ?? 0) + 1;
 }
 
+// Calculate total tradepoints
+$totalTradepoints = array_sum($typeCounts);
+
 // Get current URL without query parameters
 $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
 ?>
-
 
 <style>
 /* Same styles as before... (you can keep yours untouched) */
@@ -111,7 +114,7 @@ body {
 }
 .stats-container {
     display: flex;
-    gap: 20px;
+    gap: 15px;
     justify-content: space-between;
     align-items: center;
     flex-wrap: nowrap;
@@ -127,10 +130,52 @@ body {
     border-radius: 10px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
     text-align: center;
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+.stats-icon {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 10px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+}
+.total-icon {
+    background-color: #3498db;
+    color: white;
+}
+.markets-icon {
+    background-color: #e74c3c;
+    color: white;
+}
+.border-icon {
+    background-color: #f39c12;
+    color: white;
+}
+.millers-icon {
+    background-color: #27ae60;
+    color: white;
 }
 .stats-section {
     text-align: left;
     margin-left: 11%;
+}
+.stats-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin: 8px 0 5px 0;
+}
+.stats-number {
+    font-size: 24px;
+    font-weight: 700;
+    color: #34495e;
 }
 .modal-content {
     border-radius: 10px;
@@ -175,20 +220,40 @@ body {
     <p class="p">Manage everything related to Markets, Millers and Border Points</p>
 
     <div class="stats-container">
+        <!-- Total Tradepoints -->
         <div class="overlap-6">
-            <div class="img-wrapper"><img class="frame-38" src="img/frame-3.svg" /></div>
-            <div class="text-wrapper-34">Markets</div>
-            <div class="text-wrapper-35"><?= $typeCounts['Markets'] ?? 0 ?></div>
+            <div class="stats-icon total-icon">
+                <i class="fas fa-map-marked-alt"></i>
+            </div>
+            <div class="stats-title">Total Tradepoints</div>
+            <div class="stats-number"><?= $totalTradepoints ?></div>
         </div>
-        <div class="overlap-7">
-            <div class="overlap-8"><img class="frame-39" src="img/frame-26.svg" /></div>
-            <div class="text-wrapper-36">Border Points</div>
-            <div class="text-wrapper-37"><?= $typeCounts['Border Points'] ?? 0 ?></div>
+        
+        <!-- Markets -->
+        <div class="overlap-6">
+            <div class="stats-icon markets-icon">
+                <i class="fas fa-store"></i>
+            </div>
+            <div class="stats-title">Markets</div>
+            <div class="stats-number"><?= $typeCounts['Markets'] ?? 0 ?></div>
         </div>
+        
+        <!-- Border Points -->
         <div class="overlap-7">
-            <div class="overlap-8"><img class="frame-39" src="img/frame-26.svg" /></div>
-            <div class="text-wrapper-36">Millers</div>
-            <div class="text-wrapper-37"><?= $typeCounts['Millers'] ?? 0 ?></div>
+            <div class="stats-icon border-icon">
+                <i class="fas fa-passport"></i>
+            </div>
+            <div class="stats-title">Border Points</div>
+            <div class="stats-number"><?= $typeCounts['Border Points'] ?? 0 ?></div>
+        </div>
+        
+        <!-- Millers -->
+        <div class="overlap-7">
+            <div class="stats-icon millers-icon">
+                <i class="fas fa-industry"></i>
+            </div>
+            <div class="stats-title">Millers</div>
+            <div class="stats-number"><?= $typeCounts['Millers'] ?? 0 ?></div>
         </div>
     </div>
 </div>
@@ -197,22 +262,27 @@ body {
     <div class="table-container">
         <div class="btn-group">
             <a href="addtradepoint.php" class="btn btn-add-new">
-                <img src="img/frame-10.svg" alt="Add New" style="width: 22px; height: 22px; margin-right: 5px;">
+                <i class="fas fa-plus" style="margin-right: 5px;"></i>
                 Add New
             </a>
 
             <button class="btn btn-delete" onclick="deleteSelected()"> 
-                <img src="img/frame-8.svg" alt="Delete" style="width: 20px; height: 20px; margin-right: 3px;">Delete
+                <i class="fas fa-trash" style="margin-right: 3px;"></i>
+                Delete
             </button>
 
             <div class="dropdown">
                 <button class="btn btn-export dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                    <img src="img/frame-25.svg" alt="Export" style="width: 20px; height: 20px; margin-right: 3px;">
+                    <i class="fas fa-download" style="margin-right: 3px;"></i>
                     Export
                 </button>
                 <ul class="dropdown-menu">
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">Export to Excel</a></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">Export to PDF</a></li>
+                    <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">
+                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export to Excel
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
+                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
+                    </a></li>
                 </ul>
             </div>
         </div>
@@ -252,19 +322,19 @@ body {
                                     $editPage = 'edit_market.php';
                                     break;
                                 case 'Border Points':
-                                    $editPage = 'edit_borderpoint.php'; // New page for Border Points
+                                    $editPage = 'edit_borderpoint.php';
                                     break;
                                 case 'Millers':
-                                    $editPage = 'edit_miller.php';       // New page for Millers
+                                    $editPage = 'edit_miller.php';
                                     break;
                                 default:
-                                    $editPage = '#'; // Fallback or error page
+                                    $editPage = '#';
                                     break;
                             }
                             ?>
                             <a href="<?= htmlspecialchars($editPage) ?>?id=<?= htmlspecialchars($tp['id']) ?>">
                                 <button class="btn btn-sm btn-warning">
-                                    <img src="img/edit.svg" alt="Edit" style="width: 20px; height: 20px;">
+                                    <i class="fas fa-edit"></i>
                                 </button>
                             </a>
                         </td>
@@ -303,5 +373,8 @@ body {
         </div>
     </div>
 </div>
+
+<!-- Add Font Awesome for icons -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 
 <script src="assets/filter2.js"></script>
