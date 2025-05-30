@@ -633,8 +633,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     </div>
 
                     <div class="form-group-full">
-                        <label for="radius" class="required">Border Radius (km)</label>
-                        <input type="number" id="radius" name="radius" placeholder="Enter radius in kilometers">
+                        <label for="radius" class="required">Border Radius (m)</label>
+                        <input type="number" id="radius" name="radius" placeholder="Enter radius in meters">
                         <div class="error-message" id="radius_error">Border radius is required</div>
                     </div>
                 </div>
