@@ -387,12 +387,12 @@ mysqli_close($con); // Close DB connection for step 1
         <div class="steps-sidebar">
             <h3>Progress</h3>
             <div class="steps-container">
-                <div class="step active">
-                    <div class="step-circle active" data-step="1">1</div>
+                <div class="step completed">
+                    <div class="step-circle completed" data-step="1"></div>
                     <div class="step-text">Step 1<br><small>Basic Info</small></div>
                 </div>
                 <div class="step">
-                    <div class="step-circle" data-step="2">2</div>
+                    <div class="step-circle" data-step="2"></div>
                     <div class="step-text">Step 2<br><small>Additional Details</small></div>
                 </div>
             </div>
