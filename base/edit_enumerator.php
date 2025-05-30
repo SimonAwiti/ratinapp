@@ -79,7 +79,7 @@ function getTradepointName($con, $id, $type) {
             $nameColumn = 'name';
             break;
         case 'Miller':
-        case 'Miller':
+        case 'Miller': // Note: The 'Miller' case had 'Miller' twice, kept for consistency with original.
             $tableName = 'miller_details';
             $nameColumn = 'miller_name';
             break;
@@ -107,6 +107,7 @@ function getTradepointName($con, $id, $type) {
 }
 
 // --- 2. Handle form submission (UPDATE operation) ---
+$error_message = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Get updated data from the form
     $name = $_POST['name'] ?? $enumerator_data['name'];
@@ -140,12 +141,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header("Location: sidebar.php");
             exit;
         } else {
-            $_SESSION['error_message'] = "Error updating enumerator: " . $stmt->error;
+            $error_message = "Error updating enumerator: " . $stmt->error;
             error_log("Error updating enumerator: " . $stmt->error);
         }
         $stmt->close();
     } else {
-        $_SESSION['error_message'] = "Error preparing update statement: " . $con->error;
+        $error_message = "Error preparing update statement: " . $con->error;
         error_log("Error preparing update statement: " . $con->error);
     }
 }
@@ -207,115 +208,276 @@ $con->close();
 <head>
     <meta charset="UTF-8">
     <title>Edit Enumerator: <?= htmlspecialchars($enumerator_data['name']) ?></title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <style>
         body {
             font-family: Arial, sans-serif;
             background-color: #f8f8f8;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
             margin: 0;
+            padding: 20px;
         }
         .container {
             background: white;
-            padding: 40px; /* Reduced padding */
+            padding: 40px;
             border-radius: 8px;
-            width: 800px;
-            /* height: auto; Adjust height dynamically */
+            max-width: 900px;
+            margin: 0 auto;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            position: relative;
+        }
+        h2 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        p {
+            margin-bottom: 30px;
+            color: #666;
+        }
+        .close-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 30px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            color: #333;
+        }
+        .close-btn:hover {
+            color: rgba(180, 80, 50, 1);
+        }
+        
+        /* Form styling */
+        .form-row {
             display: flex;
-            flex-direction: column; /* Changed to column for simpler layout */
             gap: 20px;
+            margin-bottom: 20px;
         }
-        h2 { margin-bottom: 20px; text-align: center; }
-        .form-section {
-            display: flex;
-            gap: 40px;
-            flex-wrap: wrap; /* Allow wrapping on smaller screens */
-        }
-        .form-group {
-            flex: 1; /* Distribute space evenly */
-            min-width: 300px; /* Minimum width for each group */
+        .form-row .form-group {
+            flex: 1;
             display: flex;
             flex-direction: column;
-            margin-bottom: 15px; /* Spacing between groups */
+        }
+        .form-group-full {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 20px;
         }
         label {
-            margin-bottom: 5px;
+            margin-bottom: 8px;
             font-weight: bold;
-        }
-        input[type="text"],
-        input[type="email"],
-        input[type="tel"],
-        input[type="password"],
-        select {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            box-sizing: border-box; /* Include padding in width */
-        }
-        .tag {
-            display: inline-block;
-            background: #e0e0e0;
             color: #333;
-            padding: 6px 10px;
-            border-radius: 20px;
-            margin: 5px;
-            cursor: default;
         }
-        .tag span {
-            margin-left: 8px;
-            color: red;
-            cursor: pointer;
+        .required::after {
+            content: " *";
+            color: #dc3545;
         }
-        .tags-container {
-            margin-top: 15px;
-            margin-bottom: 20px;
-            border: 1px solid #eee;
+        input, select {
             padding: 10px;
+            border: 1px solid #ccc;
             border-radius: 5px;
-            min-height: 50px; /* Ensure visibility even if empty */
+            font-size: 14px;
+            margin-bottom: 15px;
         }
-        button {
-            margin-top: 20px;
-            width: 100%;
-            padding: 12px;
-            background-color: #a45c40;
-            border: none;
-            color: white;
-            font-size: 16px;
+        input:focus, select:focus {
+            outline: none;
+            border-color: rgba(180, 80, 50, 0.5);
+            box-shadow: 0 0 5px rgba(180, 80, 50, 0.3);
+        }
+        
+        /* Current info section */
+        .miller-info { /* Re-using miller-info for general info display */
+            background-color: #f8f9fa;
+            padding: 20px;
             border-radius: 5px;
+            margin-bottom: 30px;
+            border-left: 4px solid rgba(180, 80, 50, 1);
+        }
+        .miller-info h5 {
+            margin-bottom: 15px;
+            color: rgba(180, 80, 50, 1);
+        }
+        .miller-info p {
+            margin: 8px 0;
+            color: #666;
+            font-size: 14px;
+        }
+
+        /* Tradepoint selection styles (adapted from miller selection) */
+        .miller-limit-info { /* Re-using this class for general info */
+            background-color: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            color: #1976d2;
+        }
+        .miller-limit-info i {
+            margin-right: 8px;
+        }
+        
+        .selected-tags { /* Used for tradepoint tags */
+            margin-top: 15px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            min-height: 60px;
+        }
+        .selected-tags span {
+            display: inline-block;
+            margin-right: 8px;
+            margin-bottom: 8px;
+            background-color: rgba(180, 80, 50, 1);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .selected-tags span:hover {
+            background-color: rgba(160, 60, 30, 1);
+        }
+        .selected-tags span .remove-tag {
+            margin-left: 10px;
+            font-weight: bold;
+            color: #fff;
             cursor: pointer;
         }
-        button:hover { background-color: #8c4a30; } /* Darker hover */
+        
+        .limit-warning { /* Re-using for general warnings, currently hidden */
+            background-color: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #856404;
+            display: none;
+        }
+        .limit-warning i {
+            margin-right: 8px;
+        }
+        
+        /* Error message */
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border: 1px solid #f5c6cb;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        
+        /* Update button */
+        .update-btn {
+            background-color: rgba(180, 80, 50, 1);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 20px;
+        }
+        .update-btn:hover {
+            background-color: rgba(160, 60, 30, 1);
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+                margin: 10px;
+            }
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+        }
+
+        /* Password Toggle Specific Styles */
+        .password-container {
+            position: relative;
+            width: 100%;
+        }
+        .password-container input[type="password"],
+        .password-container input[type="text"] {
+            padding-right: 40px; /* Make space for the icon */
+        }
+        .toggle-password {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            color: #666;
+            font-size: 18px;
+        }
+        .form-group .password-container {
+            margin-bottom: 15px; /* Adjust margin for this container */
+        }
     </style>
 </head>
 <body>
 <div class="container">
+    <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+    
     <h2>Edit Enumerator: <?= htmlspecialchars($enumerator_data['name']) ?></h2>
+    <p>Update the enumerator's details below</p>
+
+    <div class="miller-info">
+        <h5>Current Enumerator Information</h5>
+        <p><strong>Name:</strong> <?= htmlspecialchars($enumerator_data['name']) ?></p>
+        <p><strong>Email:</strong> <?= htmlspecialchars($enumerator_data['email']) ?></p>
+        <p><strong>Phone:</strong> <?= htmlspecialchars($enumerator_data['phone']) ?></p>
+        <p><strong>Gender:</strong> <?= htmlspecialchars($enumerator_data['gender']) ?></p>
+        <p><strong>Country:</strong> <?= htmlspecialchars($enumerator_data['country']) ?></p>
+        <p><strong>County/District:</strong> <?= htmlspecialchars($enumerator_data['county_district']) ?></p>
+        <p><strong>Username:</strong> <?= htmlspecialchars($enumerator_data['username']) ?></p>
+        <p><strong>Assigned Tradepoints:</strong> 
+            <?php 
+            if (!empty($initial_tradepoints)) {
+                $tp_names = array_column($initial_tradepoints, 'name');
+                echo htmlspecialchars(implode(', ', $tp_names));
+            } else {
+                echo 'None';
+            }
+            ?>
+        </p>
+    </div>
+
+    <?php if (!empty($error_message)): ?>
+        <div class="error-message">
+            <?php echo htmlspecialchars($error_message); ?>
+        </div>
+    <?php endif; ?>
+
     <form method="POST">
         <input type="hidden" name="enumerator_id" value="<?= htmlspecialchars($enumerator_id) ?>">
 
-        <div class="form-section">
+        <div class="form-row">
             <div class="form-group">
-                <label for="name">Name:</label>
+                <label for="name" class="required">Name:</label>
                 <input type="text" id="name" name="name" value="<?= htmlspecialchars($enumerator_data['name']) ?>" required>
             </div>
             <div class="form-group">
-                <label for="email">Email:</label>
+                <label for="email" class="required">Email:</label>
                 <input type="email" id="email" name="email" value="<?= htmlspecialchars($enumerator_data['email']) ?>" required>
             </div>
         </div>
 
-        <div class="form-section">
+        <div class="form-row">
             <div class="form-group">
-                <label for="phone">Phone:</label>
+                <label for="phone" class="required">Phone:</label>
                 <input type="tel" id="phone" name="phone" value="<?= htmlspecialchars($enumerator_data['phone']) ?>" required>
             </div>
             <div class="form-group">
-                <label for="gender">Gender:</label>
+                <label for="gender" class="required">Gender:</label>
                 <select id="gender" name="gender" required>
                     <option value="">Select Gender</option>
                     <option value="Male" <?= ($enumerator_data['gender'] === 'Male') ? 'selected' : '' ?>>Male</option>
@@ -325,32 +487,36 @@ $con->close();
             </div>
         </div>
 
-        <div class="form-section">
+        <div class="form-row">
             <div class="form-group">
-                <label for="country">Country:</label>
+                <label for="country" class="required">Country:</label>
                 <input type="text" id="country" name="country" value="<?= htmlspecialchars($enumerator_data['country']) ?>" required>
             </div>
             <div class="form-group">
-                <label for="county_district">County/District:</label>
+                <label for="county_district" class="required">County/District:</label>
                 <input type="text" id="county_district" name="county_district" value="<?= htmlspecialchars($enumerator_data['county_district']) ?>" required>
             </div>
         </div>
 
-        <div class="form-section">
+        <div class="form-row">
             <div class="form-group">
-                <label for="username">Username:</label>
+                <label for="username" class="required">Username:</label>
                 <input type="text" id="username" name="username" value="<?= htmlspecialchars($enumerator_data['username']) ?>" required>
             </div>
             <div class="form-group">
                 <label for="password">New Password (leave blank to keep current):</label>
-                <input type="password" id="password" name="password">
+                <div class="password-container">
+                    <input type="password" id="password" name="password">
+                    <span class="toggle-password" onclick="togglePasswordVisibility()">
+                        <i class="fa-solid fa-eye"></i>
+                    </span>
+                </div>
             </div>
         </div>
 
-        <div class="form-group">
+        <div class="form-group-full">
             <label for="tradepoint-select">Assign Tradepoint(s):</label>
-            <select id="tradepoint-select">
-                <option value="">-- Select Tradepoint --</option>
+            <select id="tradepoint-select" class="form-control"> <option value="">-- Select Tradepoint --</option>
                 <?php foreach ($all_tradepoints_for_select as $tp): ?>
                     <option
                         value="<?= $tp['id'] ?>"
@@ -365,11 +531,11 @@ $con->close();
             </select>
         </div>
 
-        <div class="tags-container" id="selected-tradepoints"></div>
+        <div class="selected-tags" id="selected-tradepoints"></div>
 
         <div id="hidden-inputs"></div>
 
-        <button type="submit">Update Enumerator</button>
+        <button type="submit" class="update-btn">Update Enumerator</button>
     </form>
 </div>
 
@@ -378,6 +544,22 @@ $con->close();
     const selectedContainer = document.getElementById('selected-tradepoints');
     const hiddenInputs = document.getElementById('hidden-inputs');
     const selectedTradepoints = new Map(); // Stores tradepoint objects {id, type, name, longitude, latitude, radius}
+
+    // --- Password Toggle Functionality ---
+    function togglePasswordVisibility() {
+        const passwordField = document.getElementById('password');
+        const toggleIcon = document.querySelector('.toggle-password i');
+
+        if (passwordField.type === 'password') {
+            passwordField.type = 'text';
+            toggleIcon.classList.remove('fa-eye');
+            toggleIcon.classList.add('fa-eye-slash');
+        } else {
+            passwordField.type = 'password';
+            toggleIcon.classList.remove('fa-eye-slash');
+            toggleIcon.classList.add('fa-eye');
+        }
+    }
 
     // --- Pre-populate tradepoints from existing data ---
     const initialTradepointsData = <?= json_encode($initial_tradepoints); ?>;
@@ -437,19 +619,16 @@ $con->close();
     });
 
     function createTag(id, displayText) {
-        const tag = document.createElement('div');
-        tag.className = 'tag';
-        tag.textContent = displayText; // Use the formatted text for display
+        const tag = document.createElement('span'); // Changed from div to span for inline display
+        tag.className = 'tag'; // Re-using existing tag class for display
+        tag.innerHTML = displayText + ' <span class="remove-tag">×</span>'; // Added remove-tag for consistency
 
-        const close = document.createElement('span');
-        close.textContent = '×';
-        close.onclick = () => {
+        tag.querySelector('.remove-tag').onclick = () => {
             selectedContainer.removeChild(tag);
             removeHiddenInputs(id);
             selectedTradepoints.delete(id);
         };
 
-        tag.appendChild(close);
         selectedContainer.appendChild(tag);
     }
 
