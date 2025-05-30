@@ -4,9 +4,32 @@ include '../admin/includes/config.php'; // DB connection
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     session_start();
-    $_SESSION['name'] = $_POST['name'];
-    $_SESSION['email'] = $_POST['email'];
-    $_SESSION['phone'] = $_POST['phone'];
+
+    // Sanitize and get the input data
+    $name = $_POST['name'];
+    $email = $_POST['email'];
+    $phone = $_POST['phone'];
+
+    // --- Duplicate Check ---
+    // Prepare a SQL statement to check for existing records
+    $stmt_check = $con->prepare("SELECT COUNT(*) FROM enumerators WHERE name = ? OR email = ? OR phone = ?");
+    $stmt_check->bind_param("sss", $name, $email, $phone);
+    $stmt_check->execute();
+    $stmt_check->bind_result($count);
+    $stmt_check->fetch();
+    $stmt_check->close();
+
+    if ($count > 0) {
+            echo "<script>alert('An enumerator with the provided full name, email, or phone number already exists. Please check your details.'); window.history.back();</script>";
+            exit();
+        }
+    
+    // --- End Duplicate Check ---
+
+    // If no duplicates, proceed to store data in session and redirect
+    $_SESSION['name'] = $name;
+    $_SESSION['email'] = $email;
+    $_SESSION['phone'] = $phone;
     $_SESSION['gender'] = $_POST['gender'];
     $_SESSION['country'] = $_POST['country'];
     $_SESSION['county_district'] = $_POST['county_district'];
@@ -56,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .close-btn:hover {
             color: rgba(180, 80, 50, 1);
         }
-        
+
         /* Left sidebar for steps */
         .steps-sidebar {
             width: 250px;
@@ -66,18 +89,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border-right: 1px solid #e9ecef;
             position: relative;
         }
-        
+
         .steps-sidebar h3 {
             color: #333;
             margin-bottom: 30px;
             font-size: 18px;
             font-weight: bold;
         }
-        
+
         .steps-container {
             position: relative;
         }
-        
+
         /* Vertical connecting line */
         .steps-container::before {
             content: '';
@@ -89,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             background-color: #e9ecef;
             z-index: 1;
         }
-        
+
         .step {
             display: flex;
             align-items: center;
@@ -97,11 +120,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             position: relative;
             z-index: 2;
         }
-        
+
         .step:last-child {
             margin-bottom: 0;
         }
-        
+
         .step-circle {
             width: 45px;
             height: 45px;
@@ -117,52 +140,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             position: relative;
             flex-shrink: 0;
         }
-        
+
         .step-circle.active {
             background-color: rgba(180, 80, 50, 1);
             color: white;
         }
-        
+
         .step-circle.completed {
             background-color: rgba(180, 80, 50, 1);
             color: white;
         }
-        
+
         .step-circle.completed::after {
             content: '✓';
             font-size: 20px;
         }
-        
+
         .step-circle.active::after {
             content: '✓';
             font-size: 20px;
         }
-        
+
         .step-circle:not(.active):not(.completed)::after {
             content: attr(data-step);
         }
-        
+
         .step-text {
             font-weight: 500;
             color: #6c757d;
         }
-        
+
         .step.active .step-text {
             color: rgba(180, 80, 50, 1);
             font-weight: bold;
         }
-        
+
         .step.completed .step-text {
             color: rgba(180, 80, 50, 1);
             font-weight: bold;
         }
-        
+
         /* Main content area */
         .main-content {
             flex: 1;
             padding: 40px;
         }
-        
+
         h2 {
             margin-bottom: 10px;
             color: #333;
@@ -171,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-bottom: 30px;
             color: #666;
         }
-        
+
         /* Form styling */
         .form-row {
             display: flex;
@@ -210,7 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border-color: rgba(180, 80, 50, 0.5);
             box-shadow: 0 0 5px rgba(180, 80, 50, 0.3);
         }
-        
+
         /* Password input with eye icon */
         .password-container {
             position: relative;
@@ -222,7 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             cursor: pointer;
             color: #6c757d;
         }
-        
+
         /* Button styling */
         .button-container {
             display: flex;
@@ -257,7 +280,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .next-btn:hover {
             background-color: rgba(160, 60, 30, 1);
         }
-        
+
         /* Responsive design */
         @media (max-width: 768px) {
             .container {
@@ -296,13 +319,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 gap: 0;
             }
         }
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <button class="close-btn" onclick="window.location.href='dashboard.php'">×</button>
-        
-        <!-- Left Sidebar with Steps -->
+
         <div class="steps-sidebar">
             <h3>Progress</h3>
             <div class="steps-container">
@@ -316,12 +346,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             </div>
         </div>
-        
-        <!-- Main Content Area -->
+
         <div class="main-content">
             <h2>Add Enumerator - Step 1</h2>
             <p>Please provide basic information for the new enumerator.</p>
-            
+
+            <?php
+            // Display error message if it exists in the session
+            if (isset($_SESSION['error_message'])) {
+                echo '<div class="alert-danger">' . $_SESSION['error_message'] . '</div>';
+                unset($_SESSION['error_message']); // Clear the message after displaying
+            }
+            ?>
+
             <form method="POST" action="add_enumerator.php">
                 <div class="form-group-full">
                     <label for="name" class="required">Full Name</label>
@@ -386,7 +423,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Toggle password visibility
         const togglePassword = document.querySelector('#togglePassword');
         const password = document.querySelector('#password');
-        
+
         togglePassword.addEventListener('click', function (e) {
             // Toggle the type attribute
             const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
@@ -402,7 +439,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 this.style.transform = 'scale(1.02)';
                 this.style.transition = 'transform 0.2s ease';
             });
-            
+
             element.addEventListener('blur', function() {
                 this.style.transform = 'scale(1)';
             });
