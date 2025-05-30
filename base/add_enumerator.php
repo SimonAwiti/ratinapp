@@ -22,191 +22,391 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Enumerator</title>
-    <link rel="stylesheet" href="assets/add_commodity.css" />
-    <style>
-        <?php include 'assets/add_commodity.css'; ?>
-    </style>
+    <title>Add Enumerator - Step 1</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <style>
         body {
             font-family: Arial, sans-serif;
             background-color: #f8f8f8;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
             margin: 0;
+            padding: 20px;
         }
         .container {
             background: white;
-            padding: 60px;
             border-radius: 8px;
-            width: 800px;
-            height: 700px; /* Fixed height */
+            max-width: 1200px;
+            margin: 0 auto;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            position: relative;
             display: flex;
-            position: relative; /* Required for absolute positioning of the close button */
+            min-height: 600px;
         }
-        h2 {
-            margin-bottom: 10px; /* Reduce gap below heading */
-        }
-        p {
-            margin-bottom: 10px; /* Reduce gap below paragraph */
-        }
-        form label:first-of-type {
-            margin-top: 10px; /* Ensure label isn't too close to the paragraph */
-        }
-
-        .form-container {
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between; /* Ensure spacing between form elements */
-            height: 100%;
-        }
-        .packaging-unit-container {
-            flex-grow: 1;
-            max-height: 200px; /* Reduce height slightly for better spacing */
-            overflow-y: auto; 
-            padding: 10px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            margin-bottom: 15px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px; /* Ensure spacing between fields */
-        }
-
-        .packaging-unit-group {
-            display: flex; /* Use flexbox to align items horizontally */
-            gap: 10px; /* Add spacing between fields */
-            margin-bottom: 15px;
-            align-items: flex-end; /* Align fields at the bottom */
-        }
-        .packaging-unit-group label {
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-        .packaging-unit-group input,
-        .packaging-unit-group select {
-            flex: 1; /* Allow fields to grow and fill available space */
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 14px;
-        }
-        .remove-btn {
-            background-color: #f8d7da;
-            color: red;
+        .close-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 30px;
             border: none;
-            padding: 8px 12px;
+            background: transparent;
             cursor: pointer;
-            border-radius: 5px;
-            font-size: 14px;
+            color: #333;
+            z-index: 10;
+        }
+        .close-btn:hover {
+            color: rgba(180, 80, 50, 1);
+        }
+        
+        /* Left sidebar for steps */
+        .steps-sidebar {
+            width: 250px;
+            background-color: #f8f9fa;
+            padding: 40px 30px;
+            border-radius: 8px 0 0 8px;
+            border-right: 1px solid #e9ecef;
+            position: relative;
+        }
+        
+        .steps-sidebar h3 {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .steps-container {
+            position: relative;
+        }
+        
+        /* Vertical connecting line */
+        .steps-container::before {
+            content: '';
+            position: absolute;
+            left: 22.5px;
+            top: 45px;
+            bottom: 0;
+            width: 2px;
+            background-color: #e9ecef;
+            z-index: 1;
+        }
+        
+        .step {
             display: flex;
             align-items: center;
+            margin-bottom: 60px;
+            position: relative;
+            z-index: 2;
+        }
+        
+        .step:last-child {
+            margin-bottom: 0;
+        }
+        
+        .step-circle {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
             justify-content: center;
-            width: 30px;
-            height: 30px;
+            align-items: center;
+            margin-right: 15px;
+            font-size: 16px;
+            font-weight: bold;
+            background-color: #e9ecef;
+            color: #6c757d;
+            position: relative;
+            flex-shrink: 0;
         }
-        .remove-btn:hover {
-            background-color: #f5c6cb;
+        
+        .step-circle.active {
+            background-color: rgba(180, 80, 50, 1);
+            color: white;
         }
-        .add-more-btn {
-            background-color: #d9f5d9;
-            color: green;
-            border: none;
-            padding: 5px 10px;
-            cursor: pointer;
-            border-radius: 5px;
-            margin-top: 10px;
+        
+        .step-circle.completed {
+            background-color: rgba(180, 80, 50, 1);
+            color: white;
         }
-        .add-more-btn:hover {
-            background-color: #c4e6c4;
+        
+        .step-circle.completed::after {
+            content: '✓';
+            font-size: 20px;
         }
-        #variety {
-            margin-bottom: 15px; /* Adjust spacing as needed */
+        
+        .step-circle.active::after {
+            content: '✓';
+            font-size: 20px;
         }
+        
+        .step-circle:not(.active):not(.completed)::after {
+            content: attr(data-step);
+        }
+        
+        .step-text {
+            font-weight: 500;
+            color: #6c757d;
+        }
+        
+        .step.active .step-text {
+            color: rgba(180, 80, 50, 1);
+            font-weight: bold;
+        }
+        
+        .step.completed .step-text {
+            color: rgba(180, 80, 50, 1);
+            font-weight: bold;
+        }
+        
+        /* Main content area */
+        .main-content {
+            flex: 1;
+            padding: 40px;
+        }
+        
+        h2 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        p {
+            margin-bottom: 30px;
+            color: #666;
+        }
+        
+        /* Form styling */
         .form-row {
             display: flex;
             gap: 20px;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
         }
         .form-row .form-group {
             flex: 1;
             display: flex;
             flex-direction: column;
         }
-
+        .form-group-full {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 20px;
+        }
+        label {
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+        }
+        .required::after {
+            content: " *";
+            color: #dc3545;
+        }
+        input, select, textarea {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: rgba(180, 80, 50, 0.5);
+            box-shadow: 0 0 5px rgba(180, 80, 50, 0.3);
+        }
+        
+        /* Password input with eye icon */
+        .password-container {
+            position: relative;
+        }
+        .password-toggle {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            cursor: pointer;
+            color: #6c757d;
+        }
+        
+        /* Button styling */
+        .button-container {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 30px;
+            gap: 20px;
+        }
+        .prev-btn, .next-btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .prev-btn {
+            background-color: #6c757d;
+            color: white;
+        }
+        .prev-btn:hover {
+            background-color: #5a6268;
+        }
+        .next-btn {
+            background-color: rgba(180, 80, 50, 1);
+            color: white;
+        }
+        .next-btn:hover {
+            background-color: rgba(160, 60, 30, 1);
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+                margin: 10px;
+            }
+            .steps-sidebar {
+                width: 100%;
+                border-radius: 8px 8px 0 0;
+                border-right: none;
+                border-bottom: 1px solid #e9ecef;
+                padding: 20px;
+            }
+            .steps-container {
+                display: flex;
+                justify-content: center;
+                gap: 30px;
+            }
+            .steps-container::before {
+                display: none;
+            }
+            .step {
+                margin-bottom: 0;
+                flex-direction: column;
+                text-align: center;
+            }
+            .step-circle {
+                margin-right: 0;
+                margin-bottom: 10px;
+            }
+            .main-content {
+                padding: 20px;
+            }
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <button class="close-btn" onclick="window.location.href='dashboard.php'">×</button>
-
-        <div class="steps">
-            <div class="step">
-                <div class="step-circle active"></div>
-                <span>Step 1</span>
-            </div>
-            <div class="step">
-                <div class="step-circle inactive"></div>
-                <span>Step 2</span>
+        
+        <!-- Left Sidebar with Steps -->
+        <div class="steps-sidebar">
+            <h3>Progress</h3>
+            <div class="steps-container">
+                <div class="step active">
+                    <div class="step-circle active" data-step="1"></div>
+                    <div class="step-text">Step 1<br><small>Basic Info</small></div>
+                </div>
+                <div class="step">
+                    <div class="step-circle" data-step="2"></div>
+                    <div class="step-text">Step 2<br><small>Assign Tradepoints</small></div>
+                </div>
             </div>
         </div>
-
-        <div class="form-container">
-            <h2>Add Enumerator</h2>
-            <p>Provide the details below to create a new enumerator</p>
+        
+        <!-- Main Content Area -->
+        <div class="main-content">
+            <h2>Add Enumerator - Step 1</h2>
+            <p>Please provide basic information for the new enumerator.</p>
+            
             <form method="POST" action="add_enumerator.php">
-                <label for="name">Full Name *</label>
-                <input type="text" name="name" id="name" required>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="email">Email Address *</label>
-                        <input type="email" name="email" id="email" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="phone">Phone Number *</label>
-                        <input type="text" name="phone" id="phone" required>
-                    </div>
-                </div>
-
-
-                <label for="gender">Gender *</label>
-                <select name="gender" id="gender" required>
-                    <option value="">Select gender</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                </select>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="country">Country (Admin 0) *</label>
-                        <input type="text" name="country" id="country" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="county_district">County/District (Admin 1) *</label>
-                        <input type="text" name="county_district" id="county_district" required>
-                    </div>
+                <div class="form-group-full">
+                    <label for="name" class="required">Full Name</label>
+                    <input type="text" name="name" id="name" placeholder="Enter full name" required>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="username">Login Username *</label>
-                        <input type="text" name="username" id="username" required>
+                        <label for="email" class="required">Email Address</label>
+                        <input type="email" name="email" id="email" placeholder="Enter email address" required>
                     </div>
                     <div class="form-group">
-                        <label for="password">Password *</label>
-                        <input type="password" name="password" id="password" required>
+                        <label for="phone" class="required">Phone Number</label>
+                        <input type="text" name="phone" id="phone" placeholder="Enter phone number" required>
                     </div>
                 </div>
 
+                <div class="form-group-full">
+                    <label for="gender" class="required">Gender</label>
+                    <select name="gender" id="gender" required>
+                        <option value="">Select gender</option>
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                    </select>
+                </div>
 
-                <button type="submit" class="next-btn">Next &rarr;</button>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="country" class="required">Country (Admin 0)</label>
+                        <input type="text" name="country" id="country" placeholder="Enter country" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="county_district" class="required">County/District (Admin 1)</label>
+                        <input type="text" name="county_district" id="county_district" placeholder="Enter county/district" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="username" class="required">Username</label>
+                        <input type="text" name="username" id="username" placeholder="Enter username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password" class="required">Password</label>
+                        <div class="password-container">
+                            <input type="password" name="password" id="password" placeholder="Enter password" required>
+                            <i class="fas fa-eye password-toggle" id="togglePassword"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="button-container">
+                    <button type="submit" class="next-btn">
+                        Next Step <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
             </form>
         </div>
     </div>
+
+    <script>
+        // Toggle password visibility
+        const togglePassword = document.querySelector('#togglePassword');
+        const password = document.querySelector('#password');
+        
+        togglePassword.addEventListener('click', function (e) {
+            // Toggle the type attribute
+            const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
+            password.setAttribute('type', type);
+            // Toggle the eye icon
+            this.classList.toggle('fa-eye');
+            this.classList.toggle('fa-eye-slash');
+        });
+
+        // Add smooth transitions for better UX
+        document.querySelectorAll('input, select').forEach(element => {
+            element.addEventListener('focus', function() {
+                this.style.transform = 'scale(1.02)';
+                this.style.transition = 'transform 0.2s ease';
+            });
+            
+            element.addEventListener('blur', function() {
+                this.style.transform = 'scale(1)';
+            });
+        });
+    </script>
 </body>
 </html>
