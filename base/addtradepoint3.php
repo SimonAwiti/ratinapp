@@ -104,7 +104,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         // Handle Millers final submission
         $selected_millers = $_POST['selected_millers'] ?? [];
 
-        if (!empty($selected_millers)) {
+        // Validate miller selection (minimum 1, maximum 2)
+        if (empty($selected_millers)) {
+            echo "<script>alert('Please select at least one miller');</script>";
+        } elseif (count($selected_millers) > 2) {
+            echo "<script>alert('You can select a maximum of 2 millers only');</script>";
+        } else {
             // Convert array of millers into a JSON string
             $miller_array_json = json_encode($selected_millers);
 
@@ -132,8 +137,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             } else {
                 echo "<script>alert('Failed to prepare statement');</script>";
             }
-        } else {
-            echo "<script>alert('Please select at least one miller');</script>";
         }
     }
 }
@@ -410,6 +413,20 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
         .commodity-selector {
             margin-bottom: 20px;
         }
+        .search-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 14px;
+            margin-bottom: 10px;
+            background-color: white;
+        }
+        .search-input:focus {
+            outline: none;
+            border-color: rgba(180, 80, 50, 0.5);
+            box-shadow: 0 0 5px rgba(180, 80, 50, 0.3);
+        }
         .select-box select {
             font-size: 16px;
             color: black;
@@ -481,6 +498,35 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
             font-weight: bold;
             color: #fff;
             cursor: pointer;
+        }
+        
+        /* Miller limit notification */
+        .miller-limit-info {
+            background-color: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            color: #1976d2;
+        }
+        .miller-limit-info i {
+            margin-right: 8px;
+        }
+        
+        /* Limit reached warning */
+        .limit-warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #856404;
+            display: none;
+        }
+        .limit-warning i {
+            margin-right: 8px;
         }
         
         /* Responsive design */
@@ -562,6 +608,7 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                 <div class="commodity-selector">
                     <div class="form-group-full">
                         <label for="commodity_select" class="required">Assign Primary Commodities</label>
+                        <input type="text" id="commodity_search" class="search-input" placeholder="Search commodities...">
                         <div class="select-box">
                             <select id="commodity_select" multiple>
                                 <option value="">Select commodities</option>
@@ -606,8 +653,14 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                     <p>Select millers for <strong><?= htmlspecialchars($_SESSION['miller_name']) ?></strong></p>
                 </div>
                 
+                <!-- Miller limit information -->
+                <div class="miller-limit-info">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Note:</strong> You can select a maximum of 2 millers. Click on selected millers below to remove them and select different ones.
+                </div>
+                
                 <div class="form-group-full">
-                    <label for="selected_millers" class="required">Select Millers</label>
+                    <label for="selected_millers" class="required">Select Millers (Maximum 2)</label>
                     <select id="selected_millers" name="selected_millers[]" multiple="multiple" required>
                         <?php
                         $stmt = $con->prepare("SELECT miller FROM millers WHERE miller_name = ?");
@@ -621,9 +674,15 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                         ?>
                     </select>
                     
+                    <!-- Limit warning message -->
+                    <div class="limit-warning" id="limit-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <strong>Maximum limit reached!</strong> You can only select 2 millers. Remove one to select another.
+                    </div>
+                    
                     <!-- Display selected tags below the dropdown -->
                     <div class="selected-tags" id="selected-tags-container">
-                        <small class="text-muted">Selected millers will appear here</small>
+                        <small class="text-muted">Selected millers will appear here (Maximum 2)</small>
                     </div>
                 </div>
                 <?php endif; ?>
@@ -648,15 +707,17 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
         $(document).ready(function() {
             // Initialize Select2 with the "minimum results for search" option
             $('#selected_millers').select2({
-                placeholder: "Select millers",
+                placeholder: "Select millers (Maximum 2)",
                 tags: false,
                 allowClear: true,
                 width: '100%',
-                minimumResultsForSearch: Infinity  // Disable the search box in the dropdown
+                minimumResultsForSearch: Infinity,  // Disable the search box in the dropdown
+                maximumSelectionLength: 2  // Limit selection to 2 items
             });
 
             // Store selected millers in an array
             var selectedMillers = [];
+            const maxMillers = 2;
 
             // Event listener to update the tags container when selections change
             $('#selected_millers').on('change', function() {
@@ -664,7 +725,24 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
 
                 // Update the selectedMillers array
                 selectedMillers = selectedOptions || [];
+                
+                // Show/hide limit warning
+                if (selectedMillers.length >= maxMillers) {
+                    $('#limit-warning').show();
+                } else {
+                    $('#limit-warning').hide();
+                }
+                
                 updateTagsContainer();
+            });
+
+            // Prevent selection when limit is reached
+            $('#selected_millers').on('select2:selecting', function(e) {
+                if (selectedMillers.length >= maxMillers) {
+                    e.preventDefault();
+                    alert('You can only select a maximum of ' + maxMillers + ' millers. Please remove one to select another.');
+                    return false;
+                }
             });
 
             // Update the tags container with selected millers
@@ -676,22 +754,44 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                     selectedMillers.forEach(function(miller) {
                         var tag = $('<span>')
                             .text(miller)
-                            .append('<span class="remove-tag">×</span>')
+                            .append('<span class="remove-tag" title="Click to remove">×</span>')
                             .click(function() {
                                 // Remove tag from selected array
                                 var index = selectedMillers.indexOf(miller);
                                 if (index > -1) {
                                     selectedMillers.splice(index, 1);
                                     $('#selected_millers').val(selectedMillers).trigger('change');
+                                    
+                                    // Hide limit warning when miller is removed
+                                    if (selectedMillers.length < maxMillers) {
+                                        $('#limit-warning').hide();
+                                    }
+                                    
                                     updateTagsContainer(); // Update tags view
                                 }
                             });
                         tagsContainer.append(tag);
                     });
+                    
+                    // Add counter information
+                    var counterInfo = $('<small class="text-muted d-block mt-2">')
+                        .text(selectedMillers.length + '/' + maxMillers + ' millers selected');
+                    tagsContainer.append(counterInfo);
+                    
                 } else {
-                    tagsContainer.html('<small class="text-muted">Selected millers will appear here</small>');
+                    tagsContainer.html('<small class="text-muted">Selected millers will appear here (Maximum 2)</small>');
                 }
             }
+
+            // Update placeholder text based on selection count
+            $('#selected_millers').on('change', function() {
+                var count = selectedMillers.length;
+                var placeholder = count >= maxMillers ? 
+                    'Maximum limit reached (2/2)' : 
+                    'Select millers (' + count + '/2)';
+                
+                $(this).data('select2').$container.find('.select2-selection__placeholder').text(placeholder);
+            });
         });
     </script>
     <?php endif; ?>
@@ -703,7 +803,39 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
             const commoditySelect = document.getElementById('commodity_select');
             const commodityTags = document.getElementById('commodity_tags');
             const selectedCommoditiesInput = document.getElementById('selected_commodities');
+            const searchInput = document.getElementById('commodity_search');
             let selectedCommodities = [];
+            let allOptions = [];
+
+            // Store all options for filtering
+            function initializeOptions() {
+                allOptions = Array.from(commoditySelect.options).map(option => ({
+                    value: option.value,
+                    text: option.textContent,
+                    dataName: option.dataset.name,
+                    element: option
+                }));
+            }
+
+            // Filter options based on search
+            function filterOptions(searchTerm) {
+                const filteredOptions = allOptions.filter(option => {
+                    if (!option.value) return true; // Keep the default "Select commodities" option
+                    return option.text.toLowerCase().includes(searchTerm.toLowerCase());
+                });
+
+                // Clear and repopulate select
+                commoditySelect.innerHTML = '';
+                filteredOptions.forEach(option => {
+                    commoditySelect.appendChild(option.element.cloneNode(true));
+                });
+            }
+
+            // Search functionality
+            searchInput.addEventListener('input', function() {
+                const searchTerm = this.value.trim();
+                filterOptions(searchTerm);
+            });
 
             // Function to update the tags display
             function updateTags() {
@@ -716,12 +848,12 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                 }
                 
                 selectedCommodities.forEach(id => {
-                    const option = commoditySelect.querySelector(`option[value="${id}"]`);
+                    const option = allOptions.find(opt => opt.value === id);
                     if (option) {
                         const tag = document.createElement('div');
                         tag.className = 'tag';
                         tag.innerHTML = `
-                            ${option.dataset.name}
+                            ${option.dataName || option.text}
                             <button type="button" onclick="removeCommodity('${id}')">×</button>
                         `;
                         commodityTags.appendChild(tag);
@@ -748,7 +880,8 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
                 updateTags();
             });
 
-            // Initialize with any previously selected commodities
+            // Initialize
+            initializeOptions();
             updateTags();
         });
     </script>
