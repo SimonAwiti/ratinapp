@@ -35,21 +35,53 @@ if (!isset($_SESSION['admin_logged_in'])) {
             background-color: #ffffff;
             border-right: 0px solid #ddd;
             padding: 15px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05); /* Added subtle shadow */
+            position: relative; /* For the logo positioning */
+            z-index: 1000; /* Ensure it stays above other content */
+            overflow-y: auto; /* Enable scrolling for long sidebars */
+        }
+
+        .sidebar .logo {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .sidebar .ratin-logo {
+            max-width: 150px; /* Adjust as needed */
+            height: auto;
         }
 
         .sidebar h6 {
             color: #6c757d;
             font-weight: bold;
+            margin-top: 20px;
+            padding-left: 10px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            font-size: 0.85em;
         }
 
         .sidebar .nav-link {
             color: #333;
-            padding: 10px;
+            padding: 12px 10px; /* Increased padding for better click area */
             display: flex;
             justify-content: space-between;
             align-items: center;
             border-radius: 5px;
+            transition: all 0.2s ease-in-out; /* Smooth transition for hover */
+            font-size: 1.0em;
         }
+
+        .sidebar .nav-link i {
+            margin-right: 10px; /* Space for icons */
+            width: 20px; /* Fixed width for icons to align text */
+            text-align: center;
+        }
+         .sidebar .nav-link i.fa-chevron-down {
+            margin-right: 0; /* No margin for chevron */
+            width: auto;
+        }
+
 
         .sidebar .nav-link:hover, .sidebar .nav-link.active {
             background-color: #f5d6c6;
@@ -74,7 +106,11 @@ if (!isset($_SESSION['admin_logged_in'])) {
             align-items: center;
             padding: 20px 20px;
             background-color: #fff;
-            border-bottom: 0px solid #ddd;
+            border-bottom: 1px solid #eee; /* Light border at the bottom */
+            box-shadow: 0 2px 5px rgba(0,0,0,0.03); /* Subtle shadow */
+            z-index: 999; /* Below sidebar */
+            position: sticky;
+            top: 0;
         }
 
         .breadcrumb {
@@ -102,7 +138,9 @@ if (!isset($_SESSION['admin_logged_in'])) {
 
         /* Page Title */
         .content-container {
-            padding: 19px;
+            padding: 20px;
+            flex-grow: 1; /* Allow content to fill remaining space */
+            overflow-y: auto; /* Enable scrolling for content area */
         }
 
         .user-display {
@@ -114,6 +152,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
         }
         .user-display i {
             font-size: 1.2em; /* Adjust icon size as needed */
+            color: #6c757d;
         }
     </style>
 </head>
@@ -133,6 +172,9 @@ if (!isset($_SESSION['admin_logged_in'])) {
         <div class="submenu" id="baseSubmenu">
             <a href="#" class="nav-link" onclick="loadContent('commodities_boilerplate.php', 'Base', 'Commodities')">
                 <i class="fa fa-box-open" style="color:#8B4513;"></i> Commodities
+            </a>
+            <a href="#" class="nav-link" onclick="loadContent('commodity_sources_boilerplate.php', 'Base', 'Commodities Data Sources')">
+                <i class="fa fa-database" style="color:#8B4513;"></i> Sources
             </a>
             <a href="#" class="nav-link" onclick="loadContent('tradepoints_boilerplate.php', 'Base', 'Trade Points')">
                 <i class="fa fa-map-marker-alt" style="color:#8B4513;"></i> Trade Points
@@ -221,6 +263,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     function toggleSubmenu(submenuId, element) {
         let submenu = document.getElementById(submenuId);
@@ -235,9 +278,10 @@ if (!isset($_SESSION['admin_logged_in'])) {
             icon.classList.add("rotate");
         }
         
-        // Close other submenus at the same level
-        let parentMenu = element.closest('.submenu') || document.querySelector('.sidebar');
-        parentMenu.querySelectorAll('.submenu').forEach(otherSubmenu => {
+        // Close other submenus at the same level (direct children of .sidebar or another .submenu)
+        let parentContainer = element.closest('.submenu') || document.querySelector('.sidebar');
+        parentContainer.querySelectorAll('.submenu').forEach(otherSubmenu => {
+            // Only close if it's not the currently toggled submenu AND it's not the parent of the currently toggled submenu
             if (otherSubmenu.id !== submenuId && otherSubmenu !== submenu.parentElement) {
                 otherSubmenu.style.display = "none";
                 let otherIcon = otherSubmenu.previousElementSibling?.querySelector("i.fa-chevron-down");
@@ -282,9 +326,6 @@ if (!isset($_SESSION['admin_logged_in'])) {
                 sidebarLinks.forEach(l => l.classList.remove("active"));
                 // Add active class to clicked link
                 this.classList.add("active");
-
-                // Note: The breadcrumb update is now handled by loadContent
-                // so we don't need redundant updateBreadcrumb calls here.
             });
         });
 
@@ -295,124 +336,80 @@ if (!isset($_SESSION['admin_logged_in'])) {
     function loadContent(page, mainCategory, subCategory) {
         fetch(page)
             .then(response => {
-                if (!response.ok) throw new Error('Failed to load page');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 return response.text();
             })
             .then(html => {
                 // 1. Insert the new HTML content into the DOM
-                document.getElementById("mainContent").innerHTML = html;
+                const mainContentDiv = document.getElementById("mainContent");
+                mainContentDiv.innerHTML = html;
                 updateBreadcrumb(mainCategory, subCategory);
 
                 // 2. Remove any previously added dynamic scripts
                 document.querySelectorAll('script.dynamic-script').forEach(script => script.remove());
 
                 // 3. Dynamically load and initialize scripts based on the page
+                // Note: For pages with inline scripts, the browser will execute them automatically.
+                // This section is primarily for external JS files or specific initialization functions.
                 if (page.includes('commodities_boilerplate.php')) {
-                    loadScript('assets/filter.js');
+                    loadScript('assets/filter.js'); // Assuming filter.js is needed
                 } else if (page.includes('tradepoints_boilerplate.php')) {
-                    loadScript('assets/filter2.js');
+                    loadScript('assets/filter2.js'); // Assuming filter2.js is needed
                 } else if (page.includes('enumerator_boilerplate.php')) {
-                    loadScript('assets/filter3.js');
+                    loadScript('assets/filter3.js'); // Assuming filter3.js is needed
                 } else if (page.includes('marketprices_boilerplate.php')) {
-                    const script = document.createElement('script');
-                    script.src = 'assets/marketprices.js';
-                    script.type = 'text/javascript';
-                    script.className = 'dynamic-script';
-                    script.onload = () => {
-                        if (typeof initializeMarketPrices === 'function') {
-                            initializeMarketPrices();
-                        } else {
-                            console.error("initializeMarketPrices function not found after script load.");
-                        }
-                    };
-                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
-                    document.body.appendChild(script);
+                    loadScriptAndInitialize('assets/marketprices.js', 'initializeMarketPrices');
                 } else if (page.includes('miller_price_boilerplate.php')) {
-                    const script = document.createElement('script');
-                    script.src = 'assets/miller_prices.js';
-                    script.type = 'text/javascript';
-                    script.className = 'dynamic-script';
-                    script.onload = () => {
-                        if (typeof initializeMillerPrices === 'function') {
-                            initializeMillerPrices();
-                        } else {
-                            console.error("initializeMillerPrices function not found after script load.");
-                        }
-                    };
-                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
-                    document.body.appendChild(script);
+                    loadScriptAndInitialize('assets/miller_prices.js', 'initializeMillerPrices');
                 } else if (page.includes('xbtvol_boilerplate.php')) {
-                    const script = document.createElement('script');
-                    script.src = 'assets/xbtvols.js';
-                    script.type = 'text/javascript';
-                    script.className = 'dynamic-script';
-                    script.onload = () => {
-                        if (typeof initializeXBTVolumes === 'function') {
-                            initializeXBTVolumes();
-                        } else {
-                            console.error("initializeXBTVolumes function not found after script load.");
-                        }
-                    };
-                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
-                    document.body.appendChild(script);
+                    loadScriptAndInitialize('assets/xbtvols.js', 'initializeXBTVolumes');
                 } else if (page.includes('currencies_boilerplate.php')) {
-                    const script = document.createElement('script');
-                    script.src = 'assets/currencies.js';
-                    script.type = 'text/javascript';
-                    script.className = 'dynamic-script';
-                    script.onload = () => {
-                        if (typeof initializeCurrencies === 'function') {
-                            initializeCurrencies();
-                        } else {
-                            console.error("initializeCurrencies function not found after script load.");
-                        }
-                    };
-                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
-                    document.body.appendChild(script);
+                    loadScriptAndInitialize('assets/currencies.js', 'initializeCurrencies');
                 } else if (page.includes('countries_boilerplate.php')) {
-                    const script = document.createElement('script');
-                    script.src = 'assets/countries.js';
-                    script.type = 'text/javascript';
-                    script.className = 'dynamic-script';
-                    script.onload = () => {
-                        if (typeof initializeCountries === 'function') {
-                            initializeCountries();
-                        } else {
-                            console.error("initializeCountries function not found after script load.");
-                        }
-                    };
-                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
-                    document.body.appendChild(script);
+                    loadScriptAndInitialize('assets/countries.js', 'initializeCountries');
                 } else if (page.includes('datasource_boilerplate.php')) {
-                    const script = document.createElement('script');
-                    script.src = 'assets/data_sources.js'; // Assuming you'll have a data_sources.js
-                    script.type = 'text/javascript';
-                    script.className = 'dynamic-script';
-                    script.onload = () => {
-                        if (typeof initializeDataSources === 'function') { // Assuming an initializeDataSources function
-                            initializeDataSources();
-                        } else {
-                            console.error("initializeDataSources function not found after script load.");
-                        }
-                    };
-                    script.onerror = (error) => console.error(`Error loading script ${script.src}:`, error);
-                    document.body.appendChild(script);
+                    loadScriptAndInitialize('assets/data_sources.js', 'initializeDataSources');
+                } else if (page.includes('commodity_sources_boilerplate.php')) {
+                     // Since commodity_sources_boilerplate.php has inline JS, you don't *need* an external script.
+                     // However, if you move its JS to an external file, you would use:
+                     // loadScriptAndInitialize('assets/commodity_sources.js', 'initializeCommoditySources');
+                     // For now, if the JS is inline, it will execute automatically.
+                     // You could trigger a common filtering/pagination setup if available:
+                     // if (typeof applyFilters === 'function') applyFilters(); // For the table filters
                 }
-                // If it's the landing page, no specific script is usually needed
-                // unless you have dynamic elements on the landing page itself.
-
+                // No specific script is typically needed for landing_page.php unless it has dynamic elements.
             })
             .catch(error => {
-                document.getElementById("mainContent").innerHTML = `<div class="alert alert-danger">Error loading content: ${error}</div>`;
+                document.getElementById("mainContent").innerHTML = `<div class="alert alert-danger">Error loading content: ${error.message}</div>`;
+                console.error("Fetch error:", error);
             });
     }
 
+    // Helper function to load script and optionally call an initialization function
+    function loadScriptAndInitialize(src, initFunctionName = null) {
+        const script = document.createElement('script');
+        script.src = src;
+        script.type = 'text/javascript';
+        script.className = 'dynamic-script'; // Mark for later removal
+        script.onload = () => {
+            console.log(`${src} loaded successfully.`);
+            if (initFunctionName && typeof window[initFunctionName] === 'function') {
+                window[initFunctionName](); // Call the global initialization function
+            }
+        };
+        script.onerror = (error) => console.error(`Error loading script ${src}:`, error);
+        document.body.appendChild(script);
+    }
+
+    // You can also create a general loadScript if it just needs to be appended without init
     function loadScript(src) {
         const script = document.createElement('script');
         script.src = src;
         script.type = 'text/javascript';
         script.className = 'dynamic-script';
-        script.onload = () => console.log(`${src} loaded successfully`);
+        script.onload = () => console.log(`${src} loaded.`);
         script.onerror = (error) => console.error(`Error loading script ${src}:`, error);
         document.body.appendChild(script);
     }
