@@ -32,13 +32,13 @@ function checkMillerExists($con, $name) {
     return $stmt->num_rows > 0;
 }
 
-// Fetch countries from database
+// Fetch unique countries from commodity_sources
 $countries = [];
-$country_query = "SELECT country_name FROM countries ORDER BY country_name ASC";
+$country_query = "SELECT DISTINCT admin0_country FROM commodity_sources ORDER BY admin0_country ASC";
 $country_result = $con->query($country_query);
 if ($country_result) {
     while ($row = $country_result->fetch_assoc()) {
-        $countries[] = $row['country_name'];
+        $countries[] = $row['admin0_country'];
     }
 }
 
@@ -157,6 +157,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <title>Add Tradepoint - Step 1</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <!-- Add Select2 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -437,6 +439,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             display: none;
         }
         
+        /* Select2 custom styling */
+        .select2-container--default .select2-selection--single {
+            height: 42px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .select2-container--default .select2-selection--single .select2-selection__rendered {
+            line-height: 42px;
+        }
+        .select2-container--default .select2-selection--single .select2-selection__arrow {
+            height: 40px;
+        }
+        .select2-container--default .select2-results__option--highlighted {
+            background-color: rgba(180, 80, 50, 1);
+        }
+        .select2-container--default .select2-results__option--selected {
+            background-color: rgba(180, 80, 50, 0.7);
+        }
+        
         /* Responsive design */
         @media (max-width: 768px) {
             .container {
@@ -568,7 +589,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <div class="form-row">
                         <div class="form-group">
                             <label for="country" class="required">Country (Admin 0)</label>
-                            <select id="country" name="country">
+                            <select id="country" name="country" class="select2-country">
                                 <option value="">Select country</option>
                                 <?php foreach ($countries as $country): ?>
                                     <option value="<?= htmlspecialchars($country) ?>">
@@ -580,7 +601,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         </div>
                         <div class="form-group">
                             <label for="county_district" class="required">County/District (Admin 1)</label>
-                            <input type="text" id="county_district" name="county_district" placeholder="Enter county or district">
+                            <select id="county_district" name="county_district" class="select2-county">
+                                <option value="">Select county/district</option>
+                            </select>
                             <div class="error-message" id="county_district_error">County/District is required</div>
                         </div>
                     </div>
@@ -602,7 +625,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <div class="form-row">
                         <div class="form-group">
                             <label for="border_country" class="required">Country (Admin 0)</label>
-                            <select id="border_country" name="border_country">
+                            <select id="border_country" name="border_country" class="select2-country">
                                 <option value="">Select country</option>
                                 <?php foreach ($countries as $country): ?>
                                     <option value="<?= htmlspecialchars($country) ?>">
@@ -614,7 +637,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         </div>
                         <div class="form-group">
                             <label for="border_county" class="required">County/District (Admin 1)</label>
-                            <input type="text" id="border_county" name="border_county" placeholder="Enter county or district">
+                            <select id="border_county" name="border_county" class="select2-county">
+                                <option value="">Select county/district</option>
+                            </select>
                             <div class="error-message" id="border_county_error">County/District is required</div>
                         </div>
                     </div>
@@ -655,7 +680,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <div class="form-row">
                         <div class="form-group">
                             <label for="miller_country" class="required">Country (Admin 0)</label>
-                            <select id="miller_country" name="miller_country">
+                            <select id="miller_country" name="miller_country" class="select2-country">
                                 <option value="">Select country</option>
                                 <?php foreach ($countries as $country): ?>
                                     <option value="<?= htmlspecialchars($country) ?>">
@@ -667,7 +692,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         </div>
                         <div class="form-group">
                             <label for="miller_county_district" class="required">County/District (Admin 1)</label>
-                            <input type="text" id="miller_county_district" name="miller_county_district" placeholder="Enter county or district">
+                            <select id="miller_county_district" name="miller_county_district" class="select2-county">
+                                <option value="">Select county/district</option>
+                            </select>
                             <div class="error-message" id="miller_county_district_error">County/District is required</div>
                         </div>
                     </div>
@@ -687,29 +714,108 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         </div>
     </div>
 
+    <!-- Add jQuery and Select2 JS -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    
     <script>
         // Define the currency map for JavaScript (must be kept in sync with PHP)
         const jsCurrencyMap = <?php echo json_encode($currency_map); ?>;
 
-        function updateMillerCurrency() {
-            const countrySelect = document.getElementById('miller_country');
-            const currencyDisplayDiv = document.getElementById('miller_currency_display');
-            const currencyHiddenInput = document.getElementById('miller_currency_display_value');
+        // Initialize Select2 for all country dropdowns
+        $(document).ready(function() {
+            $('.select2-country').select2({
+                placeholder: "Select a country",
+                allowClear: true
+            });
+            
+            $('.select2-county').select2({
+                placeholder: "Select a county/district",
+                allowClear: true
+            });
+            
+            // Initialize all country dropdowns
+            initializeCountryDropdowns();
+            
+            // Set up event listeners for country changes
+            setupCountryChangeListeners();
+        });
 
-            const selectedCountry = countrySelect.value;
+        function initializeCountryDropdowns() {
+            // Initialize all country dropdowns with the same class
+            $('.select2-country').each(function() {
+                $(this).on('change', function() {
+                    const country = $(this).val();
+                    const countyDropdown = $(this).closest('.form-row').find('.select2-county');
+                    
+                    // Clear previous options
+                    countyDropdown.val(null).trigger('change');
+                    countyDropdown.empty();
+                    countyDropdown.append('<option value="">Select county/district</option>');
+                    
+                    if (country) {
+                        // Fetch counties/districts for the selected country via AJAX
+                        $.ajax({
+                            url: 'get_counties.php',
+                            method: 'POST',
+                            data: { country: country },
+                            dataType: 'json',
+                            success: function(response) {
+                                if (response.length > 0) {
+                                    $.each(response, function(index, county) {
+                                        countyDropdown.append($('<option>', {
+                                            value: county,
+                                            text: county
+                                        }));
+                                    });
+                                } else {
+                                    countyDropdown.append($('<option>', {
+                                        value: '',
+                                        text: 'No counties/districts found'
+                                    }));
+                                }
+                            },
+                            error: function() {
+                                countyDropdown.append($('<option>', {
+                                    value: '',
+                                    text: 'Error loading counties/districts'
+                                }));
+                            }
+                        });
+                    }
+                    
+                    // If this is the miller country dropdown, update currency
+                    if ($(this).attr('id') === 'miller_country') {
+                        updateMillerCurrency();
+                    }
+                });
+            });
+        }
+
+        function setupCountryChangeListeners() {
+            // For miller country specifically, also update currency
+            $('#miller_country').on('change', updateMillerCurrency);
+        }
+
+        function updateMillerCurrency() {
+            const countrySelect = $('#miller_country');
+            const currencyDisplayDiv = $('#miller_currency_display');
+            const currencyHiddenInput = $('#miller_currency_display_value');
+
+            const selectedCountry = countrySelect.val();
             let currency = '';
 
-            if (jsCurrencyMap[selectedCountry]) {
+            if (selectedCountry && jsCurrencyMap[selectedCountry]) {
                 currency = jsCurrencyMap[selectedCountry];
-                currencyDisplayDiv.style.color = '#333';
-                currencyDisplayDiv.innerHTML = `<i class="fas fa-coins"></i> ${currency}`;
+                currencyDisplayDiv.css('color', '#333');
+                currencyDisplayDiv.html(`<i class="fas fa-coins"></i> ${currency}`);
             } else {
                 currency = '';
-                currencyDisplayDiv.style.color = '#6c757d';
-                currencyDisplayDiv.innerHTML = selectedCountry ? 'Currency not available for selected country' : 'Select a country to see currency';
+                currencyDisplayDiv.css('color', '#6c757d');
+                currencyDisplayDiv.html(selectedCountry ? 'Currency not available for selected country' : 'Select a country to see currency');
             }
 
-            currencyHiddenInput.value = currency;
+            currencyHiddenInput.val(currency);
         }
 
         function showRelevantFields() {
@@ -767,9 +873,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             showRelevantFields();
-            
-            // Attach event listener to miller_country select for real-time updates
-            document.getElementById('miller_country').addEventListener('change', updateMillerCurrency);
             
             // Listen to tradepoint radio changes
             document.querySelectorAll('input[name="tradepoint"]').forEach(radio => {
