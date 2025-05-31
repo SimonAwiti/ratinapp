@@ -372,12 +372,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
                 } else if (page.includes('datasource_boilerplate.php')) {
                     loadScriptAndInitialize('assets/data_sources.js', 'initializeDataSources');
                 } else if (page.includes('commodity_sources_boilerplate.php')) {
-                     // Since commodity_sources_boilerplate.php has inline JS, you don't *need* an external script.
-                     // However, if you move its JS to an external file, you would use:
-                     // loadScriptAndInitialize('assets/commodity_sources.js', 'initializeCommoditySources');
-                     // For now, if the JS is inline, it will execute automatically.
-                     // You could trigger a common filtering/pagination setup if available:
-                     // if (typeof applyFilters === 'function') applyFilters(); // For the table filters
+                    loadScriptAndInitialize('assets/commodity_sources.js', 'initializeDataSourceFilters');
                 }
                 // No specific script is typically needed for landing_page.php unless it has dynamic elements.
             })
