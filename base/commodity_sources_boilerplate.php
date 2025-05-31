@@ -335,7 +335,7 @@ $con->close();
                             <td><?= htmlspecialchars($source['admin1_county_district']) ?></td>
                             <td><?= date('Y-m-d H:i', strtotime($source['created_at'])) ?></td>
                             <td>
-                                <a href="edit_commodity_source.php?id=<?= htmlspecialchars($source['id']) ?>">
+                                <a href="edit_commodity_sources.php?id=<?= htmlspecialchars($source['id']) ?>">
                                     <button class="btn btn-sm btn-warning">
                                         <i class="fas fa-edit"></i>
                                     </button>
