@@ -1,5 +1,11 @@
 <?php
 session_start();
+
+// Check if user is logged in and has admin privileges
+if (!isset($_SESSION['admin_logged_in'])) {
+    header("Location: ../admin/index.php");
+    exit;
+}
 include '../admin/includes/config.php';
 
 // Redirect if session data is missing (meaning step 1 wasn't completed)
@@ -154,7 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 session_destroy();
 
                 // Redirect to a success page or commodity list
-                header('Location: view_commodities.php?status=success'); // Redirect to a page where success message can be shown
+                header('Location: add_commodity.php');
                 exit;
 
             } catch (Exception $e) {
