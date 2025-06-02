@@ -155,6 +155,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             // Do not exit here, let the page reload
         }
         
+        // Handle miller deletion
+        if (isset($_POST['delete_miller'])) {
+            $miller_id = $_POST['miller_id'];
+            $miller_name = $_SESSION['miller_name'];
+            
+            $stmt = $con->prepare("DELETE FROM millers WHERE id = ? AND miller_name = ?");
+            if ($stmt) {
+                $stmt->bind_param("is", $miller_id, $miller_name);
+                if ($stmt->execute()) {
+                    echo "<script>alert('Miller deleted successfully!');</script>";
+                } else {
+                    echo "<script>alert('Error deleting miller: {$stmt->error}');</script>";
+                }
+                $stmt->close();
+            } else {
+                echo "<script>alert('Failed to prepare delete statement.');</script>";
+            }
+        }
+        
         // Go to step 3
         if (isset($_POST['next_step'])) {
             header("Location: addtradepoint3.php");
@@ -208,6 +227,22 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 echo "<script>alert('Failed to save miller!'); window.history.back();</script>";
             }
         }
+    }
+}
+
+// Fetch existing millers for the current miller_name (for display)
+$existing_millers = [];
+if ($tradepoint_type == "Millers" && isset($_SESSION['miller_name'])) {
+    $miller_name = $_SESSION['miller_name'];
+    $stmt = $con->prepare("SELECT id, miller, longitude, latitude, radius FROM millers WHERE miller_name = ?");
+    if ($stmt) {
+        $stmt->bind_param("s", $miller_name);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $existing_millers[] = $row;
+        }
+        $stmt->close();
     }
 }
 ?>
@@ -598,6 +633,284 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 flex-direction: column;
             }
         }
+        /* Miller List Section Styles */
+        .millers-list {
+            margin-top: 30px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+
+        .millers-list h6 {
+            color: #2c3e50;
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .millers-list h6 i {
+            color: #3498db;
+            font-size: 1rem;
+        }
+
+        /* Individual Miller Item */
+        .miller-item {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .miller-item:hover {
+            border-color: #3498db;
+            box-shadow: 0 2px 12px rgba(52, 152, 219, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .miller-item:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Miller Details */
+        .miller-details {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .miller-name {
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 1rem;
+            line-height: 1.4;
+        }
+
+        .miller-coords {
+            font-size: 0.85rem;
+            color: #6c757d;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .miller-coords i {
+            color: #e74c3c;
+            font-size: 0.8rem;
+        }
+
+        /* Delete Button */
+        .delete-miller-btn {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+            margin-left: 15px;
+        }
+
+        .delete-miller-btn:hover {
+            background: #c0392b;
+            transform: scale(1.1);
+            box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
+        }
+
+        .delete-miller-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* No Millers State */
+        .no-millers {
+            text-align: center;
+            color: #6c757d;
+            font-style: italic;
+            padding: 30px 20px;
+            background: white;
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+
+        /* Button Container for Miller Section */
+        .button-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 30px;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        /* Button Styles */
+        .add-btn, .next-btn, .prev-btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.95rem;
+            min-width: 120px;
+            justify-content: center;
+        }
+
+        .add-btn {
+            background: #27ae60;
+            color: white;
+        }
+
+        .add-btn:hover {
+            background: #229954;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(39, 174, 96, 0.3);
+        }
+
+        .next-btn {
+            background: #3498db;
+            color: white;
+        }
+
+        .next-btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+        }
+
+        .prev-btn {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .prev-btn:hover {
+            background: #7f8c8d;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(149, 165, 166, 0.3);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .miller-item {
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 12px;
+            }
+            
+            .delete-miller-btn {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                margin-left: 0;
+            }
+            
+            .miller-details {
+                width: 100%;
+                padding-right: 40px;
+            }
+            
+            .button-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .button-container button {
+                width: 100%;
+                margin-bottom: 10px;
+            }
+            
+            .millers-list {
+                padding: 15px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .miller-coords {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 2px;
+            }
+            
+            .miller-name {
+                font-size: 0.95rem;
+            }
+            
+            .miller-coords {
+                font-size: 0.8rem;
+            }
+            
+            .delete-miller-btn {
+                width: 24px;
+                height: 24px;
+                font-size: 14px;
+            }
+        }
+
+        /* Animation for new miller items */
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .miller-item {
+            animation: slideIn 0.3s ease-out;
+        }
+
+        /* Empty state enhancement */
+        .no-millers::before {
+            content: "📋";
+            display: block;
+            font-size: 2rem;
+            margin-bottom: 10px;
+            opacity: 0.5;
+        }
+
+        /* Success/Error message styling (if needed) */
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
@@ -721,6 +1034,37 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <label for="radius" class="required">Service Radius (m)</label>
                         <input type="number" id="radius" name="radius" placeholder="Enter service radius in meters" >
                     </div>
+                    
+                    <!-- Added millers list section -->
+                    <?php if (!empty($existing_millers)): ?>
+                    <div class="millers-list">
+                        <h6><i class="fas fa-list"></i> Added Millers</h6>
+                        <?php foreach ($existing_millers as $miller): ?>
+                        <div class="miller-item">
+                            <div class="miller-details">
+                                <div class="miller-name"><?= htmlspecialchars($miller['miller']) ?></div>
+                                <div class="miller-coords">
+                                    <i class="fas fa-map-marker-alt"></i> 
+                                    Lat: <?= htmlspecialchars($miller['latitude']) ?>, 
+                                    Lng: <?= htmlspecialchars($miller['longitude']) ?>, 
+                                    Radius: <?= htmlspecialchars($miller['radius']) ?>m
+                                </div>
+                            </div>
+                            <form method="POST" style="display: inline;">
+                                <input type="hidden" name="miller_id" value="<?= $miller['id'] ?>">
+                                <button type="submit" name="delete_miller" class="delete-miller-btn" 
+                                        onclick="return confirm('Are you sure you want to delete this miller?')">
+                                    ×
+                                </button>
+                            </form>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php else: ?>
+                    <div class="millers-list">
+                        <div class="no-millers">No millers added yet. Add your first miller using the form above.</div>
+                    </div>
+                    <?php endif; ?>
                     
                     <div class="button-container">
                         <button type="button" class="prev-btn" onclick="window.location.href='addtradepoint.php'">
