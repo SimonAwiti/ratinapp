@@ -53,11 +53,82 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 
     if ($tradepoint_type == "Markets") {
-        // Handle Markets submission (same as before)
-        // ... [existing markets code] ...
+        // Handle Markets submission
+        $_SESSION['longitude'] = $_POST['longitude'];
+        $_SESSION['latitude'] = $_POST['latitude'];
+        $_SESSION['radius'] = $_POST['radius'];
+        $_SESSION['currency'] = $autofill_currency;
+
+        // Handle multiple image upload for markets
+        $image_paths = array();
+        
+        if (isset($_FILES['marketImages'])) {
+            foreach ($_FILES['marketImages']['tmp_name'] as $key => $tmp_name) {
+                if ($_FILES['marketImages']['error'][$key] === UPLOAD_ERR_OK) {
+                    $image_name = basename($_FILES['marketImages']['name'][$key]);
+                    $image_path = $upload_dir . time() . '_' . uniqid() . '_' . $image_name;
+
+                    if (move_uploaded_file($tmp_name, $image_path)) {
+                        $image_paths[] = $image_path;
+                    }
+                }
+            }
+        }
+
+        // Convert array of image paths to JSON string
+        $_SESSION['image_urls'] = json_encode($image_paths);
+        header("Location: addtradepoint3.php");
+        exit;
+
     } elseif ($tradepoint_type == "Border Points") {
-        // Handle Border Points submission (same as before)
-        // ... [existing border points code] ...
+        // Handle Border Points submission (final step)
+        $image_paths = array();
+        
+        if (isset($_FILES['borderImages'])) {
+            foreach ($_FILES['borderImages']['tmp_name'] as $key => $tmp_name) {
+                if ($_FILES['borderImages']['error'][$key] === UPLOAD_ERR_OK) {
+                    $image_name = basename($_FILES['borderImages']['name'][$key]);
+                    $image_path = $upload_dir . time() . '_' . uniqid() . '_' . $image_name;
+
+                    if (move_uploaded_file($tmp_name, $image_path)) {
+                        $image_paths[] = $image_path;
+                    }
+                }
+            }
+        }
+
+        // Convert array of image paths to JSON string
+        $images_json = json_encode($image_paths);
+
+        // Insert border point info
+        $stmt = $con->prepare("INSERT INTO border_points 
+                              (name, country, county, longitude, latitude, radius, tradepoint, images) 
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("sssddsss", 
+            $_SESSION['border_name'], 
+            $_SESSION['border_country'], 
+            $_SESSION['border_county'], 
+            $_SESSION['longitude'], 
+            $_SESSION['latitude'], 
+            $_SESSION['radius'],
+            $_SESSION['tradepoint'],
+            $images_json
+        );
+        
+        if ($stmt->execute()) {
+            session_unset();
+            echo "<script>alert('Border Point added successfully!'); window.location.href='addtradepoint.php';</script>";
+            exit;
+        } else {
+            // Delete uploaded images if database insert failed
+            foreach ($image_paths as $path) {
+                if (file_exists($path)) {
+                    unlink($path);
+                }
+            }
+            echo "<script>alert('Failed to save border point!'); window.history.back();</script>";
+        }
+
     } elseif ($tradepoint_type == "Millers") {
         // Handle Millers submission - Updated functionality
         
@@ -73,75 +144,68 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             if ($stmt) {
                 $stmt->bind_param("ssdii", $miller_name, $miller, $longitude, $latitude, $radius);
                 if ($stmt->execute()) {
-                    // Get the inserted miller data to return as JSON
-                    $inserted_id = $stmt->insert_id;
-                    $query = "SELECT * FROM millers WHERE id = ?";
-                    $stmt2 = $con->prepare($query);
-                    $stmt2->bind_param("i", $inserted_id);
-                    $stmt2->execute();
-                    $result = $stmt2->get_result();
-                    $miller_data = $result->fetch_assoc();
-                    
-                    header('Content-Type: application/json');
-                    echo json_encode([
-                        'success' => true,
-                        'message' => 'Miller added successfully!',
-                        'html' => '<div class="miller-item" data-id="'.$miller_data['id'].'">
-                                    <span>'.$miller_data['miller'].' ('.$miller_data['longitude'].', '.$miller_data['latitude'].') - Radius: '.$miller_data['radius'].'m</span>
-                                    <button type="button" class="remove-miller">×</button>
-                                  </div>'
-                    ]);
-                    exit;
+                    echo "<script>alert('Miller added successfully!');</script>";
                 } else {
-                    header('Content-Type: application/json');
-                    echo json_encode(['success' => false, 'message' => 'Error adding miller: '.$stmt->error]);
-                    exit;
+                    echo "<script>alert('Error adding miller: {$stmt->error}');</script>";
                 }
                 $stmt->close();
             } else {
-                header('Content-Type: application/json');
-                echo json_encode(['success' => false, 'message' => 'Failed to prepare statement.']);
-                exit;
+                echo "<script>alert('Failed to prepare statement.');</script>";
             }
-        }
-        
-        // Handle miller deletion
-        if (isset($_POST['delete_miller'])) {
-            $miller_id = $_POST['miller_id'];
-            $stmt = $con->prepare("DELETE FROM millers WHERE id = ?");
-            if ($stmt) {
-                $stmt->bind_param("i", $miller_id);
-                if ($stmt->execute()) {
-                    header('Content-Type: application/json');
-                    echo json_encode(['success' => true, 'message' => 'Miller deleted successfully!']);
-                } else {
-                    header('Content-Type: application/json');
-                    echo json_encode(['success' => false, 'message' => 'Error deleting miller: '.$stmt->error]);
-                }
-                $stmt->close();
-            } else {
-                header('Content-Type: application/json');
-                echo json_encode(['success' => false, 'message' => 'Failed to prepare delete statement.']);
-            }
-            exit;
+            // Do not exit here, let the page reload
         }
         
         // Go to step 3
         if (isset($_POST['next_step'])) {
-            // Verify at least one miller exists
-            $miller_name = $_SESSION['miller_name'];
-            $query = "SELECT COUNT(*) as count FROM millers WHERE miller_name = ?";
-            $stmt = $con->prepare($query);
-            $stmt->bind_param("s", $miller_name);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            $row = $result->fetch_assoc();
+            header("Location: addtradepoint3.php");
+            exit;
+        }
+        
+        // Handle final miller submission with images (if this is the final step)
+        if (isset($_POST['final_submit'])) {
+            $image_paths = array();
             
-            if ($row['count'] > 0) {
-                header("Location: addtradepoint3.php");
+            if (isset($_FILES['millerImages'])) {
+                foreach ($_FILES['millerImages']['tmp_name'] as $key => $tmp_name) {
+                    if ($_FILES['millerImages']['error'][$key] === UPLOAD_ERR_OK) {
+                        $image_name = basename($_FILES['millerImages']['name'][$key]);
+                        $image_path = $upload_dir . time() . '_' . uniqid() . '_' . $image_name;
+
+                        if (move_uploaded_file($tmp_name, $image_path)) {
+                            $image_paths[] = $image_path;
+                        }
+                    }
+                }
+            }
+
+            // Convert array of image paths to JSON string
+            $images_json = json_encode($image_paths);
+
+            // Insert miller info
+            $stmt = $con->prepare("INSERT INTO millers 
+                                  (name, country, county_district, currency, tradepoint, images) 
+                                  VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("ssssss", 
+                $_SESSION['miller_name'], 
+                $_SESSION['country'], 
+                $_SESSION['county_district'], 
+                $_SESSION['currency'],
+                $_SESSION['tradepoint'],
+                $images_json
+            );
+            
+            if ($stmt->execute()) {
+                session_unset();
+                echo "<script>alert('Miller added successfully!'); window.location.href='addtradepoint.php';</script>";
                 exit;
             } else {
-                echo "<script>alert('Please add at least one miller before proceeding.');</script>";
+                // Delete uploaded images if database insert failed
+                foreach ($image_paths as $path) {
+                    if (file_exists($path)) {
+                        unlink($path);
+                    }
+                }
+                echo "<script>alert('Failed to save miller!'); window.history.back();</script>";
             }
         }
     }
@@ -534,54 +598,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 flex-direction: column;
             }
         }
-        
-        /* Toast notification styles */
-        .toast-container {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1100;
-        }
-        
-        .toast {
-            background-color: rgba(0, 0, 0, 0.9);
-            color: white;
-            border-radius: 5px;
-            padding: 15px 20px;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            transform: translateX(150%);
-            transition: transform 0.3s ease;
-        }
-        
-        .toast.show {
-            transform: translateX(0);
-        }
-        
-        .toast.success {
-            background-color: #28a745;
-        }
-        
-        .toast.error {
-            background-color: #dc3545;
-        }
-        
-        .toast i {
-            margin-right: 10px;
-            font-size: 20px;
-        }
-        
-        /* Loading spinner */
-        .spinner-border {
-            display: none;
-            margin-left: 10px;
-        }
-        
-        .btn-loading .spinner-border {
-            display: inline-block;
-        }
     </style>
 </head>
 <body>
@@ -614,56 +630,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <h2>Add <?= htmlspecialchars($tradepoint_type) ?> - Step 2</h2>
             <p>Please provide additional details for your <?= strtolower($tradepoint_type) ?>.</p>
             
-            <!-- Toast notifications container -->
-            <div class="toast-container" id="toastContainer"></div>
-            
-            <!-- Markets and Border Points forms remain the same -->
-            <?php if ($tradepoint_type == "Markets" || $tradepoint_type == "Border Points"): ?>
-                <!-- [Previous Markets and Border Points form sections remain exactly the same] -->
-            <?php endif; ?>
-            
-            <!-- Updated Millers Section -->
-            <?php if ($tradepoint_type == "Millers"): ?>
-            <div class="tradepoint-section active">
-                <div class="section-header">
-                    <h6><i class="fas fa-industry"></i> Miller Details</h6>
-                    <p>Provide miller location coordinates and additional details</p>
-                </div>
+            <form id="tradepoint-form" method="POST" action="" enctype="multipart/form-data">
                 
-                <!-- Added millers list -->
-                <div class="form-group-full" id="millerListContainer" style="margin-bottom: 20px;">
-                    <label>Added Millers</label>
-                    <div id="millerList" style="border: 1px solid #ddd; border-radius: 5px; padding: 10px; min-height: 50px;">
-                        <?php
-                        // Fetch millers for this session
-                        if (isset($_SESSION['miller_name'])) {
-                            $miller_name = $_SESSION['miller_name'];
-                            $query = "SELECT * FROM millers WHERE miller_name = ?";
-                            $stmt = $con->prepare($query);
-                            $stmt->bind_param("s", $miller_name);
-                            $stmt->execute();
-                            $result = $stmt->get_result();
-                            
-                            if ($result->num_rows > 0) {
-                                while ($row = $result->fetch_assoc()) {
-                                    echo '<div class="miller-item" data-id="'.$row['id'].'">
-                                            <span>'.$row['miller'].' ('.$row['longitude'].', '.$row['latitude'].') - Radius: '.$row['radius'].'m</span>
-                                            <button type="button" class="remove-miller">×</button>
-                                          </div>';
-                                }
-                            } else {
-                                echo '<p style="color: #999; text-align: center;">No millers added yet</p>';
-                            }
-                        }
-                        ?>
-                    </div>
-                </div>
-                
-                <!-- Separate form for adding millers -->
-                <form id="add-miller-form" method="POST">
-                    <div class="form-group-full">
-                        <label for="miller" class="required">Miller Description</label>
-                        <input type="text" id="miller" name="miller" placeholder="Add miller name" required>
+                <!-- Markets Section -->
+                <?php if ($tradepoint_type == "Markets"): ?>
+                <div class="tradepoint-section active">
+                    <div class="section-header">
+                        <h6><i class="fas fa-map-marker-alt"></i> Location & Details</h6>
+                        <p>Provide location coordinates and market details</p>
                     </div>
                     
                     <div class="form-row">
@@ -678,58 +652,109 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     </div>
 
                     <div class="form-group-full">
-                        <label for="radius" class="required">Service Radius (m)</label>
-                        <input type="number" id="radius" name="radius" placeholder="Enter service radius in meters" required>
+                        <label for="radius" class="required">Market Radius (m)</label>
+                        <input type="number" id="radius" name="radius" placeholder="Enter radius in meters" required>
+                    </div>
+
+                    <div class="form-group-full">
+                        <label class="required">Currency</label>
+                        <div class="currency-display">
+                            <i class="fas fa-coins"></i> <?= htmlspecialchars($autofill_currency) ?>
+                        </div>
+                    </div>
+
+                    <div class="form-group-full">
+                        <label for="marketImages" class="required">Upload Market Images</label>
+                        <input type="file" id="marketImages" name="marketImages[]" multiple accept="image/*" required>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="progressBar"></div>
+                        </div>
+                        <div id="imagePreview"></div>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <!-- Border Points Section -->
+                <?php if ($tradepoint_type == "Border Points"): ?>
+                <div class="tradepoint-section active">
+                    <div class="section-header">
+                        <h6><i class="fas fa-images"></i> Border Point Images</h6>
+                        <p>Upload one or more images of the border point</p>
                     </div>
                     
-                    
-                        <div style="text-align: center;">
-                            <button type="submit" name="add_miller" class="add-btn" id="saveMillerBtn">
-                                <i class="fas fa-save"></i> Save Miller Data
-                                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                            </button>
+                    <div class="form-group-full">
+                        <label for="borderImages" class="required">Upload Images</label>
+                        <input type="file" id="borderImages" name="borderImages[]" multiple accept="image/*" required>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="progressBar"></div>
                         </div>
-                   
-                </form>
-                
-                <!-- Separate form for proceeding to next step -->
-                <form id="next-step-form" method="POST" style="margin-top: 20px;">
+                        <div id="imagePreview"></div>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <!-- Millers Section - Updated -->
+                <?php if ($tradepoint_type == "Millers"): ?>
+                <div class="tradepoint-section active">
+                    <div class="section-header">
+                        <h6><i class="fas fa-industry"></i> Miller Details</h6>
+                        <p>Provide miller location coordinates and additional details</p>
+                    </div>
+                    
+                    <div class="form-group-full">
+                        <label for="miller" class="required">Miller Description</label>
+                        <input id="miller" name="miller" rows="4" placeholder="Add miller name" ></input>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="longitude" class="required">Longitude</label>
+                            <input type="number" step="any" id="longitude" name="longitude" placeholder="e.g., 36.8219" >
+                        </div>
+                        <div class="form-group">
+                            <label for="latitude" class="required">Latitude</label>
+                            <input type="number" step="any" id="latitude" name="latitude" placeholder="e.g., -1.2921" >
+                        </div>
+                    </div>
+
+                    <div class="form-group-full">
+                        <label for="radius" class="required">Service Radius (m)</label>
+                        <input type="number" id="radius" name="radius" placeholder="Enter service radius in meters" >
+                    </div>
+                    
                     <div class="button-container">
                         <button type="button" class="prev-btn" onclick="window.location.href='addtradepoint.php'">
                             <i class="fas fa-arrow-left"></i> Previous
+                        </button>
+                        <button type="submit" name="add_miller" class="add-btn">
+                            <i class="fas fa-save"></i> Save Miller Data
                         </button>
                         <button type="submit" name="next_step" class="next-btn">
                             Next Step <i class="fas fa-arrow-right"></i>
                         </button>
                     </div>
-                </form>
-            </div>
-            <?php endif; ?>
+                </div>
+                <?php endif; ?>
+
+                <?php if ($tradepoint_type != "Millers"): ?>
+                <div class="button-container">
+                    <button type="button" class="prev-btn" onclick="window.location.href='addtradepoint.php'">
+                        <i class="fas fa-arrow-left"></i> Previous
+                    </button>
+                    <button type="submit" class="next-btn">
+                        <?php if ($tradepoint_type == "Markets"): ?>
+                            Next Step <i class="fas fa-arrow-right"></i>
+                        <?php else: ?>
+                            Complete <i class="fas fa-check"></i>
+                        <?php endif; ?>
+                    </button>
+                </div>
+                <?php endif; ?>
+            </form>
         </div>
     </div>
 
     <script>
-        // Show toast notification
-        function showToast(message, type = 'success') {
-            const toastContainer = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            toast.innerHTML = `
-                <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
-                <span>${message}</span>
-            `;
-            toastContainer.appendChild(toast);
-            
-            // Show toast
-            setTimeout(() => toast.classList.add('show'), 100);
-            
-            // Hide after 5 seconds
-            setTimeout(() => {
-                toast.classList.remove('show');
-                setTimeout(() => toast.remove(), 300);
-            }, 5000);
-        }
-
         // Handle file upload based on tradepoint type
         const tradepointType = '<?= $tradepoint_type ?>';
         let fileInputId = '';
@@ -738,6 +763,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             fileInputId = 'marketImages';
         } else if (tradepointType === 'Border Points') {
             fileInputId = 'borderImages';
+        } else if (tradepointType === 'Millers') {
+            fileInputId = 'millerImages';
         }
 
         // Only setup file upload handlers for Markets and Border Points
@@ -809,101 +836,71 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             }
         }
 
-        // Handle miller deletion
-        document.addEventListener('click', function(e) {
-            if (e.target.classList.contains('remove-miller')) {
-                const millerItem = e.target.closest('.miller-item');
-                const millerId = millerItem.getAttribute('data-id');
+        function refreshPreview() {
+            const input = document.getElementById(fileInputId);
+            const preview = document.getElementById("imagePreview");
+            preview.innerHTML = "";
+            
+            Array.from(input.files).forEach((file, index) => {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const imgDiv = document.createElement("div");
+                    imgDiv.classList.add("preview-image");
+                    imgDiv.innerHTML = `
+                        <img src="${event.target.result}" alt="Uploaded Image">
+                        <button type="button" class="remove-img" onclick="removeImage(this, ${index})">×</button>
+                    `;
+                    preview.appendChild(imgDiv);
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // Form validation
+        document.getElementById('tradepoint-form').addEventListener('submit', function(e) {
+            let isValid = true;
+            let firstErrorField = null;
+
+            if (tradepointType === 'Markets') {
+                const requiredFields = [
+                    {id: 'longitude', name: 'Longitude'},
+                    {id: 'latitude', name: 'Latitude'},
+                    {id: 'radius', name: 'Market Radius'},
+                    {id: 'marketImages', name: 'Market Images', type: 'file'}
+                ];
                 
-                if (confirm('Are you sure you want to delete this miller?')) {
-                    fetch(window.location.href, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                        },
-                        body: 'delete_miller=1&miller_id=' + millerId
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            showToast(data.message, 'success');
-                            millerItem.remove();
-                            
-                            // If no millers left, show message
-                            if (document.querySelectorAll('.miller-item').length === 0) {
-                                document.getElementById('millerList').innerHTML = '<p style="color: #999; text-align: center;">No millers added yet</p>';
-                            }
-                        } else {
-                            showToast(data.message, 'error');
+                requiredFields.forEach(field => {
+                    const element = document.getElementById(field.id);
+                    if (field.type === 'file') {
+                        if (!element.files || element.files.length === 0) {
+                            if (!firstErrorField) firstErrorField = element;
+                            isValid = false;
                         }
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        showToast('An error occurred while deleting the miller', 'error');
-                    });
+                    } else {
+                        if (!element.value.trim()) {
+                            if (!firstErrorField) firstErrorField = element;
+                            isValid = false;
+                        }
+                    }
+                });
+            } else {
+                // For Border Points and Millers, just check if files are uploaded
+                const fileInput = document.getElementById(fileInputId);
+                if (!fileInput.files || fileInput.files.length === 0) {
+                    isValid = false;
+                    firstErrorField = fileInput;
+                }
+            }
+
+            if (!isValid) {
+                e.preventDefault();
+                alert('Please fill in all required fields and upload the required images.');
+                if (firstErrorField) {
+                    firstErrorField.focus();
+                    firstErrorField.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             }
         });
-
-        // Handle miller addition via AJAX
-        if (document.getElementById('add-miller-form')) {
-            document.getElementById('add-miller-form').addEventListener('submit', function(e) {
-                e.preventDefault();
-                
-                const saveBtn = document.getElementById('saveMillerBtn');
-                saveBtn.classList.add('btn-loading');
-                saveBtn.disabled = true;
-                
-                const formData = new FormData(this);
-                formData.append('add_miller', '1');
-                
-                fetch(window.location.href, {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    saveBtn.classList.remove('btn-loading');
-                    saveBtn.disabled = false;
-                    
-                    if (data.success) {
-                        showToast(data.message, 'success');
-                        
-                        // Add the new miller to the list
-                        const millerList = document.getElementById('millerList');
-                        
-                        // If "No millers" message exists, remove it
-                        if (millerList.querySelector('p')) {
-                            millerList.innerHTML = '';
-                        }
-                        
-                        millerList.insertAdjacentHTML('beforeend', data.html);
-                        
-                        // Clear the form
-                        this.reset();
-                    } else {
-                        showToast(data.message, 'error');
-                    }
-                })
-                .catch(error => {
-                    saveBtn.classList.remove('btn-loading');
-                    saveBtn.disabled = false;
-                    showToast('An error occurred while adding the miller', 'error');
-                    console.error('Error:', error);
-                });
-            });
-        }
-
-        // Form validation for next step
-        if (document.getElementById('next-step-form')) {
-            document.getElementById('next-step-form').addEventListener('submit', function(e) {
-                const millerItems = document.querySelectorAll('.miller-item');
-                if (millerItems.length === 0) {
-                    e.preventDefault();
-                    showToast('Please add at least one miller before proceeding', 'error');
-                }
-            });
-        }
 
         // Add smooth transitions for better UX
         document.querySelectorAll('input, select').forEach(element => {
