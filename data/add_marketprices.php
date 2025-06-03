@@ -28,27 +28,45 @@ if (isset($con)) {
     error_log("Error: Database connection not established in add_marketprices.php.");
 }
 
-// Function to convert currency to USD (replace with actual conversion logic if needed)
-function convertToUSD($amount, $country) {
+// Function to convert currency to USD using database exchange rates
+function convertToUSD($amount, $country, $con) {
     if (!is_numeric($amount)) {
         return 0;
     }
 
-    switch ($country) {
-        case 'Kenya':
-            return round($amount / 150, 2);
-        case 'Uganda':
-            return round($amount / 3700, 2);
-        case 'Tanzania':
-            return round($amount / 2300, 2);
-        case 'Rwanda':
-            return round($amount / 1200, 2);
-        case 'Burundi':
-            return round($amount / 2000, 2);
-        default:
-            return round($amount, 2);
+    $exchangeRate = 1; // Default to 1 (assuming 1:1 for USD or if no rate is found)
+
+    // Fetch the most recent exchange rate for the given country from the database.
+    // ORDER BY effective_date DESC, date_created DESC ensures the latest rate is picked.
+    $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
+
+    if ($stmt) {
+        $stmt->bind_param("s", $country);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result && $result->num_rows > 0) {
+            $row = $result->fetch_assoc();
+            $exchangeRate = (float)$row['exchange_rate'];
+        } else {
+            // Log a warning if no exchange rate is found for the country in the database.
+            // The function will proceed with the default $exchangeRate = 1.
+            error_log("No recent exchange rate found in DB for " . $country . ". Using default rate: " . $exchangeRate);
+        }
+        $stmt->close();
+    } else {
+        error_log("Error preparing currency query for " . $country . ": " . $con->error);
     }
+
+    // Ensure exchangeRate is not zero to prevent division by zero errors.
+    if ($exchangeRate == 0) {
+        error_log("Exchange rate for " . $country . " is zero or invalid. Returning 0 for conversion to prevent division by zero.");
+        return 0;
+    }
+
+    return round($amount / $exchangeRate, 2);
 }
+
 
 // Processing the form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'])) {
@@ -59,21 +77,61 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
     $country = isset($_POST['country']) ? mysqli_real_escape_string($con, $_POST['country']) : '';
     $market_id = isset($_POST['market']) ? (int)$_POST['market'] : 0;
     $category_name = isset($_POST['category']) ? mysqli_real_escape_string($con, $_POST['category']) : '';
-    $commodity_id = isset($_POST['commodity']) ? (int)$_POST['commodity'] : 0;
-    $packaging_unit = isset($_POST['packaging_unit']) ? mysqli_real_escape_string($con, $_POST['packaging_unit']) : '';
-    $measuring_unit = isset($_POST['measuring_unit']) ? mysqli_real_escape_string($con, $_POST['measuring_unit']) : '';
+    $commodity_id = isset($_POST['commodity']) ? (int)$_POST['commodity'] : 0; // This is correctly the ID now
+    $packaging_unit_raw = isset($_POST['packaging_unit']) ? mysqli_real_escape_string($con, $_POST['packaging_unit']) : ''; // e.g., "50 kg", "1 Ton"
+    $measuring_unit = isset($_POST['measuring_unit']) ? mysqli_real_escape_string($con, $_POST['measuring_unit']) : ''; // e.g., "Kg", "Ton"
     $variety = isset($_POST['variety']) ? mysqli_real_escape_string($con, $_POST['variety']) : '';
     $data_source = isset($_POST['data_source']) ? mysqli_real_escape_string($con, $_POST['data_source']) : '';
-    $wholesale_price = isset($_POST['wholesale_price']) ? (float)$_POST['wholesale_price'] : 0;
-    $retail_price = isset($_POST['retail_price']) ? (float)$_POST['retail_price'] : 0;
+    $wholesale_price_input = isset($_POST['wholesale_price']) ? (float)$_POST['wholesale_price'] : 0; // User entered price for the packaging unit
+    $retail_price_input = isset($_POST['retail_price']) ? (float)$_POST['retail_price'] : 0; // User entered price (assumed per measuring_unit)
 
     // Validate required fields
     if (empty($country) || $market_id <= 0 || empty($category_name) || $commodity_id <= 0 ||
-        empty($packaging_unit) || empty($measuring_unit) ||
-        $wholesale_price <= 0 || $retail_price <= 0) {
+        empty($packaging_unit_raw) || empty($measuring_unit) ||
+        $wholesale_price_input <= 0 || $retail_price_input <= 0) {
         echo "<script>alert('Please fill all required fields with valid values.'); window.history.back();</script>";
         exit;
     }
+
+    // --- Wholesale Price per Single Measuring Unit Calculation ---
+    $wholesale_price_per_measuring_unit = 0;
+    $packaging_unit_number = 0;
+
+    // Extract the numerical part from packaging_unit_raw (e.g., "50" from "90" (from POST data))
+    // This regex looks for a number (integer or decimal) at the beginning of the string.
+    if (preg_match('/^(\d+(\.\d+)?)/', $packaging_unit_raw, $matches)) {
+        $packaging_unit_number = (float)$matches[1];
+    } else {
+        // If it's just a number like "90" without text, preg_match will still capture it.
+        // If it's pure text or fails for some reason, default to 1.
+        // Given your POST data example `[packaging_unit] => 90`, this regex will correctly extract 90.
+        $packaging_unit_number = (float)$packaging_unit_raw; // Fallback to direct conversion if regex fails for pure number
+        if ($packaging_unit_number == 0) { // If still 0 after direct conversion
+             error_log("Warning: Could not extract valid number from packaging unit '{$packaging_unit_raw}'. Defaulting to 1 for calculation.");
+             $packaging_unit_number = 1; // Default to 1 to avoid division by zero
+        }
+    }
+
+
+    // Ensure packaging_unit_number is not zero to prevent division by zero
+    if ($packaging_unit_number == 0) {
+        error_log("Error: Numerical value for packaging unit '{$packaging_unit_raw}' is zero or could not be extracted. Cannot calculate wholesale price per measuring unit.");
+        echo "<script>alert('Error: Invalid packaging unit for wholesale price calculation. Please check the commodity details.'); window.history.back();</script>";
+        exit;
+    }
+
+    // Calculate wholesale price per single measuring unit
+    $wholesale_price_per_measuring_unit = $wholesale_price_input / $packaging_unit_number;
+
+
+    // Retail price calculation (as-is, assuming user enters per measuring_unit)
+    $retail_price_per_measuring_unit = $retail_price_input;
+
+
+    // Convert prices per measuring unit to USD
+    $wholesale_price_usd = convertToUSD($wholesale_price_per_measuring_unit, $country, $con);
+    $retail_price_usd = convertToUSD($retail_price_per_measuring_unit, $country, $con);
+
 
     // Get current date and derived values
     $date_posted = date('Y-m-d H:i:s');
@@ -83,10 +141,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
     $year = date('Y');
     $subject = "Market Prices";
     $country_admin_0 = $country;
-
-    // Convert prices to USD
-    $wholesale_price_usd = convertToUSD($wholesale_price, $country);
-    $retail_price_usd = convertToUSD($retail_price, $country);
 
     // Fetch market name based on market_id
     $market_name = "";
@@ -100,8 +154,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
     }
     $stmt_market->close();
 
-    // Fetch commodity name based on commodity_id
-    $commodity_name = "";
+    // No longer strictly need commodity_name for INSERT, but fetching it for completeness or other uses
+    // as it was in previous versions of the code.
+    $commodity_name = ""; // Keep this line to avoid undefined variable notice if it's used elsewhere
     $stmt_commodity = $con->prepare("SELECT commodity_name FROM commodities WHERE id = ?");
     $stmt_commodity->bind_param("i", $commodity_id);
     $stmt_commodity->execute();
@@ -112,18 +167,55 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
     }
     $stmt_commodity->close();
 
-    // Fixed SQL query - using commodity_name instead of commodity_id
+
+    // SQL QUERY: Targeting 'commodity' column with 'commodity_id' (which is INT)
+    // The columns are: category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source
     $sql = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'Wholesale', ?, ?, ?, ?, ?, ?, ?, ?, ?),
                    (?, ?, ?, ?, ?, ?, ?, 'Retail', ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     $stmt = $con->prepare($sql);
     if ($stmt) {
-        // Fixed bind_param - using commodity_name instead of commodity_id
+        // BIND_PARAM: 's' (for category), 'i' (for commodity_id), 's' (for country_admin_0), 'i' (for market_id), etc.
+        // The type string for one set of values is: "sissssdsiiisssss"
+        // Repeated for two sets of values: "sissssdsiiissssssissssdsiiisssss"
         $stmt->bind_param(
-            "sssisssdsiiisssssssisssdsiiissss",
-            $category_name, $commodity_name, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $wholesale_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source,
-            $category_name, $commodity_name, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $retail_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source
+            "sissssdsiiissssssissssdsiiisssss",
+            // Wholesale Record Parameters
+            $category_name,
+            $commodity_id,        // Binding commodity_id (integer) to the 'commodity' column
+            $country_admin_0,
+            $market_id,
+            $market_name,
+            $packaging_unit_raw,  // Stores original packaging unit (e.g., "90")
+            $measuring_unit,      // Stores the calculated unit (e.g., "Kg")
+            $wholesale_price_usd,
+            $subject,
+            $day,
+            $month,
+            $year,
+            $date_posted,
+            $status,
+            $variety,
+            $data_source,
+
+            // Retail Record Parameters
+            $category_name,
+            $commodity_id,        // Binding commodity_id (integer) to the 'commodity' column
+            $country_admin_0,
+            $market_id,
+            $market_name,
+            $packaging_unit_raw,  // Assuming for retail, you want to store the same 'weight' description
+            $measuring_unit,      // Stores the unit for retail price (e.g., "Kg")
+            $retail_price_usd,
+            $subject,
+            $day,
+            $month,
+            $year,
+            $date_posted,
+            $status,
+            $variety,
+            $data_source
         );
 
         if ($stmt->execute()) {
@@ -269,6 +361,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
         .step.active .step-text {
             color: rgba(180, 80, 50, 1); /* Adjusted to your commodity page */
             font-weight: bold;
+        }
+    
+        .step.completed .step-text {
+            color: rgba(180, 80, 50, 1);
+            font-weight: bold;
+        }
+        .step-circle.completed::after {
+            content: '✓';
+            font-family: 'Font Awesome 6 Free'; /* For consistent checkmark icon */
+            font-weight: 900;
+            font-size: 20px;
+        }
+        .step-circle.completed {
+            background-color: rgba(180, 80, 50, 1);
+            color: white;
         }
 
         /* Main content area */
