@@ -23,50 +23,42 @@ if (isset($con)) {
         $markets_result->free();
     } else {
         error_log("Error fetching markets: " . $con->error);
-        // In a production environment, you might display a user-friendly message
-        // echo "Error fetching market data. Please try again later.";
     }
 } else {
     error_log("Error: Database connection not established in add_marketprices.php.");
-    // In a production environment, you might display a user-friendly message
-    // echo "Error: System is currently undergoing maintenance. Please try again later.";
 }
 
 // Function to convert currency to USD (replace with actual conversion logic if needed)
 function convertToUSD($amount, $country) {
-    // Ensure amount is numeric
     if (!is_numeric($amount)) {
         return 0;
     }
 
-    // This is a placeholder for the actual conversion logic.
     switch ($country) {
         case 'Kenya':
-            return round($amount / 150, 2); // 1 USD = 150 KES (Example rate)
+            return round($amount / 150, 2);
         case 'Uganda':
-            return round($amount / 3700, 2); // 1 USD = 3700 UGX (Example rate)
+            return round($amount / 3700, 2);
         case 'Tanzania':
-            return round($amount / 2300, 2); // 1 USD = 2300 TZS (Example rate)
+            return round($amount / 2300, 2);
         case 'Rwanda':
-            return round($amount / 1200, 2); // 1 USD = 1200 RWF (Example rate)
+            return round($amount / 1200, 2);
         case 'Burundi':
-            return round($amount / 2000, 2); // 1 USD = 2000 BIF (Example rate)
+            return round($amount / 2000, 2);
         default:
-            return round($amount, 2); // Default to USD if country not found
+            return round($amount, 2);
     }
 }
 
-// Processing the form submission only when all fields are submitted
+// Processing the form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'])) {
-    // --- DEBUGGING: Log POST data ---
     error_log("--- Form Submission ---");
     error_log("POST data received: " . print_r($_POST, true));
-    // -----------------------------------
 
     // Initialize variables and sanitize input
     $country = isset($_POST['country']) ? mysqli_real_escape_string($con, $_POST['country']) : '';
     $market_id = isset($_POST['market']) ? (int)$_POST['market'] : 0;
-    $category_name = isset($_POST['category']) ? mysqli_real_escape_string($con, $_POST['category']) : ''; // This is the category name, not ID
+    $category_name = isset($_POST['category']) ? mysqli_real_escape_string($con, $_POST['category']) : '';
     $commodity_id = isset($_POST['commodity']) ? (int)$_POST['commodity'] : 0;
     $packaging_unit = isset($_POST['packaging_unit']) ? mysqli_real_escape_string($con, $_POST['packaging_unit']) : '';
     $measuring_unit = isset($_POST['measuring_unit']) ? mysqli_real_escape_string($con, $_POST['measuring_unit']) : '';
@@ -75,11 +67,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
     $wholesale_price = isset($_POST['wholesale_price']) ? (float)$_POST['wholesale_price'] : 0;
     $retail_price = isset($_POST['retail_price']) ? (float)$_POST['retail_price'] : 0;
 
-    // Validate required fields (variety and data_source are now optional in PHP based on NULLable columns)
+    // Validate required fields
     if (empty($country) || $market_id <= 0 || empty($category_name) || $commodity_id <= 0 ||
         empty($packaging_unit) || empty($measuring_unit) ||
         $wholesale_price <= 0 || $retail_price <= 0) {
-        echo "<script>alert('Please fill all required fields with valid values (except Variety and Data Source which are optional).'); window.history.back();</script>";
+        echo "<script>alert('Please fill all required fields with valid values.'); window.history.back();</script>";
         exit;
     }
 
@@ -90,7 +82,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
     $month = date('m');
     $year = date('Y');
     $subject = "Market Prices";
-    $country_admin_0 = $country; // Assuming this maps to country
+    $country_admin_0 = $country;
 
     // Convert prices to USD
     $wholesale_price_usd = convertToUSD($wholesale_price, $country);
@@ -120,20 +112,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
     }
     $stmt_commodity->close();
 
-    // Prepare and execute the SQL query using prepared statements for security
-    // Note: The 'category' column in market_prices stores the name, not ID.
-    // 'commodity' column stores the name, not ID.
+    // Fixed SQL query - using commodity_name instead of commodity_id
     $sql = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'Wholesale', ?, ?, ?, ?, ?, ?, ?, ?, ?),
                    (?, ?, ?, ?, ?, ?, ?, 'Retail', ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     $stmt = $con->prepare($sql);
     if ($stmt) {
-        // CORRECTED LINE from previous debugging: The type definition string now accurately matches the 32 bind variables.
+        // Fixed bind_param - using commodity_name instead of commodity_id
         $stmt->bind_param(
-            "sssisssdsiiisssssssisssdsiiissss", // 16 variables * 2 rows = 32 characters
-            $category_name, $commodity_id, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $wholesale_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source,
-            $category_name, $commodity_id, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $retail_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source
+            "sssisssdsiiisssssssisssdsiiissss",
+            $category_name, $commodity_name, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $wholesale_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source,
+            $category_name, $commodity_name, $country_admin_0, $market_id, $market_name, $packaging_unit, $measuring_unit, $retail_price_usd, $subject, $day, $month, $year, $date_posted, $status, $variety, $data_source
         );
 
         if ($stmt->execute()) {
@@ -156,214 +146,486 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Add Market Price Data</title>
-    <link rel="stylesheet" href="assets/add_commodity.css" />
-    <style>
-        /* Embedding CSS directly for simplicity in this example */
-        <?php include '../base/assets/add_commodity.css'; ?>
-    </style>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <style>
         body {
-            font-family: Arial, sans-serif;
-            background-color: #f8f8f8;
+            font-family: Arial, sans-serif; /* Adjusted to your commodity page */
+            background-color: #f8f8f8; /* Adjusted to your commodity page */
+            margin: 0;
+            padding: 20px;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            margin: 0;
+            min-height: 100vh;
+            box-sizing: border-box;
         }
-        .container {
+        .container { /* Renamed from main-wrapper to container for consistency with commodity page */
             background: white;
-            padding: 60px;
-            border-radius: 8px;
-            width: 800px;
-            height: 700px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            display: flex;
+            border-radius: 8px; /* Adjusted to your commodity page */
+            max-width: 1200px; /* Increased max-width to accommodate sidebar, adjusted to your commodity page */
+            margin: 0 auto;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); /* Adjusted to your commodity page */
             position: relative;
-        }
-        h2 {
-            margin-bottom: 10px;
-        }
-        p {
-            margin-bottom: 10px;
-        }
-        form label:first-of-type {
-            margin-top: 10px;
-        }
-
-        .form-container {
             display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            height: 100%;
-        }
-
-        .form-row {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 15px;
-        }
-        .form-row .form-group {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-        }
-
-        input, select {
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 14px;
-            margin-bottom: 15px;
-        }
-
-        .next-btn {
-            background-color: rgba(180, 80, 50, 1);
-            color: white;
-            padding: 10px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            width: 100%;
-        }
-        .next-btn:hover {
-            background-color:rgba(180, 80, 50, 1);
+            min-height: 600px; /* Adjusted to your commodity page */
+            overflow: hidden;
         }
         .close-btn {
             position: absolute;
             top: 20px;
             right: 20px;
-            font-size: 30px;
+            font-size: 30px; /* Adjusted to your commodity page */
             border: none;
             background: transparent;
             cursor: pointer;
+            color: #333; /* Adjusted to your commodity page */
+            z-index: 10;
+            transition: color 0.2s ease-in-out;
+        }
+        .close-btn:hover {
+            color: rgba(180, 80, 50, 1);
+        }
+
+        /* Left sidebar for steps */
+        .steps-sidebar {
+            width: 250px; /* Adjusted to your commodity page */
+            background-color: #f8f9fa; /* Adjusted to your commodity page */
+            padding: 40px 30px;
+            border-radius: 8px 0 0 8px; /* Adjusted to your commodity page */
+            border-right: 1px solid #e9ecef; /* Adjusted to your commodity page */
+            position: relative;
+            flex-shrink: 0;
+            color: #333; /* Adjusted for consistency */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .steps-sidebar h3 {
+            color: #333; /* Adjusted for consistency */
+            margin-bottom: 30px;
+            font-size: 18px; /* Adjusted to your commodity page */
+            font-weight: bold;
+            text-align: left; /* Aligned left for consistency */
+        }
+        .steps-container {
+            position: relative;
+            padding-left: 0; /* Adjusted for consistency */
+        }
+        /* Vertical connecting line */
+        .steps-container::before {
+            content: '';
+            position: absolute;
+            left: 22.5px; /* Adjusted to your commodity page */
+            top: 45px; /* Adjusted to your commodity page */
+            bottom: 0;
+            width: 2px;
+            background-color: #e9ecef; /* Adjusted to your commodity page */
+            z-index: 1;
+            display: block; /* Ensure it's visible */
+        }
+        .step {
+            display: flex;
+            align-items: center;
+            margin-bottom: 60px; /* Adjusted to your commodity page */
+            position: relative;
+            z-index: 2;
+        }
+        .step:last-child {
+            margin-bottom: 0;
+        }
+        .step-circle {
+            width: 45px; /* Adjusted to your commodity page */
+            height: 45px; /* Adjusted to your commodity page */
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-right: 15px; /* Adjusted to your commodity page */
+            font-size: 16px; /* Adjusted to your commodity page */
+            font-weight: bold;
+            background-color: #e9ecef; /* Adjusted to your commodity page */
+            color: #6c757d; /* Adjusted to your commodity page */
+            position: relative;
+            flex-shrink: 0;
+            border: none; /* No border for consistency */
+        }
+        .step-circle.active {
+            background-color: rgba(180, 80, 50, 1); /* Adjusted to your commodity page */
+            color: white; /* Adjusted to your commodity page */
+            box-shadow: none; /* No extra shadow for consistency */
+        }
+        .step-circle.active::after {
+            content: ''; /* No checkmark for current active step */
+        }
+        .step-circle[data-step]::after {
+            content: attr(data-step); /* Display step number */
+        }
+        .step-text {
+            font-weight: 500; /* Adjusted to your commodity page */
+            color: #6c757d; /* Adjusted to your commodity page */
+        }
+        .step.active .step-text {
+            color: rgba(180, 80, 50, 1); /* Adjusted to your commodity page */
+            font-weight: bold;
+        }
+
+        /* Main content area */
+        .main-content {
+            flex: 1;
+            padding: 40px;
+        }
+        h2 {
+            margin-bottom: 10px; /* Adjusted to your commodity page */
+            color: #333; /* Adjusted to your commodity page */
+            font-size: 2rem; /* Kept from previous for better heading size */
+        }
+        p {
+            margin-bottom: 30px; /* Adjusted to your commodity page */
+            color: #666; /* Adjusted to your commodity page */
+            font-size: 1.1em; /* Kept from previous for better paragraph size */
+        }
+
+        /* Form styling */
+        .form-group-full { /* Added for full width elements */
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 20px; /* Adjusted to your commodity page */
+        }
+        .form-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px; /* Adjusted to your commodity page */
+        }
+        .form-row > .form-group {
+            flex: 1;
+            display: flex; /* Ensure labels and inputs stack */
+            flex-direction: column;
+            margin-bottom: 0; /* Override default margin-bottom */
+        }
+        label {
+            margin-bottom: 8px; /* Adjusted to your commodity page */
+            font-weight: bold; /* Adjusted to your commodity page */
+            color: #333; /* Adjusted to your commodity page */
+        }
+        .required::after {
+            content: " *";
+            color: #dc3545;
+            margin-left: 4px; /* Added for spacing */
+        }
+        input[type="text"],
+        input[type="number"], /* Added number type */
+        input[type="email"],
+        input[type="tel"],
+        input[type="password"],
+        select {
+            padding: 10px; /* Adjusted to your commodity page */
+            border: 1px solid #ccc; /* Adjusted to your commodity page */
+            border-radius: 5px; /* Adjusted to your commodity page */
+            font-size: 14px; /* Adjusted to your commodity page */
+            margin-bottom: 0;
+            height: auto; /* Allow height to adjust */
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: rgba(180, 80, 50, 0.5); /* Adjusted to your commodity page */
+            box-shadow: 0 0 5px rgba(180, 80, 50, 0.3); /* Adjusted to your commodity page */
+        }
+        input[readonly] {
+            background-color: #e9ecef; /* Lighter background for readonly fields */
+            opacity: 1;
+            color: #6c757d;
+            cursor: not-allowed;
+        }
+
+        /* Navigation buttons */
+        .button-container {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 30px; /* Adjusted to your commodity page */
+        }
+        .next-btn {
+            background-color: rgba(180, 80, 50, 1);
+            color: white;
+            padding: 12px 30px; /* Adjusted to your commodity page */
+            border: none;
+            border-radius: 5px; /* Adjusted to your commodity page */
+            cursor: pointer;
+            font-size: 16px; /* Adjusted to your commodity page */
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+        }
+        .next-btn:hover {
+            background-color: rgba(160, 60, 30, 1); /* Adjusted to your commodity page */
+            transform: translateY(-2px);
+        }
+        .next-btn:active {
+            transform: translateY(0);
+        }
+
+        /* Select2 customization to fit Bootstrap form-control height */
+        .select2-container--default .select2-selection--single {
+            height: auto; /* Allow height to adjust based on padding */
+            padding: 10px; /* Match standard input padding */
+            border: 1px solid #ccc; /* Match standard input border */
+            border-radius: 5px; /* Match standard input border-radius */
+            font-size: 14px; /* Match standard input font size */
+            transition: all 0.2s ease-in-out;
+            box-shadow: none; /* Remove default Select2 shadow */
+            display: flex;
+            align-items: center;
+        }
+        .select2-container--default .select2-selection--single .select2-selection__rendered {
+            line-height: normal; /* Reset line-height */
+            padding: 0; /* Remove internal padding */
             color: #333;
+        }
+        .select2-container--default .select2-selection--single .select2-selection__arrow {
+            height: auto; /* Allow height to adjust */
+            top: 50%;
+            transform: translateY(-50%);
+            right: 10px;
+        }
+        .select2-container--default .select2-selection--single .select2-selection__placeholder {
+            color: #6c757d;
+        }
+        .select2-container--default.select2-container--focus .select2-selection--single,
+        .select2-container--default.select2-container--open .select2-selection--single {
+            border-color: rgba(180, 80, 50, 0.5); /* Match focus style */
+            box-shadow: 0 0 5px rgba(180, 80, 50, 0.3); /* Match focus style */
+        }
+        /* Style for Select2 dropdown results */
+        .select2-container--default .select2-results__option--highlighted.select2-results__option--selectable {
+            background-color: rgba(180, 80, 50, 0.9);
+            color: white;
+        }
+        .select2-container--default .select2-results__option--selected {
+            background-color: #f8f9fa;
+            color: #495057;
+        }
+
+
+        /* Responsive design */
+        @media (max-width: 768px) { /* Adjusted breakpoint for consistency */
+            .container {
+                flex-direction: column;
+                margin: 10px;
+            }
+            .steps-sidebar {
+                width: 100%;
+                border-radius: 8px 8px 0 0;
+                border-right: none;
+                border-bottom: 1px solid #e9ecef;
+                padding: 20px;
+            }
+            .steps-container {
+                display: flex;
+                justify-content: center;
+                gap: 30px;
+            }
+            .steps-container::before {
+                display: none;
+            }
+            .step {
+                margin-bottom: 0;
+                flex-direction: column;
+                text-align: center;
+            }
+            .step-circle {
+                margin-right: 0;
+                margin-bottom: 10px;
+            }
+            .main-content {
+                padding: 20px;
+            }
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+            .form-row > .form-group {
+                margin-bottom: 20px; /* Restore margin when stacked */
+            }
+            .next-btn {
+                width: 100%;
+                margin-right: auto;
+                margin-left: auto; /* Center button */
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
-        <div class="steps">
-            <div class="step">
-                <div class="step-circle active"></div>
-                <span>Step 1</span>
-            </div>
+
+        <div class="steps-sidebar">
+            <h3>Progress</h3>
+            <div class="steps-container">
+                <div class="step completed">
+                    <div class="step-circle completed" data-step="1"></div>
+                    <div class="step-text">Step 1<br><small>Market Prices</small></div>
+                </div>
+                </div>
         </div>
-        <div class="form-container">
-            <h2>Add Market Price Data</h2>
-            <p>Provide the details below to Add Market Price Data</p>
+
+        <div class="main-content">
+            <h2>Add New Market Price</h2>
+            <p>Please provide the details below to add new market price data.</p>
             <form method="POST" action="">
-                <label for="country">Country *</label>
-                <select name="country" id="country" required>
-                    <option value="Kenya">Kenya</option>
-                    <option value="Uganda">Uganda</option>
-                    <option value="Tanzania">Tanzania</option>
-                    <option value="Rwanda">Rwanda</option>
-                    <option value="Burundi">Burundi</option>
-                </select>
+                <div class="form-group-full">
+                    <label for="country" class="form-label required">Country</label>
+                    <select name="country" id="country" class="form-select" required>
+                        <option value="Kenya">Kenya</option>
+                        <option value="Uganda">Uganda</option>
+                        <option value="Tanzania">Tanzania</option>
+                        <option value="Rwanda">Rwanda</option>
+                        <option value="Burundi">Burundi</option>
+                    </select>
+                </div>
 
-                <label for="market">Market *</label>
-                <select name="market" id="market" required>
-                    <?php if (empty($markets)): ?>
-                        <option value="" disabled>No markets available</option>
-                    <?php else: ?>
-                        <option value="" disabled selected>Select Market</option>
-                        <?php foreach ($markets as $market): ?>
-                            <option value="<?php echo htmlspecialchars($market['id']); ?>">
-                                <?php echo htmlspecialchars($market['market_name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </select>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="category">Category *</label>
-                        <select name="category" id="category" required>
-                            <option value="" disabled selected>Select Category</option>
-                            <option value="Cereals">Cereals</option>
-                            <option value="Pulses">Pulses</option>
-                            <option value="Oil seeds">Oil Seeds</option>
-                            </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="commodity">Commodity *</label>
-                        <select name="commodity" id="commodity" required>
-                            <option value="" disabled selected>Select Commodity</option>
-                            </select>
-                    </div>
+                <div class="form-group-full">
+                    <label for="market" class="form-label required">Market</label>
+                    <select name="market" id="market" class="form-select" required>
+                        <?php if (empty($markets)): ?>
+                            <option value="" disabled>No markets available</option>
+                        <?php else: ?>
+                            <option value="" disabled selected>Select Market</option>
+                            <?php foreach ($markets as $market): ?>
+                                <option value="<?php echo htmlspecialchars($market['id']); ?>">
+                                    <?php echo htmlspecialchars($market['market_name']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </select>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="packaging_unit">Packaging Unit *</label>
-                        <input type="text" name="packaging_unit" id="packaging_unit"
-                               value="<?php echo isset($_POST['packaging_unit']) ? htmlspecialchars($_POST['packaging_unit']) : ''; ?>" required>
+                        <label for="category" class="form-label required">Category</label>
+                        <select name="category" id="category" class="form-select" required>
+                            <option value="" disabled selected>Select Category</option>
+                            <option value="Cereals">Cereals</option>
+                            <option value="Pulses">Pulses</option>
+                            <option value="Oil seeds">Oil Seeds</option>
+                             <option value="Vegetables">Vegetables</option>
+                            <option value="Fruits">Fruits</option>
+                            <option value="Livestock">Livestock</option>
+                        </select>
                     </div>
                     <div class="form-group">
-                        <label for="measuring_unit">Measuring Unit *</label>
-                        <select name="measuring_unit" id="measuring_unit" required>
-                            <option value="" disabled selected>Select Unit</option>
-                            <option value="kg" <?php echo (isset($_POST['measuring_unit']) && $_POST['measuring_unit'] == 'kg') ? 'selected' : ''; ?>>Kilograms (kg)</option>
-                            <option value="tons" <?php echo (isset($_POST['measuring_unit']) && $_POST['measuring_unit'] == 'tons') ? 'selected' : ''; ?>>Tons</option>
+                        <label for="commodity" class="form-label required">Commodity</label>
+                        <select name="commodity" id="commodity" class="form-select" required>
+                            <option value="" disabled selected>Select Market first</option>
                         </select>
                     </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="variety">Variety *</label>
-                        <input type="text" name="variety" id="variety"
-                               value="<?php echo isset($_POST['variety']) ? htmlspecialchars($_POST['variety']) : ''; ?>"> </div>
+                        <label for="packaging_unit" class="form-label required">Packaging Unit</label>
+                        <input type="text" name="packaging_unit" id="packaging_unit" class="form-control" required readonly>
+                    </div>
                     <div class="form-group">
-                        <label for="data_source">Data Source *</label>
-                        <input type="text" name="data_source" id="data_source"
-                               value="<?php echo isset($_POST['data_source']) ? htmlspecialchars($_POST['data_source']) : ''; ?>"> </div>
+                        <label for="measuring_unit" class="form-label required">Measuring Unit</label>
+                        <input type="text" name="measuring_unit" id="measuring_unit" class="form-control" required readonly>
+                    </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="wholesale_price">Wholesale Price *</label>
-                        <input type="number" step="0.01" name="wholesale_price" id="wholesale_price"
-                               value="<?php echo isset($_POST['wholesale_price']) ? htmlspecialchars($_POST['wholesale_price']) : ''; ?>"
-                               placeholder="e.g., 150.00" required>
+                        <label for="variety" class="form-label">Variety</label>
+                        <input type="text" name="variety" id="variety" class="form-control" readonly>
                     </div>
                     <div class="form-group">
-                        <label for="retail_price">Retail Price *</label>
-                        <input type="number" step="0.01" name="retail_price" id="retail_price"
-                               value="<?php echo isset($_POST['retail_price']) ? htmlspecialchars($_POST['retail_price']) : ''; ?>"
-                               placeholder="e.g., 180.50" required>
+                        <label for="data_source" class="form-label">Data Source</label>
+                        <input type="text" name="data_source" id="data_source" class="form-control" readonly>
                     </div>
                 </div>
 
-                <button type="submit" name="submit" class="next-btn">Done →</button>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="wholesale_price" class="form-label required">Wholesale Price</label>
+                        <input type="number" step="0.01" name="wholesale_price" id="wholesale_price"
+                               placeholder="e.g., 150.00" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="retail_price" class="form-label required">Retail Price</label>
+                        <input type="number" step="0.01" name="retail_price" id="retail_price"
+                               placeholder="e.g., 180.50" class="form-control" required>
+                    </div>
+                </div>
+
+                <div class="button-container">
+                    <button type="submit" name="submit" class="next-btn">
+                        Add Market Price <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
             </form>
         </div>
     </div>
-<script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const marketSelect = document.getElementById('market');
-            const commoditySelect = document.getElementById('commodity');
-            const categorySelect = document.getElementById('category');
-            const dataSourceInput = document.getElementById('data_source');
 
-            // Store fetched commodities data to easily look up category/data_source when commodity changes
-            let currentMarketCommodities = []; 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script>
+        // Initialize Select2 on your select elements
+        $(document).ready(function() {
+            $('#country').select2({
+                placeholder: "Select Country",
+                allowClear: true,
+                width: '100%' // Added for consistency
+            });
+            $('#market').select2({
+                placeholder: "Select Market",
+                allowClear: true,
+                width: '100%' // Added for consistency
+            });
+            $('#category').select2({
+                placeholder: "Select Category",
+                allowClear: true,
+                width: '100%' // Added for consistency
+            });
+            $('#commodity').select2({
+                placeholder: "Select Commodity",
+                allowClear: true,
+                width: '100%' // Added for consistency
+            });
+
+            // Initial call if a market is pre-selected (e.g., after form submission error)
+            if ($('#market').val()) {
+                loadCommoditiesForMarket($('#market').val());
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const dataSourceInput = document.getElementById('data_source');
+            const packagingUnitInput = document.getElementById('packaging_unit');
+            const measuringUnitInput = document.getElementById('measuring_unit');
+            const varietyInput = document.getElementById('variety');
+
+            let currentMarketCommodities = [];
 
             function loadCommoditiesForMarket(marketId) {
-                // Reset commodity dropdown and auto-filled fields
-                commoditySelect.innerHTML = '<option value="" disabled selected>Loading commodities...</option>'; // Changed text
-                categorySelect.value = ""; // Clear selected category
-                dataSourceInput.value = ''; // Clear data source
-                currentMarketCommodities = []; // Clear stored data
+                // Clear and reset Select2 for commodity
+                $('#commodity').empty().append('<option value="" disabled selected>Loading commodities...</option>').trigger('change');
+                // Clear and reset Select2 for category
+                $('#category').val(null).trigger('change');
+                dataSourceInput.value = '';
+                packagingUnitInput.value = '';
+                measuringUnitInput.value = '';
+                varietyInput.value = '';
+                currentMarketCommodities = [];
 
                 if (!marketId) {
-                    commoditySelect.innerHTML = '<option value="" disabled selected>Select Market first</option>';
+                    $('#commodity').empty().append('<option value="" disabled selected>Select Market first</option>').trigger('change');
                     return;
                 }
 
-                fetch(`../data/get_commodities_by_market.php?market_id=${marketId}`)
+                fetch(`get_market_commodities.php?market_id=${marketId}`)
                     .then(response => {
                         if (!response.ok) {
                             throw new Error(`HTTP error! status: ${response.status}`);
@@ -371,102 +633,85 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
                         return response.json();
                     })
                     .then(data => {
-                        commoditySelect.innerHTML = '<option value="" disabled selected>Select Commodity</option>';
-                        if (data.success && data.data && data.data.length > 0) {
-                            currentMarketCommodities = data.data; // Store all commodities returned
+                        // Clear existing options before adding new ones
+                        $('#commodity').empty().append('<option value="" disabled selected>Select Commodity</option>');
+                        
+                        if (data.success && data.data && data.data.commodities && data.data.commodities.length > 0) {
+                            currentMarketCommodities = data.data.commodities;
                             
                             // Populate commodity dropdown
-                            data.data.forEach(commodity => {
-                                const option = document.createElement('option');
-                                option.value = commodity.commodity_id;
-                                option.textContent = commodity.commodity_name;
-                                commoditySelect.appendChild(option);
+                            data.data.commodities.forEach(commodity => {
+                                const option = new Option(commodity.name, commodity.id, false, false);
+                                $('#commodity').append(option);
                             });
 
-                            // Auto-select the first commodity if only one is returned, or if desired
-                            // For Rongai, this will populate with both 34 and 35
-                            if (data.data.length > 0) { // Check if any commodities are loaded
-                                commoditySelect.value = data.data[0].commodity_id; // Select the first one by default
-                                setCategoryAndDataSourceForCommodity(data.data[0].commodity_id);
+                            // Set data source from market
+                            if (data.data.data_source) {
+                                dataSourceInput.value = data.data.data_source;
                             }
 
                         } else {
-                            commoditySelect.innerHTML = '<option value="" disabled selected>No commodities found for this market</option>';
+                            $('#commodity').append('<option value="" disabled selected>No commodities found for this market</option>');
                             if (data.message) {
                                 console.warn("Server message:", data.message);
                             }
                         }
+                        // Trigger Select2 to update its visual display after options are loaded
+                        $('#commodity').trigger('change');
                     })
                     .catch(error => {
                         console.error('Error fetching commodities:', error);
-                        commoditySelect.innerHTML = '<option value="" disabled selected>Error loading commodities</option>';
+                        $('#commodity').empty().append('<option value="" disabled selected>Error loading commodities</option>').trigger('change');
                     });
             }
 
-            function setCategoryAndDataSourceForCommodity(commodityId) {
-                categorySelect.value = ""; // Reset before setting
-                dataSourceInput.value = ''; // Reset before setting
+            function setCommodityDetails(commodityId) {
+                // Clear and reset Select2 for category
+                $('#category').val(null).trigger('change');
+                packagingUnitInput.value = '';
+                measuringUnitInput.value = '';
+                varietyInput.value = '';
 
                 if (!commodityId) {
-                    return; // No commodity selected
+                    return;
                 }
 
-                // Find the selected commodity's details from the `currentMarketCommodities` array
+                // Find the selected commodity's details
                 const selectedCommodity = currentMarketCommodities.find(
-                    commodity => String(commodity.commodity_id) === String(commodityId)
+                    commodity => String(commodity.id) === String(commodityId)
                 );
 
                 if (selectedCommodity) {
-                    // Set Category dropdown based on 'category_name' from fetched data
-                    if (selectedCommodity.category_name) {
-                        const dbCategory = selectedCommodity.category_name.trim();
-                        let foundCategory = false;
-                        for (let i = 0; i < categorySelect.options.length; i++) {
-                            const option = categorySelect.options[i];
-                            if (option.value.trim() === dbCategory || option.textContent.trim() === dbCategory) {
-                                option.selected = true;
-                                foundCategory = true;
-                                break;
-                            }
-                        }
-                        if (!foundCategory) {
-                            console.warn(`Category "${dbCategory}" from selected commodity is not a predefined option in the form.`);
-                            categorySelect.value = ""; 
-                        }
-                    } else {
-                        console.log("No category_name found for this commodity in fetched data.");
-                        categorySelect.value = ""; 
+                    // Set variety
+                    if (selectedCommodity.variety) {
+                        varietyInput.value = selectedCommodity.variety;
                     }
 
-                    // Set Data Source input field based on 'data_source' from fetched data
-                    if (selectedCommodity.data_source) {
-                       dataSourceInput.value = selectedCommodity.data_source.trim();
-                    } else {
-                       console.log("No data source found for this commodity from markets table.");
-                       dataSourceInput.value = ''; 
+                    // Set packaging unit and measuring unit from units array
+                    if (selectedCommodity.units && selectedCommodity.units.length > 0) {
+                        const unit = selectedCommodity.units[0]; // Use first unit
+                        packagingUnitInput.value = unit.size;
+                        measuringUnitInput.value = unit.unit;
+                    }
+
+                    // Set category if available in selectedCommodity (assuming your get_market_commodities.php provides it)
+                    if (selectedCommodity.category_name) {
+                        // Use Select2's method to set value and trigger change
+                        $('#category').val(selectedCommodity.category_name).trigger('change');
                     }
                 } else {
                     console.warn(`Commodity with ID ${commodityId} not found in fetched list.`);
                 }
             }
 
-
-            // Event listener for when the market selection changes
-            marketSelect.addEventListener('change', function() {
-                loadCommoditiesForMarket(this.value);
+            // Event listeners - use jQuery for Select2-managed elements for consistency
+            $('#market').on('change', function() {
+                loadCommoditiesForMarket($(this).val());
             });
 
-            // Event listener for when the commodity selection changes
-            commoditySelect.addEventListener('change', function() {
-                setCategoryAndDataSourceForCommodity(this.value);
+            $('#commodity').on('change', function() {
+                setCommodityDetails($(this).val());
             });
-
-            // Initial load: If a market was pre-selected (e.g., after a form submission error)
-            if (marketSelect.value) {
-                loadCommoditiesForMarket(marketSelect.value);
-            } else {
-                commoditySelect.innerHTML = '<option value="" disabled selected>Select Market first</option>';
-            }
         });
     </script>
 </body>
