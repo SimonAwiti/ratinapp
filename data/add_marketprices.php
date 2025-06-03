@@ -657,12 +657,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
                     <div class="form-group">
                         <label for="wholesale_price" class="form-label required">Wholesale Price</label>
                         <input type="number" step="0.01" name="wholesale_price" id="wholesale_price"
-                               placeholder="e.g., 150.00" class="form-control" required>
+                               placeholder="Enter the price for **entire packaging unit displayed above**" class="form-control" required>
                     </div>
                     <div class="form-group">
                         <label for="retail_price" class="form-label required">Retail Price</label>
                         <input type="number" step="0.01" name="retail_price" id="retail_price"
-                               placeholder="e.g., 180.50" class="form-control" required>
+                               placeholder="Enter the price **per measuring unit** " class="form-control" required>
                     </div>
                 </div>
 
