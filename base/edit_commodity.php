@@ -432,8 +432,15 @@ if ($result_cat) {
                     <?php
                     if (!empty($commodity_units_decoded)) {
                         foreach ($commodity_units_decoded as $index => $unit_data) {
-                            $size_val = htmlspecialchars($unit_data['size'] ?? '');
-                            $unit_val = htmlspecialchars($unit_data['unit'] ?? '');
+                            // Ensure $unit_data is an array and handle potential string values
+                            if (is_array($unit_data)) {
+                                $size_val = htmlspecialchars($unit_data['size'] ?? '');
+                                $unit_val = htmlspecialchars($unit_data['unit'] ?? '');
+                            } else {
+                                // Handle case where unit_data might be a string
+                                $size_val = '';
+                                $unit_val = is_string($unit_data) ? htmlspecialchars($unit_data) : '';
+                            }
                             echo '
                             <div class="dynamic-group">
                                 <div>
@@ -483,8 +490,18 @@ if ($result_cat) {
                     $max_entries = max(count($commodity_aliases_decoded), count($countries_decoded));
                     if ($max_entries > 0) {
                         for ($i = 0; $i < $max_entries; $i++) {
-                            $alias_val = htmlspecialchars($commodity_aliases_decoded[$i] ?? '');
-                            $country_val = htmlspecialchars($countries_decoded[$i] ?? '');
+                            // Ensure we're working with strings, not arrays
+                            $alias_val = '';
+                            $country_val = '';
+                            
+                            if (isset($commodity_aliases_decoded[$i])) {
+                                $alias_val = is_string($commodity_aliases_decoded[$i]) ? htmlspecialchars($commodity_aliases_decoded[$i]) : '';
+                            }
+                            
+                            if (isset($countries_decoded[$i])) {
+                                $country_val = is_string($countries_decoded[$i]) ? htmlspecialchars($countries_decoded[$i]) : '';
+                            }
+                            
                             echo '<div class="dynamic-group">
                                 <div>
                                     <label>Alias</label>
