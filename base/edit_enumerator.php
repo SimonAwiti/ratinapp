@@ -5,7 +5,7 @@ include '../admin/includes/config.php'; // DB connection
 // Ensure an enumerator ID is provided for editing
 if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
     // Redirect back to the enumerators list if no valid ID is provided
-    header("Location: enumerator_boilerplate.php");
+    header("Location: sidebar.php");
     exit;
 }
 
@@ -25,14 +25,14 @@ if ($stmt) {
 } else {
     error_log("Error preparing enumerator fetch statement: " . $con->error);
     $_SESSION['error_message'] = "Error fetching enumerator data.";
-    header("Location: enumerator_boilerplate.php");
+    header("Location: sidebar.php");
     exit;
 }
 
 // If no enumerator found with that ID, redirect
 if (!$enumerator_data) {
     $_SESSION['error_message'] = "Enumerator not found.";
-    header("Location: enumerator_boilerplate.php");
+    header("Location: sidebar.php");
     exit;
 }
 

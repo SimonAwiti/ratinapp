@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($clean_ids)) {
         $_SESSION['error_message'] = 'Invalid enumerator IDs provided.';
-        header("Location: enumerator_boilerplate.php");
+        header("Location: sidebar.php");
         exit;
     }
 
@@ -52,6 +52,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $con->close();
-header("Location: enumerator_boilerplate.php"); // Always redirect back after processing
+header("Location: sidebar.php"); // Always redirect back after processing
 exit;
 ?>

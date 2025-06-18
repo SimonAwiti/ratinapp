@@ -25,7 +25,7 @@ function checkBorderExists($con, $name) {
 
 // Function to check if miller already exists
 function checkMillerExists($con, $name) {
-    $stmt = $con->prepare("SELECT id FROM millers WHERE miller_name = ?");
+    $stmt = $con->prepare("SELECT id FROM miller_details WHERE miller_name = ?");
     $stmt->bind_param("s", $name);
     $stmt->execute();
     $stmt->store_result();
