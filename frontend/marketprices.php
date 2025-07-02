@@ -776,6 +776,58 @@ foreach ($prices_data as $price) {
                     </table>
                 </div>
 
+                <div id="chart-view" style="display: none; padding: 20px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                    <div>
+                        <h4>Market Price Trends</h4>
+                        <p class="text-muted">Visual representation of price movements</p>
+                    </div>
+                    <div>
+                        <select id="chart-type-selector" class="form-select" style="width: 200px; display: inline-block;">
+                            <option value="line">Line Chart</option>
+                            <option value="bar">Bar Chart</option>
+                            <option value="combo">Combined View</option>
+                        </select>
+                        <button id="export-chart-btn" class="btn btn-sm btn-outline-secondary ms-2">
+                            <i class="fas fa-download"></i> Export
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="chart-container" style="position: relative; height:400px;">
+                            <canvas id="price-trend-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title">Price Summary</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="price-summary">
+                                    <p>Select a data point to view details</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-md-6">
+                        <div class="chart-container" style="position: relative; height:300px;">
+                            <canvas id="market-comparison-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="chart-container" style="position: relative; height:300px;">
+                            <canvas id="commodity-comparison-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
                 <?php if ($total_records > 0): ?>
                 <div class="pagination">
                     <div class="flex items-center gap-4">
@@ -832,6 +884,333 @@ foreach ($prices_data as $price) {
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+
+<script>
+// Initialize charts
+let priceTrendChart, marketComparisonChart, commodityComparisonChart;
+let currentChartType = 'line';
+
+// Function to initialize or update charts
+function initCharts(data) {
+    // Process data for charts
+    const processedData = processChartData(data);
+    
+    // Destroy existing charts if they exist
+    if (priceTrendChart) priceTrendChart.destroy();
+    if (marketComparisonChart) marketComparisonChart.destroy();
+    if (commodityComparisonChart) commodityComparisonChart.destroy();
+    
+    // Create Price Trend Chart
+    const priceTrendCtx = document.getElementById('price-trend-chart').getContext('2d');
+    priceTrendChart = new Chart(priceTrendCtx, {
+        type: currentChartType,
+        data: {
+            labels: processedData.dates,
+            datasets: processedData.trendDatasets
+        },
+        options: getTrendChartOptions()
+    });
+    
+    // Create Market Comparison Chart
+    const marketCompCtx = document.getElementById('market-comparison-chart').getContext('2d');
+    marketComparisonChart = new Chart(marketCompCtx, {
+        type: 'bar',
+        data: {
+            labels: processedData.markets,
+            datasets: [{
+                label: 'Average Price (USD)',
+                data: processedData.marketAverages,
+                backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: getComparisonChartOptions('Market')
+    });
+    
+    // Create Commodity Comparison Chart
+    const commodityCompCtx = document.getElementById('commodity-comparison-chart').getContext('2d');
+    commodityComparisonChart = new Chart(commodityCompCtx, {
+        type: 'bar',
+        data: {
+            labels: processedData.commodities,
+            datasets: [{
+                label: 'Average Price (USD)',
+                data: processedData.commodityAverages,
+                backgroundColor: 'rgba(75, 192, 192, 0.7)',
+                borderColor: 'rgba(75, 192, 192, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: getComparisonChartOptions('Commodity')
+    });
+}
+
+// Process data for charts
+function processChartData(data) {
+    // Convert PHP data to proper format if needed
+    if (typeof data === 'string') {
+        try {
+            data = JSON.parse(data);
+        } catch (e) {
+            console.error('Error parsing chart data:', e);
+            data = [];
+        }
+    }
+    
+    // Group data by date for trend chart
+    const dates = [...new Set(data.map(item => item.date_posted))].sort();
+    const markets = [...new Set(data.map(item => item.market))];
+    const commodities = [...new Set(data.map(item => item.commodity_name))];
+    
+    // Prepare trend datasets (one per commodity)
+    const trendDatasets = commodities.map(commodity => {
+        const prices = dates.map(date => {
+            const item = data.find(d => 
+                d.commodity_name === commodity && 
+                d.date_posted === date
+            );
+            return item ? parseFloat(item.Price) : null;
+        });
+        
+        return {
+            label: commodity,
+            data: prices,
+            borderColor: getRandomColor(),
+            backgroundColor: 'rgba(0, 0, 0, 0.1)',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.1
+        };
+    });
+    
+    // Calculate market averages
+    const marketAverages = markets.map(market => {
+        const marketItems = data.filter(item => item.market === market);
+        const sum = marketItems.reduce((acc, item) => acc + parseFloat(item.Price), 0);
+        return marketItems.length ? sum / marketItems.length : 0;
+    });
+    
+    // Calculate commodity averages
+    const commodityAverages = commodities.map(commodity => {
+        const commodityItems = data.filter(item => item.commodity_name === commodity);
+        const sum = commodityItems.reduce((acc, item) => acc + parseFloat(item.Price), 0);
+        return commodityItems.length ? sum / commodityItems.length : 0;
+    });
+    
+    return {
+        dates,
+        markets,
+        commodities,
+        trendDatasets,
+        marketAverages,
+        commodityAverages
+    };
+}
+
+// Chart options
+function getTrendChartOptions() {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            title: {
+                display: true,
+                text: 'Price Trends Over Time'
+            },
+            tooltip: {
+                mode: 'index',
+                intersect: false,
+                callbacks: {
+                    label: function(context) {
+                        return `${context.dataset.label}: $${context.parsed.y.toFixed(2)}`;
+                    }
+                }
+            },
+            zoom: {
+                zoom: {
+                    wheel: {
+                        enabled: true
+                    },
+                    pinch: {
+                        enabled: true
+                    },
+                    mode: 'xy'
+                },
+                pan: {
+                    enabled: true,
+                    mode: 'xy'
+                }
+            },
+            legend: {
+                position: 'top',
+                onClick: (e, legendItem, legend) => {
+                    const index = legendItem.datasetIndex;
+                    const ci = legend.chart;
+                    const meta = ci.getDatasetMeta(index);
+                    
+                    meta.hidden = meta.hidden === null ? !ci.data.datasets[index].hidden : null;
+                    ci.update();
+                }
+            }
+        },
+        scales: {
+            x: {
+                title: {
+                    display: true,
+                    text: 'Date'
+                }
+            },
+            y: {
+                title: {
+                    display: true,
+                    text: 'Price (USD)'
+                }
+            }
+        },
+        onClick: (e) => {
+            const points = priceTrendChart.getElementsAtEventForMode(
+                e, 'nearest', { intersect: true }, true
+            );
+            
+            if (points.length) {
+                const firstPoint = points[0];
+                const dataset = priceTrendChart.data.datasets[firstPoint.datasetIndex];
+                const value = dataset.data[firstPoint.index];
+                const date = priceTrendChart.data.labels[firstPoint.index];
+                
+                updatePriceSummary(dataset.label, date, value);
+            }
+        }
+    };
+}
+
+function getComparisonChartOptions(labelType) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            title: {
+                display: true,
+                text: `${labelType} Price Comparison`
+            },
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        return `Avg Price: $${context.parsed.y.toFixed(2)}`;
+                    }
+                }
+            },
+            datalabels: {
+                anchor: 'end',
+                align: 'top',
+                formatter: (value) => `$${value.toFixed(2)}`,
+                color: '#333'
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: 'Price (USD)'
+                }
+            }
+        }
+    };
+}
+
+// Helper function to generate random colors
+function getRandomColor() {
+    const letters = '0123456789ABCDEF';
+    let color = '#';
+    for (let i = 0; i < 6; i++) {
+        color += letters[Math.floor(Math.random() * 16)];
+    }
+    return color;
+}
+
+// Update price summary
+function updatePriceSummary(commodity, date, price) {
+    const summaryDiv = document.getElementById('price-summary');
+    summaryDiv.innerHTML = `
+        <h6>${commodity}</h6>
+        <p><strong>Date:</strong> ${new Date(date).toLocaleDateString()}</p>
+        <p><strong>Price:</strong> $${price.toFixed(2)}</p>
+        <p><strong>Market:</strong> ${getSelectedMarket() || 'All'}</p>
+        <p><strong>Country:</strong> ${getSelectedCountry() || 'All'}</p>
+    `;
+}
+
+// Get filter values (simplified for demonstration)
+function getSelectedMarket() {
+    return document.querySelector('[name="market"]')?.value || 'All markets';
+}
+
+function getSelectedCountry() {
+    return document.querySelector('[name="country"]')?.value || 'All countries';
+}
+
+// Tab switching functionality
+document.addEventListener('DOMContentLoaded', function() {
+    // Set up tab switching
+    const tabs = document.querySelectorAll('.view-tab');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+            // Remove active class from all tabs
+            tabs.forEach(t => t.classList.remove('active'));
+            
+            // Add active class to clicked tab
+            this.classList.add('active');
+            
+            // Show/hide appropriate views
+            if (this.textContent.includes('Table')) {
+                document.querySelector('.table-responsive-container').style.display = 'block';
+                document.getElementById('chart-view').style.display = 'none';
+            } else if (this.textContent.includes('Chart')) {
+                document.querySelector('.table-responsive-container').style.display = 'none';
+                document.getElementById('chart-view').style.display = 'block';
+                
+                // Initialize charts with current data
+                const chartData = <?php echo json_encode($prices_data); ?>;
+                initCharts(chartData);
+            } else if (this.textContent.includes('Map')) {
+                // Handle map view if needed
+                document.querySelector('.table-responsive-container').style.display = 'none';
+                document.getElementById('chart-view').style.display = 'none';
+            }
+        });
+    });
+
+    // Chart type selector
+    document.getElementById('chart-type-selector')?.addEventListener('change', function() {
+        currentChartType = this.value;
+        if (priceTrendChart) {
+            priceTrendChart.config.type = currentChartType;
+            priceTrendChart.update();
+        }
+    });
+
+    // Export chart button
+    document.getElementById('export-chart-btn')?.addEventListener('click', function() {
+        if (priceTrendChart) {
+            const link = document.createElement('a');
+            link.download = 'market-prices-chart.png';
+            link.href = priceTrendChart.toBase64Image();
+            link.click();
+        }
+    });
+
+    // Initialize charts if chart view is active by default
+    const activeTab = document.querySelector('.view-tab.active');
+    if (activeTab && activeTab.textContent.includes('Chart')) {
+        const chartData = <?php echo json_encode($prices_data); ?>;
+        initCharts(chartData);
+    }
+});
+</script>
 </body>
 </html>
