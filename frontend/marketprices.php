@@ -1,4 +1,6 @@
 <?php
+// market_prices_view.php
+
 // Include your database configuration file
 include '../admin/includes/config.php';
 
@@ -14,11 +16,19 @@ function getPricesData($con, $limit = 10, $offset = 0) {
                 p.date_posted,
                 p.status,
                 p.data_source,
-                p.supply_status
+                p.country_admin_0,
+                p.unit,
+                er.kshusd,
+                er.tshusd,
+                er.ugxusd,
+                er.rwfusd,
+                er.birrusd
             FROM
                 market_prices p
             LEFT JOIN
                 commodities c ON p.commodity = c.id
+            LEFT JOIN
+                (SELECT * FROM exchange_rates ORDER BY date DESC LIMIT 1) er ON 1=1
             ORDER BY
                 p.date_posted DESC
             LIMIT $limit OFFSET $offset";
@@ -38,7 +48,7 @@ function getPricesData($con, $limit = 10, $offset = 0) {
     return $data;
 }
 
-function getTotalPriceRecords($con){
+function getTotalPriceRecords($con) {
     $sql = "SELECT count(*) as total FROM market_prices";
     $result = $con->query($sql);
      if ($result) {
@@ -61,22 +71,6 @@ $prices_data = getPricesData($con, $limit, $offset);
 
 // Calculate total pages
 $total_pages = ceil($total_records / $limit);
-
-// Function to get status display
-function getSupplyStatusDisplay($supplyStatus) {
-    switch ($supplyStatus) {
-        case 'good':
-            return '<span class="status-dot status-approved"></span> Good';
-        case 'moderate':
-            return '<span class="status-dot status-pending"></span> Moderate';
-        case 'low':
-            return '<span class="status-dot status-unpublished"></span> Low';
-        case 'critical':
-            return '<span class="status-dot status-critical"></span> Critical';
-        default:
-            return '<span class="status-dot"></span> Unknown';
-    }
-}
 
 // Function to calculate price changes
 function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $con) {
@@ -134,7 +128,7 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
 $grouped_data = [];
 foreach ($prices_data as $price) {
     $date = date('Y-m-d', strtotime($price['date_posted']));
-    $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'] . '_' . $price['data_source'] . '_' . $price['supply_status'];
+    $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'] . '_' . $price['data_source'];
     $grouped_data[$group_key][] = $price;
 }
 ?>
@@ -145,9 +139,8 @@ foreach ($prices_data as $price) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RATIN - Market Prices</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <style>
-        /* General Body and Container */
         body {
             font-family: Arial, sans-serif;
             background-color: #f8f9fa;
@@ -181,7 +174,7 @@ foreach ($prices_data as $price) {
         }
 
         .sidebar .ratin-logo {
-            max-width: 150px; /* Adjust as needed */
+            max-width: 150px;
             height: auto;
         }
 
@@ -213,24 +206,9 @@ foreach ($prices_data as $price) {
             text-align: center;
         }
 
-        .sidebar .nav-link i.fa-chevron-down {
-            margin-right: 0;
-            width: auto;
-        }
-
         .sidebar .nav-link:hover, .sidebar .nav-link.active {
             background-color: #f5d6c6;
             color: #8B4513;
-        }
-
-        .sidebar .submenu {
-            padding-left: 10px;
-            display: none;
-        }
-
-        .rotate {
-            transform: rotate(180deg);
-            transition: transform 0.3s ease;
         }
 
         /* Header */
@@ -278,11 +256,6 @@ foreach ($prices_data as $price) {
             gap: 8px;
             font-weight: bold;
             color: #8B4513;
-        }
-
-        .user-display i {
-            font-size: 1.2em;
-            color: #6c757d;
         }
 
         /* Main Content */
@@ -341,52 +314,74 @@ foreach ($prices_data as $price) {
         .toolbar .primary:hover {
             background-color: rgba(160, 70, 40, 1);
         }
-        .toolbar .approve {
-            background-color: #218838;
-            color: white;
-        }
-        .toolbar .approve:hover {
-            background-color: #1a732f;
-        }
-        .toolbar .unpublish {
-            background-color: rgba(180, 80, 50, 1);
-            color: white;
-        }
-        .toolbar .unpublish:hover {
-            background-color: rgba(160, 70, 40, 1);
+
+        /* Improved Table Container */
+        .table-responsive-container {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 0 15px;
+            margin-bottom: 20px;
         }
 
-        /* Table styles */
+        /* Wider Table with Better Column Sizes */
         table {
             width: 100%;
-            border-collapse: collapse;
+            min-width: 1500px; /* Increased minimum width */
+            border-collapse: separate;
+            border-spacing: 0;
             font-size: 14px;
         }
+
+        /* Column Width Adjustments */
+        table th:nth-child(1), table td:nth-child(1) { width: 50px; } /* Checkbox */
+        table th:nth-child(2), table td:nth-child(2) { width: 180px; } /* Market */
+        table th:nth-child(3), table td:nth-child(3) { width: 150px; } /* Country */
+        table th:nth-child(4), table td:nth-child(4) { width: 200px; } /* Commodity */
+        table th:nth-child(5), table td:nth-child(5) { width: 120px; } /* Date */
+        table th:nth-child(6), table td:nth-child(6) { width: 120px; } /* Type */
+        table th:nth-child(7), table td:nth-child(7) { width: 100px; }  /* Unit */
+        table th:nth-child(8), table td:nth-child(8) { width: 180px; } /* Price (Local) */
+        table th:nth-child(9), table td:nth-child(9) { width: 180px; } /* Price (USD) */
+        table th:nth-child(10), table td:nth-child(10) { width: 180px; } /* Exchange Rate */
+        table th:nth-child(11), table td:nth-child(11) { width: 150px; } /* Day Change */
+        table th:nth-child(12), table td:nth-child(12) { width: 150px; } /* Month Change */
+        table th:nth-child(13), table td:nth-child(13) { width: 150px; } /* Year Change */
+        table th:nth-child(14), table td:nth-child(14) { width: 180px; } /* Data Source */
+
+        /* Table Cell Styling */
         table th, table td {
-            padding: 12px;
+            padding: 14px 16px; /* Increased padding */
             border-bottom: 1px solid #eee;
             text-align: left;
-            vertical-align: top;
-        }
-        table th {
-            background-color: #f1f1f1;
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 12px;
-            color: #666;
-        }
-        table tr:nth-child(even) {
-            background-color: #fafafa;
-        }
-        table tr:hover {
-            background-color: #f5f5f5;
+            vertical-align: middle;
+            white-space: nowrap;
         }
 
-        /* Checkbox styling */
-        .checkbox {
-            width: 16px;
-            height: 16px;
-            cursor: pointer;
+        /* Sticky Header with Shadow */
+        table th {
+            position: sticky;
+            top: 0;
+            background-color: #f1f1f1;
+            z-index: 10;
+            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.1);
+            font-size: 13px;
+        }
+
+        /* Horizontal Scrollbar Styling */
+        .table-responsive-container::-webkit-scrollbar {
+            height: 10px;
+        }
+        .table-responsive-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+        .table-responsive-container::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+        }
+        .table-responsive-container::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
         }
 
         /* Price Change Display */
@@ -399,25 +394,11 @@ foreach ($prices_data as $price) {
             font-weight: bold;
         }
 
-        /* Status Dots (Supply Status) */
-        .status-dot {
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            margin-right: 6px;
-        }
-        .status-approved {
-            background-color: #28a745;
-        }
-        .status-pending {
-            background-color: #ffc107;
-        }
-        .status-unpublished {
-            background-color: #6c757d;
-        }
-        .status-critical {
-            background-color: #dc3545;
+        /* Checkbox styling */
+        .checkbox {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
         }
 
         /* Pagination styles */
@@ -501,6 +482,20 @@ foreach ($prices_data as $price) {
         .view-tab.active {
             color: #8B4513;
             border-bottom-color: #8B4513;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100%;
+                position: relative;
+                margin-left: 0;
+            }
+            .header-container, .main-content {
+                margin-left: 0;
+            }
+            .filter-section > div {
+                grid-template-columns: 1fr !important;
+            }
         }
     </style>
 </head>
@@ -667,7 +662,7 @@ foreach ($prices_data as $price) {
                     </button>
                 </div>
 
-                <div style="overflow-x: auto;">
+                <div class="table-responsive-container">
                     <table>
                         <thead>
                             <tr>
@@ -677,11 +672,13 @@ foreach ($prices_data as $price) {
                                 <th>Commodity</th>
                                 <th>Date</th>
                                 <th>Type</th>
-                                <th>Price</th>
+                                <th>Unit</th>
+                                <th>Price (Local)</th>
+                                <th>Price (USD)</th>
+                                <th>Exchange Rate</th>
                                 <th>Day Change(%)</th>
                                 <th>Month Change(%)</th>
                                 <th>Year Change(%)</th>
-                                <th>Supply Status</th>
                                 <th>Data Source</th>
                             </tr>
                         </thead>
@@ -701,6 +698,44 @@ foreach ($prices_data as $price) {
                                         $dayChangeClass = $dayChange >= 0 ? 'change-positive' : 'change-negative';
                                         $monthChangeClass = $monthChange >= 0 ? 'change-positive' : 'change-negative';
                                         $yearChangeClass = $yearChange >= 0 ? 'change-positive' : 'change-negative';
+                                        
+                                        // Determine currency and exchange rate based on country
+                                        $currency = '';
+                                        $exchangeRate = 1;
+                                        $localPrice = $price['Price'];
+                                        $usdPrice = $price['Price'];
+                                        
+                                        switch(strtolower($price['country_admin_0'])) {
+                                            case 'kenya':
+                                                $currency = 'KES';
+                                                $exchangeRate = $price['kshusd'] ?? 1;
+                                                $localPrice = $price['Price'] * $exchangeRate;
+                                                break;
+                                            case 'tanzania':
+                                                $currency = 'TSH';
+                                                $exchangeRate = $price['tshusd'] ?? 1;
+                                                $localPrice = $price['Price'] * $exchangeRate;
+                                                break;
+                                            case 'uganda':
+                                                $currency = 'UGX';
+                                                $exchangeRate = $price['ugxusd'] ?? 1;
+                                                $localPrice = $price['Price'] * $exchangeRate;
+                                                break;
+                                            case 'rwanda':
+                                                $currency = 'RWF';
+                                                $exchangeRate = $price['rwfusd'] ?? 1;
+                                                $localPrice = $price['Price'] * $exchangeRate;
+                                                break;
+                                            case 'ethiopia':
+                                                $currency = 'ETB';
+                                                $exchangeRate = $price['birrusd'] ?? 1;
+                                                $localPrice = $price['Price'] * $exchangeRate;
+                                                break;
+                                            default:
+                                                $currency = 'USD';
+                                                $exchangeRate = 1;
+                                                $localPrice = $price['Price'];
+                                        }
                             ?>
                             <tr>
                                 <?php if ($first_row): ?>
@@ -711,17 +746,19 @@ foreach ($prices_data as $price) {
                                                class="checkbox" />
                                     </td>
                                     <td rowspan="<?php echo count($prices_in_group); ?>" style="font-weight: 500;"><?php echo htmlspecialchars($price['market']); ?></td>
-                                    <td rowspan="<?php echo count($prices_in_group); ?>">Kenya</td>
+                                    <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['country_admin_0']); ?></td>
                                     <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
                                     <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('d/m/Y', strtotime($price['date_posted'])); ?></td>
                                 <?php endif; ?>
                                 <td><?php echo htmlspecialchars($price['price_type']); ?></td>
-                                <td style="font-weight: 600;"><?php echo htmlspecialchars($price['Price']); ?></td>
+                                <td><?php echo htmlspecialchars($price['unit']); ?></td>
+                                <td style="font-weight: 600;"><?php echo number_format($localPrice, 2); ?> <?php echo $currency; ?></td>
+                                <td style="font-weight: 600;">$<?php echo number_format($usdPrice, 2); ?></td>
+                                <td><?php echo number_format($exchangeRate, 2); ?> <?php echo $currency; ?>/USD</td>
                                 <td class="<?php echo $dayChangeClass; ?>"><?php echo $dayChange >= 0 ? '+' : ''; ?><?php echo $dayChange; ?>%</td>
                                 <td class="<?php echo $monthChangeClass; ?>"><?php echo $monthChange >= 0 ? '+' : ''; ?><?php echo $monthChange; ?>%</td>
                                 <td class="<?php echo $yearChangeClass; ?>"><?php echo $yearChange >= 0 ? '+' : ''; ?><?php echo $yearChange; ?>%</td>
                                 <?php if ($first_row): ?>
-                                    <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo getSupplyStatusDisplay($price['supply_status']); ?></td>
                                     <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['data_source']); ?></td>
                                 <?php endif; ?>
                             </tr>
@@ -730,7 +767,7 @@ foreach ($prices_data as $price) {
                                 endforeach;
                                 endforeach;
                             } else {
-                                echo '<tr><td colspan="12" style="text-align: center; padding: 20px;">No market prices data found</td></tr>';
+                                echo '<tr><td colspan="14" style="text-align: center; padding: 20px;">No market prices data found</td></tr>';
                             }
                             ?>
                         </tbody>
@@ -794,30 +831,5 @@ foreach ($prices_data as $price) {
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-    function toggleSubmenu(submenuId, element) {
-        let submenu = document.getElementById(submenuId);
-        let icon = element.querySelector("i.fa-chevron-down");
-        
-        if (submenu.style.display === "block") {
-            submenu.style.display = "none";
-            icon.classList.remove("rotate");
-        } else {
-            submenu.style.display = "block";
-            icon.classList.add("rotate");
-        }
-        
-        let parentContainer = element.closest('.submenu') || document.querySelector('.sidebar');
-        parentContainer.querySelectorAll('.submenu').forEach(otherSubmenu => {
-            if (otherSubmenu.id !== submenuId && otherSubmenu !== submenu.parentElement) {
-                otherSubmenu.style.display = "none";
-                let otherIcon = otherSubmenu.previousElementSibling?.querySelector("i.fa-chevron-down");
-                if (otherIcon) otherIcon.classList.remove("rotate");
-            }
-        });
-        
-        return false;
-    }
-</script>
 </body>
 </html>
