@@ -29,6 +29,8 @@ function getPricesData($con, $limit = 10, $offset = 0) {
                 commodities c ON p.commodity = c.id
             LEFT JOIN
                 (SELECT * FROM exchange_rates ORDER BY date DESC LIMIT 1) er ON 1=1
+            WHERE
+                p.status IN ('published', 'approved')  
             ORDER BY
                 p.date_posted DESC
             LIMIT $limit OFFSET $offset";
