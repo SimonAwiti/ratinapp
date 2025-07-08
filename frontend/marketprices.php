@@ -329,35 +329,48 @@ foreach ($prices_data as $price) {
         /* Wider Table with Better Column Sizes */
         table {
             width: 100%;
-            min-width: 1500px; /* Increased minimum width */
+            min-width: 1500px;
             border-collapse: separate;
             border-spacing: 0;
             font-size: 14px;
         }
 
         /* Column Width Adjustments */
-        table th:nth-child(1), table td:nth-child(1) { width: 50px; } /* Checkbox */
-        table th:nth-child(2), table td:nth-child(2) { width: 180px; } /* Market */
-        table th:nth-child(3), table td:nth-child(3) { width: 150px; } /* Country */
-        table th:nth-child(4), table td:nth-child(4) { width: 200px; } /* Commodity */
-        table th:nth-child(5), table td:nth-child(5) { width: 120px; } /* Date */
-        table th:nth-child(6), table td:nth-child(6) { width: 120px; } /* Type */
-        table th:nth-child(7), table td:nth-child(7) { width: 100px; }  /* Unit */
-        table th:nth-child(8), table td:nth-child(8) { width: 180px; } /* Price (Local) */
-        table th:nth-child(9), table td:nth-child(9) { width: 180px; } /* Price (USD) */
-        table th:nth-child(10), table td:nth-child(10) { width: 180px; } /* Exchange Rate */
-        table th:nth-child(11), table td:nth-child(11) { width: 150px; } /* Day Change */
-        table th:nth-child(12), table td:nth-child(12) { width: 150px; } /* Month Change */
-        table th:nth-child(13), table td:nth-child(13) { width: 150px; } /* Year Change */
-        table th:nth-child(14), table td:nth-child(14) { width: 180px; } /* Data Source */
+        table th:nth-child(1), table td:nth-child(1) { width: 50px; }
+        table th:nth-child(2), table td:nth-child(2) { width: 180px; }
+        table th:nth-child(3), table td:nth-child(3) { width: 150px; }
+        table th:nth-child(4), table td:nth-child(4) { width: 200px; }
+        table th:nth-child(5), table td:nth-child(5) { width: 120px; }
+        table th:nth-child(6), table td:nth-child(6) { width: 120px; }
+        table th:nth-child(7), table td:nth-child(7) { width: 100px; }
+        table th:nth-child(8), table td:nth-child(8) { width: 180px; }
+        table th:nth-child(9), table td:nth-child(9) { width: 180px; }
+        table th:nth-child(10), table td:nth-child(10) { width: 180px; }
+        table th:nth-child(11), table td:nth-child(11) { width: 150px; }
+        table th:nth-child(12), table td:nth-child(12) { width: 150px; }
+        table th:nth-child(13), table td:nth-child(13) { width: 150px; }
+        table th:nth-child(14), table td:nth-child(14) { width: 180px; }
 
         /* Table Cell Styling */
         table th, table td {
-            padding: 14px 16px; /* Increased padding */
+            padding: 14px 16px;
             border-bottom: 1px solid #eee;
             text-align: left;
             vertical-align: middle;
             white-space: nowrap;
+        }
+
+        /* Alternating row colors */
+        table tbody tr:nth-child(odd) {
+            background-color: #ffffff;
+        }
+
+        table tbody tr:nth-child(even) {
+            background-color: #ffffff;
+        }
+
+        table tbody tr:hover {
+            background-color: #f5f5f5;
         }
 
         /* Sticky Header with Shadow */
@@ -486,6 +499,14 @@ foreach ($prices_data as $price) {
             border-bottom-color: #8B4513;
         }
 
+        /* Chart filters */
+        .chart-filters {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
@@ -497,6 +518,9 @@ foreach ($prices_data as $price) {
             }
             .filter-section > div {
                 grid-template-columns: 1fr !important;
+            }
+            .chart-filters {
+                grid-template-columns: 1fr;
             }
         }
     </style>
@@ -620,15 +644,15 @@ foreach ($prices_data as $price) {
             <div class="container">
                 <div style="border-bottom: 1px solid #eee;">
                     <nav class="view-tabs">
-                        <button class="view-tab active">
+                        <button class="view-tab active" data-view="table">
                             <i class="fa fa-table"></i>
                             Table view
                         </button>
-                        <button class="view-tab">
+                        <button class="view-tab" data-view="chart">
                             <i class="fa fa-chart-bar"></i>
                             Chart view
                         </button>
-                        <button class="view-tab">
+                        <button class="view-tab" data-view="map">
                             <i class="fa fa-map"></i>
                             Map view
                         </button>
@@ -664,7 +688,7 @@ foreach ($prices_data as $price) {
                     </button>
                 </div>
 
-                <div class="table-responsive-container">
+                <div id="table-view" class="table-responsive-container">
                     <table>
                         <thead>
                             <tr>
@@ -777,56 +801,83 @@ foreach ($prices_data as $price) {
                 </div>
 
                 <div id="chart-view" style="display: none; padding: 20px;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-                    <div>
-                        <h4>Market Price Trends</h4>
-                        <p class="text-muted">Visual representation of price movements</p>
-                    </div>
-                    <div>
-                        <select id="chart-type-selector" class="form-select" style="width: 200px; display: inline-block;">
-                            <option value="line">Line Chart</option>
-                            <option value="bar">Bar Chart</option>
-                            <option value="combo">Combined View</option>
-                        </select>
-                        <button id="export-chart-btn" class="btn btn-sm btn-outline-secondary ms-2">
-                            <i class="fas fa-download"></i> Export
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="row">
-                    <div class="col-md-8">
-                        <div class="chart-container" style="position: relative; height:400px;">
-                            <canvas id="price-trend-chart"></canvas>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                        <div>
+                            <h4>Market Price Trends</h4>
+                            <p class="text-muted">Visual representation of price movements</p>
+                        </div>
+                        <div>
+                            <select id="chart-type-selector" class="form-select" style="width: 200px; display: inline-block;">
+                                <option value="line">Line Chart</option>
+                                <option value="bar">Bar Chart</option>
+                                <option value="combo">Combined View</option>
+                            </select>
+                            <button id="export-chart-btn" class="btn btn-sm btn-outline-secondary ms-2">
+                                <i class="fas fa-download"></i> Export
+                            </button>
                         </div>
                     </div>
-                    <div class="col-md-4">
-                        <div class="card">
-                            <div class="card-header">
-                                <h5 class="card-title">Price Summary</h5>
+                    
+                    <div class="chart-filters">
+                        <div>
+                            <label for="country-filter" class="form-label">Country</label>
+                            <select id="country-filter" class="form-select">
+                                <option value="all">All Countries</option>
+                                <option value="Kenya">Kenya</option>
+                                <option value="Uganda">Uganda</option>
+                                <option value="Rwanda">Rwanda</option>
+                                <option value="Tanzania">Tanzania</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="market-filter" class="form-label">Market</label>
+                            <select id="market-filter" class="form-select">
+                                <option value="all">All Markets</option>
+                                <?php 
+                                $markets = array_unique(array_column($prices_data, 'market'));
+                                foreach ($markets as $market): ?>
+                                    <option value="<?php echo htmlspecialchars($market); ?>"><?php echo htmlspecialchars($market); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="commodity-filter" class="form-label">Commodity</label>
+                            <select id="commodity-filter" class="form-select">
+                                <option value="all">All Commodities</option>
+                                <?php 
+                                $commodities = array_unique(array_column($prices_data, 'commodity_name'));
+                                foreach ($commodities as $commodity): ?>
+                                    <option value="<?php echo htmlspecialchars($commodity); ?>"><?php echo htmlspecialchars($commodity); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="chart-container" style="position: relative; height:400px;">
+                                <canvas id="price-trend-chart"></canvas>
                             </div>
-                            <div class="card-body">
-                                <div id="price-summary">
-                                    <p>Select a data point to view details</p>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="card-title">Price Summary</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="price-summary">
+                                        <p>Select a data point to view details</p>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-                
-                <div class="row mt-4">
-                    <div class="col-md-6">
-                        <div class="chart-container" style="position: relative; height:300px;">
-                            <canvas id="market-comparison-chart"></canvas>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="chart-container" style="position: relative; height:300px;">
-                            <canvas id="commodity-comparison-chart"></canvas>
-                        </div>
-                    </div>
+
+                <div id="map-view" style="display: none; padding: 20px;">
+                    <h4>Map View</h4>
+                    <p>This is where the map would be displayed</p>
                 </div>
-            </div>
 
                 <?php if ($total_records > 0): ?>
                 <div class="pagination">
@@ -890,7 +941,7 @@ foreach ($prices_data as $price) {
 
 <script>
 // Initialize charts
-let priceTrendChart, marketComparisonChart, commodityComparisonChart;
+let priceTrendChart;
 let currentChartType = 'line';
 
 // Function to initialize or update charts
@@ -898,10 +949,8 @@ function initCharts(data) {
     // Process data for charts
     const processedData = processChartData(data);
     
-    // Destroy existing charts if they exist
+    // Destroy existing chart if it exists
     if (priceTrendChart) priceTrendChart.destroy();
-    if (marketComparisonChart) marketComparisonChart.destroy();
-    if (commodityComparisonChart) commodityComparisonChart.destroy();
     
     // Create Price Trend Chart
     const priceTrendCtx = document.getElementById('price-trend-chart').getContext('2d');
@@ -912,40 +961,6 @@ function initCharts(data) {
             datasets: processedData.trendDatasets
         },
         options: getTrendChartOptions()
-    });
-    
-    // Create Market Comparison Chart
-    const marketCompCtx = document.getElementById('market-comparison-chart').getContext('2d');
-    marketComparisonChart = new Chart(marketCompCtx, {
-        type: 'bar',
-        data: {
-            labels: processedData.markets,
-            datasets: [{
-                label: 'Average Price (USD)',
-                data: processedData.marketAverages,
-                backgroundColor: 'rgba(54, 162, 235, 0.7)',
-                borderColor: 'rgba(54, 162, 235, 1)',
-                borderWidth: 1
-            }]
-        },
-        options: getComparisonChartOptions('Market')
-    });
-    
-    // Create Commodity Comparison Chart
-    const commodityCompCtx = document.getElementById('commodity-comparison-chart').getContext('2d');
-    commodityComparisonChart = new Chart(commodityCompCtx, {
-        type: 'bar',
-        data: {
-            labels: processedData.commodities,
-            datasets: [{
-                label: 'Average Price (USD)',
-                data: processedData.commodityAverages,
-                backgroundColor: 'rgba(75, 192, 192, 0.7)',
-                borderColor: 'rgba(75, 192, 192, 1)',
-                borderWidth: 1
-            }]
-        },
-        options: getComparisonChartOptions('Commodity')
     });
 }
 
@@ -961,53 +976,81 @@ function processChartData(data) {
         }
     }
     
-    // Group data by date for trend chart
-    const dates = [...new Set(data.map(item => item.date_posted))].sort();
-    const markets = [...new Set(data.map(item => item.market))];
-    const commodities = [...new Set(data.map(item => item.commodity_name))];
+    // Filter data based on selected filters
+    const selectedCountry = document.getElementById('country-filter').value;
+    const selectedMarket = document.getElementById('market-filter').value;
+    const selectedCommodity = document.getElementById('commodity-filter').value;
     
-    // Prepare trend datasets (one per commodity)
-    const trendDatasets = commodities.map(commodity => {
+    let filteredData = data;
+    
+    if (selectedCountry && selectedCountry !== 'all') {
+        filteredData = filteredData.filter(item => item.country_admin_0 === selectedCountry);
+    }
+    
+    if (selectedMarket && selectedMarket !== 'all') {
+        filteredData = filteredData.filter(item => item.market === selectedMarket);
+    }
+    
+    if (selectedCommodity && selectedCommodity !== 'all') {
+        filteredData = filteredData.filter(item => item.commodity_name === selectedCommodity);
+    }
+    
+    // Group data by date (without time) for trend chart
+    const dates = [...new Set(filteredData.map(item => {
+        const date = new Date(item.date_posted);
+        return date.toISOString().split('T')[0]; // Get just the date part
+    }))].sort();
+    
+    // Prepare trend datasets
+    const trendDatasets = [];
+    
+    // If a specific commodity is selected, show only that
+    if (selectedCommodity && selectedCommodity !== 'all') {
         const prices = dates.map(date => {
-            const item = data.find(d => 
-                d.commodity_name === commodity && 
-                d.date_posted === date
+            const item = filteredData.find(d => 
+                d.commodity_name === selectedCommodity && 
+                new Date(d.date_posted).toISOString().split('T')[0] === date
             );
             return item ? parseFloat(item.Price) : null;
         });
         
-        return {
-            label: commodity,
+        trendDatasets.push({
+            label: selectedCommodity,
             data: prices,
-            borderColor: getRandomColor(),
-            backgroundColor: 'rgba(0, 0, 0, 0.1)',
+            borderColor: '#8B4513', // Use theme color
+            backgroundColor: 'rgba(139, 69, 19, 0.1)',
             borderWidth: 2,
             fill: false,
             tension: 0.1
-        };
-    });
-    
-    // Calculate market averages
-    const marketAverages = markets.map(market => {
-        const marketItems = data.filter(item => item.market === market);
-        const sum = marketItems.reduce((acc, item) => acc + parseFloat(item.Price), 0);
-        return marketItems.length ? sum / marketItems.length : 0;
-    });
-    
-    // Calculate commodity averages
-    const commodityAverages = commodities.map(commodity => {
-        const commodityItems = data.filter(item => item.commodity_name === commodity);
-        const sum = commodityItems.reduce((acc, item) => acc + parseFloat(item.Price), 0);
-        return commodityItems.length ? sum / commodityItems.length : 0;
-    });
+        });
+    } else {
+        // Group by commodity if no specific one is selected
+        const commodities = [...new Set(filteredData.map(item => item.commodity_name))];
+        
+        commodities.forEach(commodity => {
+            const prices = dates.map(date => {
+                const item = filteredData.find(d => 
+                    d.commodity_name === commodity && 
+                    new Date(d.date_posted).toISOString().split('T')[0] === date
+                );
+                return item ? parseFloat(item.Price) : null;
+            });
+            
+            trendDatasets.push({
+                label: commodity,
+                data: prices,
+                borderColor: getRandomColor(),
+                backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1
+            });
+        });
+    }
     
     return {
         dates,
-        markets,
-        commodities,
-        trendDatasets,
-        marketAverages,
-        commodityAverages
+        trendDatasets
     };
 }
 
@@ -1088,41 +1131,6 @@ function getTrendChartOptions() {
     };
 }
 
-function getComparisonChartOptions(labelType) {
-    return {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            title: {
-                display: true,
-                text: `${labelType} Price Comparison`
-            },
-            tooltip: {
-                callbacks: {
-                    label: function(context) {
-                        return `Avg Price: $${context.parsed.y.toFixed(2)}`;
-                    }
-                }
-            },
-            datalabels: {
-                anchor: 'end',
-                align: 'top',
-                formatter: (value) => `$${value.toFixed(2)}`,
-                color: '#333'
-            }
-        },
-        scales: {
-            y: {
-                beginAtZero: true,
-                title: {
-                    display: true,
-                    text: 'Price (USD)'
-                }
-            }
-        }
-    };
-}
-
 // Helper function to generate random colors
 function getRandomColor() {
     const letters = '0123456789ABCDEF';
@@ -1136,51 +1144,50 @@ function getRandomColor() {
 // Update price summary
 function updatePriceSummary(commodity, date, price) {
     const summaryDiv = document.getElementById('price-summary');
+    const selectedMarket = document.getElementById('market-filter').value;
+    const selectedCountry = document.getElementById('country-filter').value;
+    
     summaryDiv.innerHTML = `
         <h6>${commodity}</h6>
         <p><strong>Date:</strong> ${new Date(date).toLocaleDateString()}</p>
         <p><strong>Price:</strong> $${price.toFixed(2)}</p>
-        <p><strong>Market:</strong> ${getSelectedMarket() || 'All'}</p>
-        <p><strong>Country:</strong> ${getSelectedCountry() || 'All'}</p>
+        <p><strong>Market:</strong> ${selectedMarket !== 'all' ? selectedMarket : 'All Markets'}</p>
+        <p><strong>Country:</strong> ${selectedCountry !== 'all' ? selectedCountry : 'All Countries'}</p>
     `;
-}
-
-// Get filter values (simplified for demonstration)
-function getSelectedMarket() {
-    return document.querySelector('[name="market"]')?.value || 'All markets';
-}
-
-function getSelectedCountry() {
-    return document.querySelector('[name="country"]')?.value || 'All countries';
 }
 
 // Tab switching functionality
 document.addEventListener('DOMContentLoaded', function() {
     // Set up tab switching
     const tabs = document.querySelectorAll('.view-tab');
+    const views = {
+        'table': document.getElementById('table-view'),
+        'chart': document.getElementById('chart-view'),
+        'map': document.getElementById('map-view')
+    };
+    
     tabs.forEach(tab => {
         tab.addEventListener('click', function() {
+            const view = this.getAttribute('data-view');
+            
             // Remove active class from all tabs
             tabs.forEach(t => t.classList.remove('active'));
             
             // Add active class to clicked tab
             this.classList.add('active');
             
-            // Show/hide appropriate views
-            if (this.textContent.includes('Table')) {
-                document.querySelector('.table-responsive-container').style.display = 'block';
-                document.getElementById('chart-view').style.display = 'none';
-            } else if (this.textContent.includes('Chart')) {
-                document.querySelector('.table-responsive-container').style.display = 'none';
-                document.getElementById('chart-view').style.display = 'block';
+            // Hide all views
+            Object.values(views).forEach(v => v.style.display = 'none');
+            
+            // Show selected view
+            if (views[view]) {
+                views[view].style.display = 'block';
                 
-                // Initialize charts with current data
-                const chartData = <?php echo json_encode($prices_data); ?>;
-                initCharts(chartData);
-            } else if (this.textContent.includes('Map')) {
-                // Handle map view if needed
-                document.querySelector('.table-responsive-container').style.display = 'none';
-                document.getElementById('chart-view').style.display = 'none';
+                // Initialize charts if chart view is selected
+                if (view === 'chart') {
+                    const chartData = <?php echo json_encode($prices_data); ?>;
+                    initCharts(chartData);
+                }
             }
         });
     });
@@ -1204,9 +1211,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Initialize charts if chart view is active by default
-    const activeTab = document.querySelector('.view-tab.active');
-    if (activeTab && activeTab.textContent.includes('Chart')) {
+    // Filter change event listeners
+    document.getElementById('country-filter')?.addEventListener('change', updateCharts);
+    document.getElementById('market-filter')?.addEventListener('change', updateCharts);
+    document.getElementById('commodity-filter')?.addEventListener('change', updateCharts);
+
+    function updateCharts() {
         const chartData = <?php echo json_encode($prices_data); ?>;
         initCharts(chartData);
     }
