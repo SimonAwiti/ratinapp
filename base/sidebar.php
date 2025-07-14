@@ -224,6 +224,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
         </a>
         <div class="submenu" id="webSubmenu">
             <a href="#" class="nav-link"><i class="fa fa-link"></i> Website</a>
+            <a href="../frontend/marketprices.php" class="nav-link"><i class="fa fa-link"></i> Data display</a>
         </div>
 
         <a href="#" class="nav-link" onclick="toggleSubmenu('userSubmenu', this)">
