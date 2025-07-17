@@ -1,9 +1,13 @@
 <?php
-session_start();
-// Include database configuration
+// base/commodities_boilerplate.php
+
+// Include the configuration file first
 include '../admin/includes/config.php';
 
-// --- Fetch all data for the table (existing logic) ---
+// Include the shared header with the sidebar and initial HTML
+include '../admin/includes/header.php';
+
+// --- Fetch all data for the table ---
 $query = "
     SELECT
         c.id,
@@ -17,235 +21,209 @@ $query = "
     JOIN
         commodity_categories cc ON c.category_id = cc.id
 ";
-
 $result = $con->query($query);
 $commodities = $result->fetch_all(MYSQLI_ASSOC);
 
-// Pagination setup (existing logic)
+// Pagination and Filtering Logic
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
 $totalItems = count($commodities);
 $totalPages = ceil($totalItems / $itemsPerPage);
 $page = isset($_GET['page']) ? max(1, min($totalPages, intval($_GET['page']))) : 1;
 $startIndex = ($page - 1) * $itemsPerPage;
 
-// Slice data for current page (existing logic)
 $commodities_paged = array_slice($commodities, $startIndex, $itemsPerPage);
 
-// --- New: Fetch counts for summary boxes ---
-
-// Total Commodities
+// --- Fetch counts for summary boxes ---
 $total_commodities_query = "SELECT COUNT(*) AS total FROM commodities";
 $total_commodities_result = $con->query($total_commodities_query);
 $total_commodities = $total_commodities_result->fetch_assoc()['total'];
 
-// Count for Cereals
 $cereals_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Cereals')";
 $cereals_result = $con->query($cereals_query);
 $cereals_count = $cereals_result->fetch_assoc()['total'];
 
-// Count for Pulses
 $pulses_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Pulses')";
 $pulses_result = $con->query($pulses_query);
 $pulses_count = $pulses_result->fetch_assoc()['total'];
 
-// Count for Oil Seeds
 $oil_seeds_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Oil seeds')";
 $oil_seeds_result = $con->query($oil_seeds_query);
 $oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
-
-// Get current URL without query parameters
-$currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Commodities Management</title>
 
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="assets/style.css" />
-    <link rel="stylesheet" href="assets/globals.css" />
-    <link rel="stylesheet" href="assets/styleguide.css" />
-    
-    <style>
-        body {
-            padding: 20px;
-            background-color: #f8f9fa;
-        }
-        .table-container {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-        }
-        .filter-row {
-            background-color: white;
-        }
-        .btn-group {
-            margin-bottom: 15px;
-            display: flex;
-            gap: 10px;
-        }
-        .btn-add-new {
-            background-color: rgba(180, 80, 50, 1);
-            color: white;
-            padding: 10px 20px;
-            font-size: 16px;
-            border: none;
-        }
-        .btn-add-new:hover {
-            background-color: darkred;
-        }
-        .btn-delete, .btn-export {
-            background-color: white;
-            color: black;
-            border: 1px solid #ddd;
-            padding: 8px 16px;
-        }
-        .btn-delete:hover, .btn-export:hover {
-            background-color: #f8f9fa;
-        }
-        .dropdown-menu {
-            min-width: 120px;
-        }
-        .dropdown-item {
-            cursor: pointer;
-        }
-        .filter-input {
-            width: 100%;
-            border: none;
-            background: white;
-            padding: 5px;
-            border-radius: 5px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        .filter-input:focus {
-            outline: none;
-            background: white;
-        }
-        .stats-container {
-            display: flex;
-            gap: 15px;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: nowrap;
-            width: 87%;
-            max-width: 100%;
-            margin: 0 auto 20px auto;
-            margin-left: 0.7%;
-        }
-        .stats-container > div {
-            flex: 1;
-            background: white;
-            padding: 15px;
-            border-radius: 10px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            text-align: center;
-            min-height: 120px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-        }
-        .stats-icon {
-            width: 40px;
-            height: 40px;
-            margin-bottom: 10px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-        }
-        .total-icon {
-            background-color: #9b59b6;
-            color: white;
-        }
-        .cereals-icon {
-            background-color: #f39c12;
-            color: white;
-        }
-        .pulses-icon {
-            background-color: #27ae60;
-            color: white;
-        }
-        .oil-seeds-icon {
-            background-color: #e74c3c;
-            color: white;
-        }
-        .stats-section {
-            text-align: left;
-            margin-left: 11%;
-        }
-        .stats-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: #2c3e50;
-            margin: 8px 0 5px 0;
-        }
-        .stats-number {
-            font-size: 24px;
-            font-weight: 700;
-            color: #34495e;
-        }
-        .modal-content {
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-        }
-        .modal-header {
-            background-color: #2c3e50;
-            color: white;
-            border-top-left-radius: 10px;
-            border-top-right-radius: 10px;
-        }
-        .modal-header .btn-close {
-            color: white;
-        }
-        .form-control {
-            margin-bottom: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            padding: 8px;
-        }
-        .form-control:focus {
-            outline: none;
-            border-color: rgba(180, 80, 50, 1);
-            box-shadow: 0 0 5px rgba(180, 80, 50, 0.5);
-        }
-        .btn-primary {
-            background-color: rgba(180, 80, 50, 1);
-            border: none;
-            padding: 10px 20px;
-            font-size: 16px;
-            border-radius: 5px;
-            color: white;
-            cursor: pointer;
-        }
-        .btn-primary:hover {
-            background-color: darkred;
-        }
-        .image-preview {
-            max-width: 40px;
-            max-height: 40px;
-            border-radius: 5px;
-            object-fit: cover;
-        }
-        .no-image {
-            color: #6c757d;
-            font-style: italic;
-        }
-    </style>
-</head>
-<body>
+<style>
+    .table-container {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+    .filter-row {
+        background-color: white;
+    }
+    .btn-group {
+        margin-bottom: 15px;
+        display: flex;
+        gap: 10px;
+    }
+    .btn-add-new {
+        background-color: rgba(180, 80, 50, 1);
+        color: white;
+        padding: 10px 20px;
+        font-size: 16px;
+        border: none;
+    }
+    .btn-add-new:hover {
+        background-color: darkred;
+    }
+    .btn-delete, .btn-export {
+        background-color: white;
+        color: black;
+        border: 1px solid #ddd;
+        padding: 8px 16px;
+    }
+    .btn-delete:hover, .btn-export:hover {
+        background-color: #f8f9fa;
+    }
+    .dropdown-menu {
+        min-width: 120px;
+    }
+    .dropdown-item {
+        cursor: pointer;
+    }
+    .filter-input {
+        width: 100%;
+        border: none;
+        background: white;
+        padding: 5px;
+        border-radius: 5px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .filter-input:focus {
+        outline: none;
+        background: white;
+    }
+    .stats-container {
+        display: flex;
+        gap: 15px;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: nowrap;
+        width: 87%;
+        max-width: 100%;
+        margin: 0 auto 20px auto;
+        margin-left: 0.7%;
+    }
+    .stats-container > div {
+        flex: 1;
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        text-align: center;
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    .stats-icon {
+        width: 40px;
+        height: 40px;
+        margin-bottom: 10px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+    }
+    .total-icon {
+        background-color: #9b59b6;
+        color: white;
+    }
+    .cereals-icon {
+        background-color: #f39c12;
+        color: white;
+    }
+    .pulses-icon {
+        background-color: #27ae60;
+        color: white;
+    }
+    .oil-seeds-icon {
+        background-color: #e74c3c;
+        color: white;
+    }
+    .stats-section {
+        text-align: left;
+        margin-left: 11%;
+    }
+    .stats-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #2c3e50;
+        margin: 8px 0 5px 0;
+    }
+    .stats-number {
+        font-size: 24px;
+        font-weight: 700;
+        color: #34495e;
+    }
+    .modal-content {
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+    .modal-header {
+        background-color: #2c3e50;
+        color: white;
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+    }
+    .modal-header .btn-close {
+        color: white;
+        filter: invert(1);
+    }
+    .form-control {
+        margin-bottom: 15px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 8px;
+    }
+    .form-control:focus {
+        outline: none;
+        border-color: rgba(180, 80, 50, 1);
+        box-shadow: 0 0 5px rgba(180, 80, 50, 0.5);
+    }
+    .btn-primary {
+        background-color: rgba(180, 80, 50, 1);
+        border: none;
+        padding: 10px 20px;
+        font-size: 16px;
+        border-radius: 5px;
+        color: white;
+        cursor: pointer;
+    }
+    .btn-primary:hover {
+        background-color: darkred;
+    }
+    .image-preview {
+        width: 40px;
+        height: 40px;
+        border-radius: 5px;
+        object-fit: cover;
+        cursor: pointer;
+    }
+    .no-image {
+        color: #6c757d;
+        font-style: italic;
+        font-size: 0.9em;
+    }
+</style>
 
 <div class="stats-section">
     <div class="text-wrapper-8"><h3>Commodities Management</h3></div>
     <p class="p">Manage everything related to Agricultural Commodities</p>
 
     <div class="stats-container">
-        <!-- Total Commodities -->
         <div class="overlap-6">
             <div class="stats-icon total-icon">
                 <i class="fas fa-seedling"></i>
@@ -254,7 +232,6 @@ $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
             <div class="stats-number"><?= $total_commodities ?></div>
         </div>
         
-        <!-- Cereals -->
         <div class="overlap-6">
             <div class="stats-icon cereals-icon">
                 <i class="fas fa-wheat-awn"></i>
@@ -263,7 +240,6 @@ $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
             <div class="stats-number"><?= $cereals_count ?></div>
         </div>
         
-        <!-- Pulses -->
         <div class="overlap-7">
             <div class="stats-icon pulses-icon">
                 <i class="fas fa-dot-circle"></i>
@@ -272,7 +248,6 @@ $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
             <div class="stats-number"><?= $pulses_count ?></div>
         </div>
         
-        <!-- Oil Seeds -->
         <div class="overlap-7">
             <div class="stats-icon oil-seeds-icon">
                 <i class="fas fa-leaf"></i>
@@ -365,7 +340,6 @@ $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
             </tbody>
         </table>
 
-        <!-- Pagination -->
         <div class="d-flex justify-content-between align-items-center">
             <div>
                 Displaying <?= $startIndex + 1 ?> to <?= min($startIndex + $itemsPerPage, $totalItems) ?> of <?= $totalItems ?> items
@@ -382,15 +356,15 @@ $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
             <nav>
                 <ul class="pagination mb-0">
                     <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $currentUrl ?>?page=<?= $page - 1 ?>&limit=<?= $itemsPerPage ?>">Prev</a>
+                        <a class="page-link" href="<?= $page <= 1 ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage ?>">Prev</a>
                     </li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
                         <li class="page-item <?= $page == $i ? 'active' : '' ?>">
-                            <a class="page-link" href="<?= $currentUrl ?>?page=<?= $i ?>&limit=<?= $itemsPerPage ?>"><?= $i ?></a>
+                            <a class="page-link" href="?page=<?= $i ?>&limit=<?= $itemsPerPage ?>"><?= $i ?></a>
                         </li>
                     <?php endfor; ?>
                     <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $currentUrl ?>?page=<?= $page + 1 ?>&limit=<?= $itemsPerPage ?>">Next</a>
+                        <a class="page-link" href="<?= $page >= $totalPages ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage ?>">Next</a>
                     </li>
                 </ul>
             </nav>
@@ -398,7 +372,6 @@ $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
     </div>
 </div>
 
-<!-- Image Modal -->
 <div class="modal fade" id="imageModal" tabindex="-1" aria-labelledby="imageModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -413,62 +386,92 @@ $currentUrl = strtok($_SERVER["REQUEST_URI"], '?');
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="assets/filter.js"></script>
-
 <script>
-// Function to show image in modal
-function showImageModal(imageUrl, commodityName) {
-    document.getElementById('modalImage').src = imageUrl;
-    document.getElementById('modalImage').alt = commodityName;
-    document.getElementById('imageModalLabel').textContent = commodityName + ' - Image';
-    
-    const imageModal = new bootstrap.Modal(document.getElementById('imageModal'));
-    imageModal.show();
+document.addEventListener("DOMContentLoaded", function() {
+    // Initialize filter functionality
+    const filterInputs = document.querySelectorAll('.filter-input');
+    filterInputs.forEach(input => {
+        input.addEventListener('keyup', applyFilters);
+    });
+
+    // Initialize select all checkbox
+    document.getElementById('selectAll').addEventListener('change', function() {
+        document.querySelectorAll('.row-checkbox').forEach(checkbox => {
+            checkbox.checked = this.checked;
+        });
+    });
+
+    // Update breadcrumb
+    if (typeof updateBreadcrumb === 'function') {
+        updateBreadcrumb('Base', 'Commodities');
+    }
+});
+
+function applyFilters() {
+    const filters = {
+        hsCode: document.getElementById('filterHsCode').value.toLowerCase(),
+        category: document.getElementById('filterCategory').value.toLowerCase(),
+        commodity: document.getElementById('filterCommodity').value.toLowerCase(),
+        variety: document.getElementById('filterVariety').value.toLowerCase()
+    };
+
+    const rows = document.querySelectorAll('#commodityTable tr');
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        const matches = 
+            cells[1].textContent.toLowerCase().includes(filters.hsCode) &&
+            cells[2].textContent.toLowerCase().includes(filters.category) &&
+            cells[3].textContent.toLowerCase().includes(filters.commodity) &&
+            cells[4].textContent.toLowerCase().includes(filters.variety);
+        
+        row.style.display = matches ? '' : 'none';
+    });
 }
 
-// Function to update items per page
 function updateItemsPerPage(value) {
     const url = new URL(window.location);
     url.searchParams.set('limit', value);
-    url.searchParams.set('page', 1); // Reset to first page
+    url.searchParams.set('page', '1');
     window.location.href = url.toString();
 }
 
-// Select all functionality
-document.getElementById('selectAll').addEventListener('change', function() {
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    checkboxes.forEach(checkbox => {
-        checkbox.checked = this.checked;
-    });
-});
+function showImageModal(imageUrl, commodityName) {
+    const modal = new bootstrap.Modal(document.getElementById('imageModal'));
+    document.getElementById('modalImage').src = imageUrl;
+    document.getElementById('modalImage').alt = commodityName;
+    document.getElementById('imageModalLabel').textContent = commodityName;
+    modal.show();
+}
 
-// Delete selected function (placeholder)
 function deleteSelected() {
-    const selected = document.querySelectorAll('.row-checkbox:checked');
-    if (selected.length === 0) {
-        alert('Please select items to delete.');
+    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
+    if (checkedBoxes.length === 0) {
+        alert('Please select at least one commodity to delete.');
         return;
     }
     
-    if (confirm(`Are you sure you want to delete ${selected.length} selected item(s)?`)) {
-        // Add your delete logic here
-        console.log('Deleting selected items:', Array.from(selected).map(cb => cb.value));
+    if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected commodity(ies)?`)) {
+        const ids = Array.from(checkedBoxes).map(cb => cb.value);
+        // Implement your delete logic here
+        console.log('Deleting commodities with IDs:', ids);
+        // Example: fetch('delete_commodities.php', { method: 'POST', body: JSON.stringify({ ids }) })
+        // .then(response => response.json())
+        // .then(data => { if(data.success) location.reload(); });
     }
 }
 
-// Export selected function (placeholder)
 function exportSelected(format) {
-    const selected = document.querySelectorAll('.row-checkbox:checked');
-    if (selected.length === 0) {
-        alert('Please select items to export.');
+    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
+    if (checkedBoxes.length === 0) {
+        alert('Please select at least one commodity to export.');
         return;
     }
     
-    console.log(`Exporting ${selected.length} items to ${format}`);
-    // Add your export logic here
+    const ids = Array.from(checkedBoxes).map(cb => cb.value);
+    // Implement your export logic here
+    console.log(`Exporting ${format} for commodities with IDs:`, ids);
+    // Example: window.location.href = `export_commodities.php?format=${format}&ids=${ids.join(',')}`;
 }
 </script>
 
-</body>
-</html>
+<?php include '../admin/includes/footer.php'; ?>
