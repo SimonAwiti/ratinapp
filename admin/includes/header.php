@@ -173,7 +173,7 @@ $currentPage = basename($_SERVER['PHP_SELF']);
 <div class="wrapper">
     <div class="sidebar">
         <div class="logo">
-            <img class="ratin-logo" src="img/Ratin-logo-1.png" alt="RATIN Logo">
+            <img class="ratin-logo" src="../base/img/Ratin-logo-1.png" alt="RATIN Logo">
         </div><br>
         <h6>Management</h6>
 
