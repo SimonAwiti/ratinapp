@@ -58,6 +58,11 @@
             box-shadow: var(--shadow-lg);
             position: relative;
             overflow: hidden;
+            background-image: url('https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80');
+            background-size: cover;
+            background-position: center;
+            background-blend-mode: overlay;
+            background-color: rgba(255, 255, 255, 0.9);
         }
 
         .header::before {
@@ -76,23 +81,44 @@
             align-items: center;
             flex-wrap: wrap;
             gap: 1rem;
+            position: relative;
+            z-index: 1;
         }
 
         .welcome-content h1 {
-            font-size: 2.0rem;
+            font-size: 2.5rem;
             font-weight: 800;
             color: var(--primary-color);
             margin-bottom: 0.5rem;
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
         .welcome-content p {
-            font-size: 1.125rem;
-            color: var(--text-medium);
+            font-size: 1.25rem;
+            color: var(--text-dark);
             max-width: 100%;
+            font-weight: 500;
+            margin-bottom: 1rem;
+        }
+
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            box-shadow: var(--shadow-md);
+            transition: all var(--transition-speed) ease;
+            border: none;
+            cursor: pointer;
+        }
+
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+            opacity: 0.9;
         }
 
         .user-info {
@@ -103,6 +129,7 @@
             padding: 1rem 1.5rem;
             border-radius: 12px;
             border: 1px solid rgba(139, 69, 19, 0.1);
+            box-shadow: var(--shadow-sm);
         }
 
         .user-avatar {
@@ -146,6 +173,8 @@
             border-left: 4px solid transparent;
             position: relative;
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
         .stat-card::before {
@@ -204,6 +233,7 @@
             font-size: 0.875rem;
             color: var(--text-medium);
             font-weight: 500;
+            margin-top: auto;
         }
 
         .stat-change {
@@ -368,138 +398,13 @@
             color: var(--info-color);
         }
 
-        /* Activity Panel */
-        .activity-panel {
-            background: var(--card-bg);
-            border-radius: 16px;
+        /* Footer */
+        .footer {
+            text-align: center;
             padding: 1.5rem;
-            box-shadow: var(--shadow-md);
-            height: fit-content;
-        }
-
-        .activity-header {
-            display: flex;
-            align-items: center;
-            justify-content: between;
-            margin-bottom: 1.5rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-        }
-
-        .activity-header h2 {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: var(--text-dark);
-            display: flex;
-            align-items: center;
-        }
-
-        .activity-header i {
-            margin-right: 0.75rem;
-            color: var(--accent-color);
-        }
-
-        .activity-item {
-            display: flex;
-            align-items: center;
-            padding: 0.75rem 0;
-            border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-            transition: all var(--transition-speed) ease;
-        }
-
-        .activity-item:last-child {
-            border-bottom: none;
-            padding-bottom: 0;
-        }
-
-        .activity-item:hover {
-            background: rgba(139, 69, 19, 0.02);
-            margin: 0 -1rem;
-            padding-left: 1rem;
-            padding-right: 1rem;
-            border-radius: 8px;
-        }
-
-        .activity-icon {
-            width: 36px;
-            height: 36px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 0.75rem;
-            font-size: 0.875rem;
-            background: var(--primary-light);
-            color: var(--primary-color);
-        }
-
-        .activity-content {
-            flex: 1;
-        }
-
-        .activity-text {
-            font-size: 0.875rem;
-            color: var(--text-dark);
-            font-weight: 500;
-        }
-
-        .activity-time {
-            font-size: 0.75rem;
             color: var(--text-light);
-            margin-top: 0.125rem;
-        }
-
-        /* Notification Bell */
-        .notification-bell {
-            position: relative;
-            background: var(--card-bg);
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all var(--transition-speed) ease;
-        }
-
-        .notification-bell:hover {
-            background: var(--primary-light);
-            color: var(--primary-color);
-        }
-
-        .notification-badge {
-            position: absolute;
-            top: -4px;
-            right: -4px;
-            background: var(--error-color);
-            color: white;
-            border-radius: 50%;
-            width: 18px;
-            height: 18px;
-            font-size: 0.625rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-        }
-
-        /* Loading Animation */
-        .loading-spinner {
-            display: none;
-            width: 20px;
-            height: 20px;
-            border: 2px solid var(--primary-light);
-            border-top: 2px solid var(--primary-color);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-left: 0.5rem;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            font-size: 0.875rem;
+            margin-top: 2rem;
         }
 
         /* Responsive Design */
@@ -556,13 +461,42 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        .section-card, .stat-card, .activity-panel {
+        .section-card, .stat-card {
             animation: fadeIn 0.6s ease-out;
         }
 
         .section-card:nth-child(2) { animation-delay: 0.1s; }
         .section-card:nth-child(3) { animation-delay: 0.2s; }
         .section-card:nth-child(4) { animation-delay: 0.3s; }
+
+        /* Tooltip */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 200px;
+            background-color: var(--text-dark);
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -100px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 0.75rem;
+        }
+
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -571,14 +505,22 @@
         <div class="header">
             <div class="header-content">
                 <div class="welcome-content">
-                    <h1>RATIN Trade Analytics</h1>
-                    <p>Your comprehensive platform for managing cross-border trade data, market intelligence, and regional price monitoring.</p>
+                    <h1>Welcome to RATIN Trade Analytics</h1>
+                    <p>Your comprehensive platform for managing cross-border trade data, market intelligence, and regional price monitoring across East Africa.</p>
+                    <a href="#quick-stats" class="cta-button">Explore Dashboard</a>
+                </div>
+                <div class="user-info">
+                    <div class="user-avatar">AD</div>
+                    <div class="user-details">
+                        <h3>Admin User</h3>
+                        <p>Administrator</p>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Quick Stats -->
-        <div class="quick-stats">
+        <div class="quick-stats" id="quick-stats">
             <div class="stat-card">
                 <div class="stat-header">
                     <div class="stat-icon">
@@ -589,7 +531,7 @@
                     2,847
                     <span class="stat-change positive">+12%</span>
                 </div>
-                <div class="stat-label">Total Records</div>
+                <div class="stat-label">Total Trade Records</div>
             </div>
             
             <div class="stat-card">
@@ -628,7 +570,7 @@
                     24h
                     <span class="stat-change negative">+2h</span>
                 </div>
-                <div class="stat-label">Last Update</div>
+                <div class="stat-label">Last Data Update</div>
             </div>
         </div>
 
@@ -646,19 +588,22 @@
                     </div>
                     <ul>
                         <li>
-                            <a href="#" onclick="loadContent('commodities_boilerplate.php', 'Base', 'Commodities'); return false;">
+                            <a href="../base/commodities_boilerplate.php">
                                 <i class="fas fa-apple-alt"></i> Commodities
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage agricultural commodities and varieties</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="loadContent('tradepoints_boilerplate.php', 'Base', 'Trade Points'); return false;">
+                            <a href="../base/tradepoints_boilerplate.php">
                                 <i class="fas fa-map-marker-alt"></i> Trade Points
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage markets, border points and millers</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="loadContent('enumerator_boilerplate.php', 'Base', 'Enumerators'); return false;">
+                            <a href="../base/enumerator_boilerplate.php">
                                 <i class="fas fa-user-tie"></i> Enumerators
                                 <span class="badge updated">Updated</span>
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage field data collectors</span></span>
                             </a>
                         </li>
                     </ul>
@@ -674,29 +619,34 @@
                     </div>
                     <ul>
                         <li>
-                            <a href="#" onclick="loadContent('../data/marketprices_boilerplate.php', 'Data', 'Market Prices'); return false;">
+                            <a href="../data/marketprices_boilerplate.php">
                                 <i class="fas fa-store-alt"></i> Market Prices
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View and manage market price data</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="loadContent('../data/datasource_boilerplate.php', 'Data', 'Data Sources'); return false;">
+                            <a href="../data/datasource_boilerplate.php">
                                 <i class="fas fa-database"></i> Data Sources
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage data collection sources</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="loadContent('../data/xbtvol_boilerplate.php', 'Data', 'XBT Volumes'); return false;">
+                            <a href="../data/xbtvol_boilerplate.php">
                                 <i class="fas fa-exchange-alt"></i> XBT Volumes
                                 <span class="badge new">New</span>
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Cross-border trade volume data</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="loadContent('../data/miller_price_boilerplate.php', 'Data', 'Miller Prices'); return false;">
+                            <a href="../data/miller_price_boilerplate.php">
                                 <i class="fas fa-industry"></i> Miller Prices
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage miller price data</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="loadContent('../data/currencies_boilerplate.php', 'Data', 'Currency Rates'); return false;">
+                            <a href="../data/currencies_boilerplate.php">
                                 <i class="fas fa-money-bill-wave"></i> Currency Rates
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage currency exchange rates</span></span>
                             </a>
                         </li>
                     </ul>
@@ -712,19 +662,22 @@
                     </div>
                     <ul>
                         <li>
-                            <a href="#" onclick="loadContent('../reports/price_trends.php', 'Reports', 'Price Trends'); return false;">
+                            <a href="../reports/price_trends.php">
                                 <i class="fas fa-chart-line"></i> Price Trends
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Analyze commodity price trends</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="loadContent('../reports/trade_flows.php', 'Reports', 'Trade Flows'); return false;">
+                            <a href="../reports/trade_flows.php">
                                 <i class="fas fa-project-diagram"></i> Trade Flows
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View cross-border trade patterns</span></span>
                             </a>
                         </li>
                         <li>
                             <a href="#" style="opacity: 0.6; cursor: not-allowed;">
                                 <i class="fas fa-file-export"></i> Export Reports
                                 <span class="badge" style="background: #6b7280; color: white;">Soon</span>
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Coming in next release</span></span>
                             </a>
                         </li>
                     </ul>
@@ -740,58 +693,35 @@
                     </div>
                     <ul>
                         <li>
-                            <a href="#" onclick="loadContent('../user/profile.php', 'User', 'Profile'); return false;">
+                            <a href="../user/profile.php">
                                 <i class="fas fa-user"></i> My Profile
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View and edit your profile</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="loadContent('../user/settings.php', 'User', 'Settings'); return false;">
+                            <a href="../user/settings.php">
                                 <i class="fas fa-cog"></i> Settings
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">System and account settings</span></span>
                             </a>
                         </li>
                         <li>
-                            <a href="#" onclick="logout(); return false;">
+                            <a href="../auth/logout.php">
                                 <i class="fas fa-sign-out-alt"></i> Logout
+                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Sign out of the system</span></span>
                             </a>
                         </li>
                     </ul>
                 </div>
             </div>
         </div>
+
+        <div class="footer">
+            <p>© 2023 RATIN Trade Analytics. All rights reserved. | Version 2.1.0</p>
+        </div>
     </div>
 
     <script>
         // Enhanced JavaScript functionality
-        function loadContent(url, section, title) {
-            const spinner = document.querySelector('.loading-spinner');
-            if (spinner) {
-                spinner.style.display = 'inline-block';
-            }
-            
-            console.log(`Loading: ${section} - ${title} from ${url}`);
-            
-            // Simulate loading delay
-            setTimeout(() => {
-                if (spinner) {
-                    spinner.style.display = 'none';
-                }
-                // Here you would typically load the actual content
-                // window.location.href = url;
-            }, 1000);
-        }
-
-        function logout() {
-            if (confirm('Are you sure you want to logout?')) {
-                console.log("Logout initiated");
-                // window.location.href = '/logout.php';
-            }
-        }
-
-        function toggleNotifications() {
-            alert('Notifications panel would open here');
-        }
-
-        // Add some interactive effects
         document.addEventListener('DOMContentLoaded', function() {
             // Animate stats on load
             const statValues = document.querySelectorAll('.stat-value');
@@ -801,32 +731,44 @@
                     animateValue(stat, 0, value, 1000 + (index * 200));
                 }
             });
+
+            // Add click animation to cards
+            const cards = document.querySelectorAll('.section-card, .stat-card');
+            cards.forEach(card => {
+                card.addEventListener('click', function(e) {
+                    if (e.target.tagName === 'A') return;
+                    
+                    const link = this.querySelector('a');
+                    if (link) {
+                        link.click();
+                    }
+                });
+            });
         });
 
-        function animateValue(element, start, end, delay) {
-            setTimeout(() => {
-                const range = end - start;
-                const minTimer = 50;
-                const stepTime = Math.abs(Math.floor(1000 / range));
-                const timer = Math.max(stepTime, minTimer);
-                const startTime = new Date().getTime();
-                const endTime = startTime + delay;
-                
-                const run = () => {
-                    const now = new Date().getTime();
-                    const remaining = Math.max((endTime - now) / delay, 0);
-                    const value = Math.round(end - (remaining * range));
-                    element.childNodes[0].textContent = value.toLocaleString();
-                    
-                    if (value === end) {
-                        clearInterval(timer);
-                    }
-                };
-                
-                const timer_id = setInterval(run, timer);
-                run();
-            }, 100);
+        function animateValue(element, start, end, duration) {
+            let startTimestamp = null;
+            const step = (timestamp) => {
+                if (!startTimestamp) startTimestamp = timestamp;
+                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                const value = Math.floor(progress * (end - start) + start);
+                element.childNodes[0].textContent = value.toLocaleString();
+                if (progress < 1) {
+                    window.requestAnimationFrame(step);
+                }
+            };
+            window.requestAnimationFrame(step);
         }
+
+        // Add smooth scrolling for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
     </script>
 </body>
 </html>
