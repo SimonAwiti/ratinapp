@@ -2,6 +2,9 @@
 // country_boilerplate.php
 include '../admin/includes/config.php';
 
+// Include the shared header with the sidebar and initial HTML
+include '../admin/includes/header.php';
+
 // Function to fetch countries data from the database
 function getCountriesData($con, $limit = 10, $offset = 0) {
     $sql = "SELECT
@@ -259,4 +262,5 @@ $total_pages = ceil($total_records / $limit);
         </div>
     </div>
 </body>
+<?php include '../admin/includes/footer.php'; ?>
 </html>
