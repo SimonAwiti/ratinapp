@@ -182,16 +182,16 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="collapse submenu" id="baseSubmenu">
-            <a href="commodities_boilerplate.php" class="nav-link <?= ($currentPage == 'commodities_boilerplate.php') ? 'active' : '' ?>">
+            <a href="../base/commodities_boilerplate.php" class="nav-link <?= ($currentPage == 'commodities_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-box-open" style="color:#8B4513;"></i> Commodities
             </a>
-            <a href="commodity_sources_boilerplate.php" class="nav-link <?= ($currentPage == 'commodity_sources_boilerplate.php') ? 'active' : '' ?>">
+            <a href="../base/commodity_sources_boilerplate.php" class="nav-link <?= ($currentPage == 'commodity_sources_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-database" style="color:#8B4513;"></i> Sources
             </a>
-            <a href="tradepoints_boilerplate.php" class="nav-link <?= ($currentPage == 'tradepoints_boilerplate.php') ? 'active' : '' ?>">
+            <a href="../base/tradepoints_boilerplate.php" class="nav-link <?= ($currentPage == 'tradepoints_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-map-marker-alt" style="color:#8B4513;"></i> Trade Points
             </a>
-            <a href="enumerator_boilerplate.php" class="nav-link <?= ($currentPage == 'enumerator_boilerplate.php') ? 'active' : '' ?>">
+            <a href="../base/enumerator_boilerplate.php" class="nav-link <?= ($currentPage == 'enumerator_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-users" style="color:#8B4513;"></i> Enumerators
             </a>
         </div>
