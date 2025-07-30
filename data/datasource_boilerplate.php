@@ -2,6 +2,9 @@
 // datasources_boilerplate.php
 include '../admin/includes/config.php';
 
+// Include the shared header with the sidebar and initial HTML
+include '../admin/includes/header.php';
+
 // Function to fetch data sources from the database
 function getDataSourcesData($con, $limit = 10, $offset = 0) {
     $sql = "SELECT 
@@ -254,5 +257,6 @@ $total_pages = ceil($total_records / $limit);
         </div>
     </div>
     <script src="../base/assets/datasources.js"></script>
+<?php include '../admin/includes/footer.php'; ?>
 </body>
 </html>
