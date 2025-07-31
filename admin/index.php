@@ -4,7 +4,7 @@ session_start();
 
 // If user is already logged in, redirect to dashboard
 if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true) {
-    header("Location: ../base/sidebar.php");
+    header("Location: ../base/landing_page.php");
     exit;
 }
 
@@ -52,7 +52,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
                     $update_stmt->bind_param("i", $user['id']);
                     $update_stmt->execute();
                     
-                    header("Location: ../base/sidebar.php");
+                    header("Location: ../base/landing_page.php");
                     exit;
                 } else {
                     $error_message = "Invalid username or password.";
@@ -68,7 +68,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
                 $_SESSION['admin_name'] = 'Administrator';
                 $_SESSION['admin_role'] = 'admin';
                 
-                header("Location: base/sidebar.php");
+                header("Location: base/landing_page.php");
                 exit;
             } else {
                 $error_message = "Invalid username or password.";

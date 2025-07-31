@@ -43,14 +43,173 @@
             min-height: 100vh;
         }
 
+        /* Header Styles - Consistent with other pages */
+        .header-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 1rem;
+            background-color: var(--card-bg);
+            box-shadow: var(--shadow-md);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-img {
+            height: 40px;
+        }
+
+        .logo-text {
+            font-weight: 700;
+            font-size: 1.25rem;
+            color: var(--primary-color);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: var(--text-dark);
+            font-weight: 500;
+            transition: color var(--transition-speed);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .nav-links a:hover {
+            color: var(--primary-color);
+        }
+
+        .nav-links a i {
+            font-size: 1rem;
+        }
+
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .notification-bell {
+            position: relative;
+            cursor: pointer;
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background-color: var(--error-color);
+            color: white;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.65rem;
+            font-weight: 600;
+        }
+
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background-color: var(--primary-light);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--primary-color);
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        /* Main Content Styles */
+        .main-container {
+            display: flex;
+            min-height: calc(100vh - 60px);
+        }
+
+        /* Sidebar Styles - Consistent with other pages */
+        .sidebar {
+            width: 250px;
+            background-color: var(--card-bg);
+            box-shadow: var(--shadow-md);
+            padding: 1.5rem 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-menu {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .sidebar-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .sidebar-section h3 {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-light);
+            padding: 0 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .sidebar-link {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem 1.5rem;
+            color: var(--text-medium);
+            text-decoration: none;
+            transition: all var(--transition-speed);
+        }
+
+        .sidebar-link:hover {
+            background-color: rgba(139, 69, 19, 0.05);
+            color: var(--primary-color);
+        }
+
+        .sidebar-link.active {
+            background-color: rgba(139, 69, 19, 0.1);
+            color: var(--primary-color);
+            border-left: 3px solid var(--primary-color);
+        }
+
+        .sidebar-link i {
+            width: 24px;
+            font-size: 1rem;
+            margin-right: 0.75rem;
+        }
+
+        /* Content Area */
+        .content-area {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+        }
+
         .landing-container {
             max-width: 1400px;
             margin: 0 auto;
             padding: 20px;
         }
 
-        /* Header */
-        .header {
+        /* Dashboard Header */
+        .dashboard-header {
             background: var(--card-bg);
             border-radius: 16px;
             padding: 2rem;
@@ -65,7 +224,7 @@
             background-color: rgba(255, 255, 255, 0.9);
         }
 
-        .header::before {
+        .dashboard-header::before {
             content: '';
             position: absolute;
             top: 0;
@@ -119,41 +278,6 @@
             transform: translateY(-2px);
             box-shadow: var(--shadow-lg);
             opacity: 0.9;
-        }
-
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            background: var(--bg-color);
-            padding: 1rem 1.5rem;
-            border-radius: 12px;
-            border: 1px solid rgba(139, 69, 19, 0.1);
-            box-shadow: var(--shadow-sm);
-        }
-
-        .user-avatar {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
-
-        .user-details h3 {
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .user-details p {
-            font-size: 0.875rem;
-            color: var(--text-light);
         }
 
         /* Quick Stats */
@@ -253,14 +377,7 @@
             color: var(--error-color);
         }
 
-        /* Main Grid - Modified for two cards per row */
-        .main-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 2rem;
-            margin-bottom: 2rem;
-        }
-
+        /* Sections Grid */
         .sections-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -398,77 +515,6 @@
             color: var(--info-color);
         }
 
-        /* Footer */
-        .footer {
-            text-align: center;
-            padding: 1.5rem;
-            color: var(--text-light);
-            font-size: 0.875rem;
-            margin-top: 2rem;
-        }
-
-        /* Responsive Design */
-        @media (max-width: 1024px) {
-            .sections-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .header-content {
-                flex-direction: column;
-                text-align: center;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .landing-container {
-                padding: 1rem;
-            }
-            
-            .header {
-                padding: 1.5rem;
-            }
-            
-            .welcome-content h1 {
-                font-size: 2rem;
-            }
-            
-            .sections-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .quick-stats {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
-        @media (max-width: 480px) {
-            .welcome-content h1 {
-                font-size: 1.75rem;
-            }
-            
-            .quick-stats {
-                grid-template-columns: 1fr;
-            }
-            
-            .user-info {
-                padding: 0.75rem 1rem;
-            }
-        }
-
-        /* Micro Animations */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .section-card, .stat-card {
-            animation: fadeIn 0.6s ease-out;
-        }
-
-        .section-card:nth-child(2) { animation-delay: 0.1s; }
-        .section-card:nth-child(3) { animation-delay: 0.2s; }
-        .section-card:nth-child(4) { animation-delay: 0.3s; }
-
         /* Tooltip */
         .tooltip {
             position: relative;
@@ -497,228 +543,426 @@
             visibility: visible;
             opacity: 1;
         }
+
+        /* Footer - Consistent with other pages */
+        .footer {
+            text-align: center;
+            padding: 1.5rem;
+            color: var(--text-light);
+            font-size: 0.875rem;
+            margin-top: 2rem;
+            background-color: var(--card-bg);
+            border-top: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 1200px) {
+            .sidebar {
+                width: 220px;
+            }
+        }
+
+        @media (max-width: 992px) {
+            .sidebar {
+                width: 200px;
+                padding: 1rem 0;
+            }
+            
+            .content-area {
+                padding: 1rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                padding: 0;
+                flex-direction: row;
+                overflow-x: auto;
+            }
+            
+            .sidebar-menu {
+                display: flex;
+                flex-wrap: nowrap;
+                padding: 0.5rem;
+            }
+            
+            .sidebar-section {
+                margin-bottom: 0;
+                margin-right: 1.5rem;
+            }
+            
+            .sidebar-section h3 {
+                display: none;
+            }
+            
+            .sidebar-link {
+                padding: 0.5rem 1rem;
+                white-space: nowrap;
+            }
+            
+            .dashboard-header {
+                padding: 1.5rem;
+            }
+            
+            .welcome-content h1 {
+                font-size: 2rem;
+            }
+            
+            .sections-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .quick-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 576px) {
+            .header-container {
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 0.75rem;
+            }
+            
+            .nav-links {
+                margin-top: 0.75rem;
+                width: 100%;
+                justify-content: space-between;
+            }
+            
+            .user-menu {
+                margin-top: 0.75rem;
+                width: 100%;
+                justify-content: flex-end;
+            }
+            
+            .welcome-content h1 {
+                font-size: 1.75rem;
+            }
+            
+            .quick-stats {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Micro Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .section-card, .stat-card {
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        .section-card:nth-child(2) { animation-delay: 0.1s; }
+        .section-card:nth-child(3) { animation-delay: 0.2s; }
+        .section-card:nth-child(4) { animation-delay: 0.3s; }
     </style>
 </head>
 <body>
-    <div class="landing-container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-content">
-                <div class="welcome-content">
-                    <h1>Welcome to RATIN Trade Analytics</h1>
-                    <p>Your comprehensive platform for managing cross-border trade data, market intelligence, and regional price monitoring across East Africa.</p>
-                    <a href="#quick-stats" class="cta-button">Explore Dashboard</a>
-                </div>
-                <div class="user-info">
-                    <div class="user-avatar">AD</div>
-                    <div class="user-details">
-                        <h3>Admin User</h3>
-                        <p>Administrator</p>
-                    </div>
-                </div>
-            </div>
+    <!-- Header - Consistent with other pages -->
+    <header class="header-container">
+        <div class="logo">
+            <img src="./img/Ratin-logo-1.png" alt="RATIN Logo" class="logo-img">
+            <span class="logo-text">RATIN Analytics</span>
         </div>
 
-        <!-- Quick Stats -->
-        <div class="quick-stats" id="quick-stats">
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                </div>
-                <div class="stat-value">
-                    2,847
-                    <span class="stat-change positive">+12%</span>
-                </div>
-                <div class="stat-label">Total Trade Records</div>
+        
+        <div class="user-menu">
+            <div class="notification-bell">
+                <i class="fas fa-bell"></i>
+                <span class="notification-badge">3</span>
             </div>
-            
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon">
-                        <i class="fas fa-map-marker-alt"></i>
-                    </div>
-                </div>
-                <div class="stat-value">
-                    43
-                    <span class="stat-change positive">+2</span>
-                </div>
-                <div class="stat-label">Active Trade Points</div>
-            </div>
-            
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon">
-                        <i class="fas fa-users"></i>
-                    </div>
-                </div>
-                <div class="stat-value">
-                    18
-                    <span class="stat-change positive">+3</span>
-                </div>
-                <div class="stat-label">Active Enumerators</div>
-            </div>
-            
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon">
-                        <i class="fas fa-clock"></i>
-                    </div>
-                </div>
-                <div class="stat-value">
-                    24h
-                    <span class="stat-change negative">+2h</span>
-                </div>
-                <div class="stat-label">Last Data Update</div>
-            </div>
+            <div class="user-avatar">AD</div>
         </div>
+    </header>
 
-        <!-- Main Content Grid -->
-        <div class="main-grid">
-            <!-- Sections Grid -->
-            <div class="sections-grid">
-                <!-- Base Management Card -->
-                <div class="section-card">
-                    <div class="section-header">
-                        <div class="section-icon">
-                            <i class="fas fa-table"></i>
-                        </div>
-                        <h3>Base Management</h3>
-                    </div>
-                    <ul>
-                        <li>
-                            <a href="../base/commodities_boilerplate.php">
-                                <i class="fas fa-apple-alt"></i> Commodities
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage agricultural commodities and varieties</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../base/tradepoints_boilerplate.php">
-                                <i class="fas fa-map-marker-alt"></i> Trade Points
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage markets, border points and millers</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../base/enumerator_boilerplate.php">
-                                <i class="fas fa-user-tie"></i> Enumerators
-                                <span class="badge updated">Updated</span>
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage field data collectors</span></span>
-                            </a>
-                        </li>
-                    </ul>
+    <!-- Main Content Area -->
+    <div class="main-container">
+        <!-- Sidebar - Consistent with other pages -->
+        <aside class="sidebar">
+            <div class="sidebar-menu">
+                <div class="sidebar-section">
+                    <h3>Dashboard</h3>
+                    <a href="../dashboard/index.php" class="sidebar-link active">
+                        <i class="fas fa-tachometer-alt"></i> Overview
+                    </a>
                 </div>
-
-                <!-- Data Management Card -->
-                <div class="section-card">
-                    <div class="section-header">
-                        <div class="section-icon">
-                            <i class="fas fa-chart-line"></i>
-                        </div>
-                        <h3>Data Management</h3>
-                    </div>
-                    <ul>
-                        <li>
-                            <a href="../data/marketprices_boilerplate.php">
-                                <i class="fas fa-store-alt"></i> Market Prices
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View and manage market price data</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../data/datasource_boilerplate.php">
-                                <i class="fas fa-database"></i> Data Sources
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage data collection sources</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../data/xbtvol_boilerplate.php">
-                                <i class="fas fa-exchange-alt"></i> XBT Volumes
-                                <span class="badge new">New</span>
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Cross-border trade volume data</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../data/miller_price_boilerplate.php">
-                                <i class="fas fa-industry"></i> Miller Prices
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage miller price data</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../data/currencies_boilerplate.php">
-                                <i class="fas fa-money-bill-wave"></i> Currency Rates
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage currency exchange rates</span></span>
-                            </a>
-                        </li>
-                    </ul>
+                
+                <div class="sidebar-section">
+                    <h3>Base Management</h3>
+                    <a href="../base/commodities_boilerplate.php" class="sidebar-link">
+                        <i class="fas fa-apple-alt"></i> Commodities
+                    </a>
+                    <a href="../base/tradepoints_boilerplate.php" class="sidebar-link">
+                        <i class="fas fa-map-marker-alt"></i> Trade Points
+                    </a>
+                    <a href="../base/enumerator_boilerplate.php" class="sidebar-link">
+                        <i class="fas fa-user-tie"></i> Enumerators
+                    </a>
                 </div>
-
-                <!-- Reports & Analytics Card -->
-                <div class="section-card">
-                    <div class="section-header">
-                        <div class="section-icon">
-                            <i class="fas fa-chart-pie"></i>
-                        </div>
-                        <h3>Reports & Analytics</h3>
-                    </div>
-                    <ul>
-                        <li>
-                            <a href="../reports/price_trends.php">
-                                <i class="fas fa-chart-line"></i> Price Trends
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Analyze commodity price trends</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../reports/trade_flows.php">
-                                <i class="fas fa-project-diagram"></i> Trade Flows
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View cross-border trade patterns</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="#" style="opacity: 0.6; cursor: not-allowed;">
-                                <i class="fas fa-file-export"></i> Export Reports
-                                <span class="badge" style="background: #6b7280; color: white;">Soon</span>
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Coming in next release</span></span>
-                            </a>
-                        </li>
-                    </ul>
+                
+                <div class="sidebar-section">
+                    <h3>Data Management</h3>
+                    <a href="../data/marketprices_boilerplate.php" class="sidebar-link">
+                        <i class="fas fa-store-alt"></i> Market Prices
+                    </a>
+                    <a href="../data/xbtvol_boilerplate.php" class="sidebar-link">
+                        <i class="fas fa-exchange-alt"></i> XBT Volumes
+                    </a>
+                    <a href="../data/miller_price_boilerplate.php" class="sidebar-link">
+                        <i class="fas fa-industry"></i> Miller Prices
+                    </a>
+                    <a href="../data/currencies_boilerplate.php" class="sidebar-link">
+                        <i class="fas fa-money-bill-wave"></i> Currency Rates
+                    </a>
                 </div>
-
-                <!-- User & Admin Card -->
-                <div class="section-card">
-                    <div class="section-header">
-                        <div class="section-icon">
-                            <i class="fas fa-user-cog"></i>
-                        </div>
-                        <h3>User & Admin</h3>
-                    </div>
-                    <ul>
-                        <li>
-                            <a href="../user/profile.php">
-                                <i class="fas fa-user"></i> My Profile
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View and edit your profile</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../user/settings.php">
-                                <i class="fas fa-cog"></i> Settings
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">System and account settings</span></span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="../auth/logout.php">
-                                <i class="fas fa-sign-out-alt"></i> Logout
-                                <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Sign out of the system</span></span>
-                            </a>
-                        </li>
-                    </ul>
+                
+                <div class="sidebar-section">
+                    <h3>Reports</h3>
+                    <a href="../reports/price_trends.php" class="sidebar-link">
+                        <i class="fas fa-chart-line"></i> Price Trends
+                    </a>
+                    <a href="../reports/trade_flows.php" class="sidebar-link">
+                        <i class="fas fa-project-diagram"></i> Trade Flows
+                    </a>
+                </div>
+                
+                <div class="sidebar-section">
+                    <h3>Admin</h3>
+                    <a href="../user/profile.php" class="sidebar-link">
+                        <i class="fas fa-user"></i> Profile
+                    </a>
+                    <a href="../user/settings.php" class="sidebar-link">
+                        <i class="fas fa-cog"></i> Settings
+                    </a>
+                    <a href="../auth/logout.php" class="sidebar-link">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </a>
                 </div>
             </div>
-        </div>
+        </aside>
 
-        <div class="footer">
-            <p>© 2023 RATIN Trade Analytics. All rights reserved. | Version 2.1.0</p>
-        </div>
+        <!-- Content Area -->
+        <main class="content-area">
+            <div class="landing-container">
+                <!-- Dashboard Header -->
+                <div class="dashboard-header">
+                    <div class="header-content">
+                        <div class="welcome-content">
+                            <h1>Welcome to RATIN Trade Analytics</h1>
+                            <p>Your comprehensive platform for managing cross-border trade data, market intelligence, and regional price monitoring across East Africa.</p>
+                            <a href="#quick-stats" class="cta-button">Explore Dashboard</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Stats -->
+                <div class="quick-stats" id="quick-stats">
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                        </div>
+                        <div class="stat-value">
+                            2,847
+                            <span class="stat-change positive">+12%</span>
+                        </div>
+                        <div class="stat-label">Total Trade Records</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-map-marker-alt"></i>
+                            </div>
+                        </div>
+                        <div class="stat-value">
+                            43
+                            <span class="stat-change positive">+2</span>
+                        </div>
+                        <div class="stat-label">Active Trade Points</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-users"></i>
+                            </div>
+                        </div>
+                        <div class="stat-value">
+                            18
+                            <span class="stat-change positive">+3</span>
+                        </div>
+                        <div class="stat-label">Active Enumerators</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <div class="stat-icon">
+                                <i class="fas fa-clock"></i>
+                            </div>
+                        </div>
+                        <div class="stat-value">
+                            24h
+                            <span class="stat-change negative">+2h</span>
+                        </div>
+                        <div class="stat-label">Last Data Update</div>
+                    </div>
+                </div>
+
+                <!-- Sections Grid -->
+                <div class="sections-grid">
+                    <!-- Base Management Card -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <div class="section-icon">
+                                <i class="fas fa-table"></i>
+                            </div>
+                            <h3>Base Management</h3>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="../base/commodities_boilerplate.php">
+                                    <i class="fas fa-apple-alt"></i> Commodities
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage agricultural commodities and varieties</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../base/tradepoints_boilerplate.php">
+                                    <i class="fas fa-map-marker-alt"></i> Trade Points
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage markets, border points and millers</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../base/enumerator_boilerplate.php">
+                                    <i class="fas fa-user-tie"></i> Enumerators
+                                    <span class="badge updated">Updated</span>
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage field data collectors</span></span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Data Management Card -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <div class="section-icon">
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                            <h3>Data Management</h3>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="../data/marketprices_boilerplate.php">
+                                    <i class="fas fa-store-alt"></i> Market Prices
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View and manage market price data</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../data/datasource_boilerplate.php">
+                                    <i class="fas fa-database"></i> Data Sources
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage data collection sources</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../data/xbtvol_boilerplate.php">
+                                    <i class="fas fa-exchange-alt"></i> XBT Volumes
+                                    <span class="badge new">New</span>
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Cross-border trade volume data</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../data/miller_price_boilerplate.php">
+                                    <i class="fas fa-industry"></i> Miller Prices
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage miller price data</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../data/currencies_boilerplate.php">
+                                    <i class="fas fa-money-bill-wave"></i> Currency Rates
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage currency exchange rates</span></span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Reports & Analytics Card -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <div class="section-icon">
+                                <i class="fas fa-chart-pie"></i>
+                            </div>
+                            <h3>Reports & Analytics</h3>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="../reports/price_trends.php">
+                                    <i class="fas fa-chart-line"></i> Price Trends
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Analyze commodity price trends</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../reports/trade_flows.php">
+                                    <i class="fas fa-project-diagram"></i> Trade Flows
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View cross-border trade patterns</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="#" style="opacity: 0.6; cursor: not-allowed;">
+                                    <i class="fas fa-file-export"></i> Export Reports
+                                    <span class="badge" style="background: #6b7280; color: white;">Soon</span>
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Coming in next release</span></span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- User & Admin Card -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <div class="section-icon">
+                                <i class="fas fa-user-cog"></i>
+                            </div>
+                            <h3>User & Admin</h3>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="../user/profile.php">
+                                    <i class="fas fa-user"></i> My Profile
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View and edit your profile</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../user/settings.php">
+                                    <i class="fas fa-cog"></i> Settings
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">System and account settings</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../auth/logout.php">
+                                    <i class="fas fa-sign-out-alt"></i> Logout
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Sign out of the system</span></span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </main>
     </div>
+
+    <!-- Footer - Consistent with other pages -->
+    <footer class="footer">
+        <p>© 2023 RATIN Trade Analytics. All rights reserved. | Version 2.1.0</p>
+    </footer>
 
     <script>
         // Enhanced JavaScript functionality
@@ -743,6 +987,19 @@
                         link.click();
                     }
                 });
+            });
+
+            // Set active sidebar link based on current page
+            const currentPath = window.location.pathname.split('/').pop() || 'index.php';
+            const sidebarLinks = document.querySelectorAll('.sidebar-link');
+            
+            sidebarLinks.forEach(link => {
+                const linkPath = link.getAttribute('href').split('/').pop();
+                if (currentPath === linkPath) {
+                    link.classList.add('active');
+                } else {
+                    link.classList.remove('active');
+                }
             });
         });
 
