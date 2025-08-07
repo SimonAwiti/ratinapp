@@ -382,7 +382,7 @@ mysqli_close($con); // Close DB connection for step 1
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='sidebar.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='commodities_boilerplate.php'">×</button>
 
         <div class="steps-sidebar">
             <h3>Progress</h3>
