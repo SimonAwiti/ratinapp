@@ -1,49 +1,43 @@
 <?php
 include '../admin/includes/config.php';
 
-// Enable error reporting for debugging
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+header('Content-Type: application/json');
+ini_set('display_errors', 0);
+error_reporting(0);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ids'])) {
-    $idsToDelete = $_POST['ids'];
+// Ensure it's a POST request and using JSON
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $input = file_get_contents('php://input');
+    $data = json_decode($input, true);
 
-    echo '<pre>IDs received by delete_commodity.php:</pre>';
-    echo '<pre>';
-    var_dump($idsToDelete);
-    echo '</pre>';
+    if (!isset($data['ids']) || !is_array($data['ids'])) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid or missing IDs.'
+        ]);
+        exit;
+    }
 
-    if (!empty($idsToDelete) && is_array($idsToDelete)) {
-        // Sanitize the IDs to prevent SQL injection
-        $safeIds = array_map('intval', $idsToDelete);
-        $idList = implode(',', $safeIds);
+    $idsToDelete = array_map('intval', $data['ids']);
+    $idList = implode(',', $idsToDelete);
 
-        $sql = "DELETE FROM commodities WHERE id IN ($idList)";
-
-        echo '<pre>SQL Query:</pre>';
-        echo '<pre>' . $sql . '</pre>';
-
-        if ($con->query($sql) === TRUE) {
-            echo '<pre>Deletion successful.</pre>';
-            header("Location: sidebar.php?delete_success=true");
-            exit();
-        } else {
-            echo '<pre>Deletion failed. MySQL Error:</pre>';
-            echo '<pre>' . $con->error . '</pre>';
-            header("Location: sidebar.php?delete_error=" . urlencode($con->error));
-            exit();
-        }
+    $sql = "DELETE FROM commodities WHERE id IN ($idList)";
+    if ($con->query($sql) === TRUE) {
+        echo json_encode([
+            'success' => true,
+            'message' => count($idsToDelete) . " commodity(ies) deleted successfully."
+        ]);
     } else {
-        echo '<pre>No valid IDs to delete.</pre>';
-        header("Location: sidebar.php?delete_empty=true");
-        exit();
+        echo json_encode([
+            'success' => false,
+            'message' => 'Deletion failed: ' . $con->error
+        ]);
     }
 
     $con->close();
 } else {
-    echo '<pre>Invalid request to delete_commodity.php</pre>';
-    header("Location: sidebar.php");
-    exit();
+    echo json_encode([
+        'success' => false,
+        'message' => 'Invalid request method.'
+    ]);
 }
-?>
