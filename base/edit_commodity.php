@@ -23,7 +23,7 @@ if ($id > 0) {
 }
 
 if (!$commodity) {
-    echo "<script>alert('Commodity not found'); window.location.href='../base/sidebar.php';</script>";
+    echo "<script>alert('Commodity not found'); window.location.href='../base/commodities_boilerplate.php';</script>";
     exit;
 }
 
@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->errno) {
             $error_message = "MySQL Error: " . $stmt->error;
         } else {
-            echo "<script>alert('Commodity updated successfully'); window.location.href='../base/sidebar.php';</script>";
+            echo "<script>alert('Commodity updated successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
             exit;
         }
     }
@@ -361,7 +361,7 @@ if ($result_cat) {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
         
         <h2>Edit Commodity</h2>
         <p>Update the commodity details below</p>
