@@ -7,6 +7,302 @@ include '../admin/includes/config.php';
 // Include the shared header with the sidebar and initial HTML
 include '../admin/includes/header.php';
 
+// Handle CSV import
+if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
+    $file = $_FILES['csv_file']['tmp_name'];
+    $handle = fopen($file, "r");
+    
+    // Skip header row
+    fgetcsv($handle);
+    
+    $successCount = 0;
+    $errorCount = 0;
+    $errors = array();
+    
+    // Start transaction
+    $con->begin_transaction();
+    
+    try {
+        $rowNumber = 1; // Track row numbers for better error reporting
+        
+        while (($data = fgetcsv($handle, 1000, ","))) {
+            $rowNumber++;
+            
+            // Debug: Log the raw row data
+            // Uncomment this line to see what's in each row
+            //error_log("Row $rowNumber data: " . print_r($data, true));
+            
+            // Skip completely empty rows
+            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
+                continue; // Skip empty rows without counting as errors
+            }
+            
+            // Validate required fields
+            if (empty(trim($data[0]))) { // HS Code
+                $errors[] = "Row $rowNumber: HS Code is required (found: '" . (isset($data[0]) ? $data[0] : 'null') . "')";
+                $errorCount++;
+                continue;
+            }
+            
+            if (empty(trim($data[1]))) { // Category
+                $errors[] = "Row $rowNumber: Category is required (found: '" . (isset($data[1]) ? $data[1] : 'null') . "')";
+                $errorCount++;
+                continue;
+            }
+            
+            if (empty(trim($data[2]))) { // Commodity Name
+                $errors[] = "Row $rowNumber: Commodity Name is required (found: '" . (isset($data[2]) ? $data[2] : 'null') . "')";
+                $errorCount++;
+                continue;
+            }
+            
+            // Get or create category
+            $category_name = trim($data[1]);
+            $category_query = "SELECT id FROM commodity_categories WHERE name = ?";
+            $category_stmt = $con->prepare($category_query);
+            $category_stmt->bind_param('s', $category_name);
+            $category_stmt->execute();
+            $category_result = $category_stmt->get_result();
+            
+            if ($category_result->num_rows > 0) {
+                $category_row = $category_result->fetch_assoc();
+                $category_id = $category_row['id'];
+            } else {
+                // Create new category
+                $insert_category = "INSERT INTO commodity_categories (name) VALUES (?)";
+                $insert_stmt = $con->prepare($insert_category);
+                $insert_stmt->bind_param('s', $category_name);
+                $insert_stmt->execute();
+                $category_id = $con->insert_id;
+            }
+            
+            // Prepare commodity data
+            $hs_code = trim($data[0]);
+            $commodity_name = trim($data[2]);
+            $variety = isset($data[3]) ? trim($data[3]) : '';
+            
+            // Handle units JSON - FIXED VERSION
+            $units_array = [];
+            $packaging_units_csv = isset($data[4]) ? trim($data[4]) : '';
+            if (!empty($packaging_units_csv)) {
+                $packaging_units = array_map('trim', explode(',', $packaging_units_csv)); // Trim all elements
+                foreach ($packaging_units as $pu) {
+                    // Updated regex to handle optional spaces and be more flexible
+                    if (preg_match('/(\d+)\s*(\w+)/', $pu, $matches)) {
+                        $units_array[] = array(
+                            'size' => trim($matches[1]),
+                            'unit' => trim($matches[2])
+                        );
+                    } else {
+                        // Log warning for unparseable units
+                        $errors[] = "Row $rowNumber: Warning - Could not parse unit format: '$pu'";
+                    }
+                }
+            }
+            $units_json = json_encode($units_array, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($units_json === false) {
+                $errors[] = "Row $rowNumber: Failed to encode units as JSON - " . json_last_error_msg();
+                $errorCount++;
+                continue;
+            }
+            // Clean the JSON string of any potential invisible characters
+            $units_json = trim(preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $units_json));
+            
+            // Handle aliases and countries JSON - IMPROVED VERSION
+            $alias_country_pairs = [];
+            $aliases_countries_csv = isset($data[5]) ? trim($data[5]) : '';
+            if (!empty($aliases_countries_csv)) {
+                $aliases_countries = array_map('trim', explode(',', $aliases_countries_csv)); // Trim all elements
+                foreach ($aliases_countries as $ac) {
+                    if (strpos($ac, ':') !== false) {
+                        $parts = explode(':', $ac, 2);
+                        if (count($parts) == 2) {
+                            $alias_country_pairs[] = array(
+                                'alias' => trim($parts[0]),
+                                'country' => trim($parts[1])
+                            );
+                        }
+                    } else {
+                        // Log warning for unparseable alias:country format
+                        $errors[] = "Row $rowNumber: Warning - Could not parse alias:country format: '$ac'";
+                    }
+                }
+            }
+            $aliases_json = json_encode($alias_country_pairs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($aliases_json === false) {
+                $errors[] = "Row $rowNumber: Failed to encode aliases as JSON - " . json_last_error_msg();
+                $errorCount++;
+                continue;
+            }
+            // Clean the JSON string of any potential invisible characters
+            $aliases_json = trim(preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $aliases_json));
+            
+            // Get unique countries for country column
+            $unique_countries = [];
+            if (!empty($alias_country_pairs)) {
+                $countries = array_column($alias_country_pairs, 'country');
+                $unique_countries = array_values(array_unique(array_filter($countries))); // Remove empty values
+            }
+            $countries_json = json_encode($unique_countries, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($countries_json === false) {
+                $errors[] = "Row $rowNumber: Failed to encode countries as JSON - " . json_last_error_msg();
+                $errorCount++;
+                continue;
+            }
+            // Clean the JSON string of any potential invisible characters
+            $countries_json = trim(preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $countries_json));
+            
+            // Enhanced JSON validation with proper error checking
+            $units_decoded = json_decode($units_json);
+            $aliases_decoded = json_decode($aliases_json);
+            $countries_decoded = json_decode($countries_json);
+            
+            if ($units_json !== '[]' && $units_decoded === null) {
+                $errors[] = "Row $rowNumber: Invalid units JSON format - " . json_last_error_msg();
+                $errorCount++;
+                continue;
+            }
+            if ($aliases_json !== '[]' && $aliases_decoded === null) {
+                $errors[] = "Row $rowNumber: Invalid aliases JSON format - " . json_last_error_msg();
+                $errorCount++;
+                continue;
+            }
+            if ($countries_json !== '[]' && $countries_decoded === null) {
+                $errors[] = "Row $rowNumber: Invalid countries JSON format - " . json_last_error_msg();
+                $errorCount++;
+                continue;
+            }
+            
+            // Optional: Add debugging (remove in production)
+            // echo "Debug Row $rowNumber - Units JSON: $units_json<br>";
+            // echo "Debug Row $rowNumber - Aliases JSON: $aliases_json<br>";
+            // echo "Debug Row $rowNumber - Countries JSON: $countries_json<br>";
+            
+            // Check if commodity already exists
+            $check_query = "SELECT id FROM commodities WHERE hs_code = ? AND commodity_name = ?";
+            $check_stmt = $con->prepare($check_query);
+            $check_stmt->bind_param('ss', $hs_code, $commodity_name);
+            $check_stmt->execute();
+            $check_result = $check_stmt->get_result();
+            
+            if ($check_result->num_rows > 0) {
+                if (isset($_POST['overwrite_existing'])) {
+                    // Update existing commodity - Direct JSON insertion without CAST
+                    $update_query = "UPDATE commodities SET 
+                        category_id = ?, 
+                        variety = ?, 
+                        units = ?, 
+                        commodity_alias = ?, 
+                        country = ? 
+                        WHERE hs_code = ? AND commodity_name = ?";
+                    
+                    $update_stmt = $con->prepare($update_query);
+                    if (!$update_stmt) {
+                        $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
+                        $errorCount++;
+                        continue;
+                    }
+                    
+                    $update_stmt->bind_param(
+                        'issssss',
+                        $category_id,
+                        $variety,
+                        $units_json,
+                        $aliases_json,
+                        $countries_json,
+                        $hs_code,
+                        $commodity_name
+                    );
+                    
+                    if ($update_stmt->execute()) {
+                        $successCount++;
+                    } else {
+                        $errors[] = "Row $rowNumber: Update failed - " . $update_stmt->error;
+                        $errorCount++;
+                    }
+                    $update_stmt->close();
+                } else {
+                    $errors[] = "Row $rowNumber: Commodity with HS Code '$hs_code' and name '$commodity_name' already exists (use overwrite option to update)";
+                    $errorCount++;
+                }
+                continue;
+            }
+            
+            // Insert commodity - Direct JSON insertion without CAST
+            $insert_query = "INSERT INTO commodities (
+                hs_code, 
+                category_id, 
+                commodity_name, 
+                variety, 
+                units, 
+                commodity_alias, 
+                country
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)";
+            
+            $insert_stmt = $con->prepare($insert_query);
+            if (!$insert_stmt) {
+                $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
+                $errorCount++;
+                continue;
+            }
+            
+            // Send JSON as strings - MySQL will handle the conversion automatically
+            $insert_stmt->bind_param(
+                'sisssss',
+                $hs_code,
+                $category_id,
+                $commodity_name,
+                $variety,
+                $units_json,
+                $aliases_json,
+                $countries_json
+            );
+            
+            if ($insert_stmt->execute()) {
+                $successCount++;
+            } else {
+                $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
+                $errorCount++;
+            }
+            $insert_stmt->close();
+        }
+        
+        // Commit transaction if no critical errors (allow warnings)
+        $criticalErrors = 0;
+        foreach ($errors as $error) {
+            if (strpos($error, 'Warning') === false) {
+                $criticalErrors++;
+            }
+        }
+        
+        if ($criticalErrors === 0) {
+            $con->commit();
+            $warningCount = count($errors) - $criticalErrors;
+            if ($warningCount > 0) {
+                $import_message = "Successfully imported $successCount commodities with $warningCount warnings. Warnings: " . implode('<br>', $errors);
+                $import_status = 'warning';
+            } else {
+                $import_message = "Successfully imported $successCount commodities.";
+                $import_status = 'success';
+            }
+        } else {
+            $con->rollback();
+            $import_message = "Import rolled back due to $criticalErrors critical errors. Processed $successCount rows successfully. Errors: " . implode('<br>', $errors);
+            $import_status = 'danger';
+        }
+        
+    } catch (Exception $e) {
+        $con->rollback();
+        $import_message = "Import failed with exception: " . $e->getMessage();
+        $import_status = 'danger';
+    }
+    
+    fclose($handle);
+} elseif (isset($_POST['import_csv'])) {
+    $import_message = "Please select a valid CSV file to import.";
+    $import_status = 'danger';
+}
+
 // --- Fetch all data for the table ---
 $query = "
     SELECT
@@ -22,7 +318,10 @@ $query = "
         commodity_categories cc ON c.category_id = cc.id
 ";
 $result = $con->query($query);
-$commodities = $result->fetch_all(MYSQLI_ASSOC);
+$commodities = array();
+if ($result) {
+    $commodities = $result->fetch_all(MYSQLI_ASSOC);
+}
 
 // Pagination and Filtering Logic
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
@@ -36,19 +335,35 @@ $commodities_paged = array_slice($commodities, $startIndex, $itemsPerPage);
 // --- Fetch counts for summary boxes ---
 $total_commodities_query = "SELECT COUNT(*) AS total FROM commodities";
 $total_commodities_result = $con->query($total_commodities_query);
-$total_commodities = $total_commodities_result->fetch_assoc()['total'];
+$total_commodities = 0;
+if ($total_commodities_result) {
+    $row = $total_commodities_result->fetch_assoc();
+    $total_commodities = $row['total'];
+}
 
 $cereals_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Cereals')";
 $cereals_result = $con->query($cereals_query);
-$cereals_count = $cereals_result->fetch_assoc()['total'];
+$cereals_count = 0;
+if ($cereals_result) {
+    $row = $cereals_result->fetch_assoc();
+    $cereals_count = $row['total'];
+}
 
 $pulses_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Pulses')";
 $pulses_result = $con->query($pulses_query);
-$pulses_count = $pulses_result->fetch_assoc()['total'];
+$pulses_count = 0;
+if ($pulses_result) {
+    $row = $pulses_result->fetch_assoc();
+    $pulses_count = $row['total'];
+}
 
 $oil_seeds_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Oil seeds')";
 $oil_seeds_result = $con->query($oil_seeds_query);
-$oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
+$oil_seeds_count = 0;
+if ($oil_seeds_result) {
+    $row = $oil_seeds_result->fetch_assoc();
+    $oil_seeds_count = $row['total'];
+}
 ?>
 
 <style>
@@ -76,13 +391,13 @@ $oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
     .btn-add-new:hover {
         background-color: darkred;
     }
-    .btn-delete, .btn-export {
+    .btn-delete, .btn-export, .btn-import {
         background-color: white;
         color: black;
         border: 1px solid #ddd;
         padding: 8px 16px;
     }
-    .btn-delete:hover, .btn-export:hover {
+    .btn-delete:hover, .btn-export:hover, .btn-import:hover {
         background-color: #f8f9fa;
     }
     .dropdown-menu {
@@ -217,6 +532,28 @@ $oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
         font-style: italic;
         font-size: 0.9em;
     }
+    .alert {
+        margin-bottom: 20px;
+    }
+    .import-instructions {
+        background-color: #f8f9fa;
+        border-left: 4px solid rgba(180, 80, 50, 1);
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    .import-instructions h5 {
+        color: rgba(180, 80, 50, 1);
+        margin-top: 0;
+    }
+    .download-template {
+        display: inline-block;
+        margin-top: 10px;
+        color: rgba(180, 80, 50, 1);
+        text-decoration: none;
+    }
+    .download-template:hover {
+        text-decoration: underline;
+    }
 </style>
 
 <div class="stats-section">
@@ -258,6 +595,12 @@ $oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
     </div>
 </div>
 
+<?php if (isset($import_message)): ?>
+    <div class="alert alert-<?= $import_status ?>">
+        <?= $import_message ?>
+    </div>
+<?php endif; ?>
+
 <div class="container">
     <div class="table-container">
         <div class="btn-group">
@@ -285,6 +628,11 @@ $oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
                     </a></li>
                 </ul>
             </div>
+            
+            <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
+                <i class="fas fa-upload" style="margin-right: 3px;"></i>
+                Import
+            </button>
         </div>
 
         <table class="table table-striped table-hover">
@@ -372,6 +720,7 @@ $oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
     </div>
 </div>
 
+<!-- Image Modal -->
 <div class="modal fade" id="imageModal" tabindex="-1" aria-labelledby="imageModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -381,6 +730,55 @@ $oil_seeds_count = $oil_seeds_result->fetch_assoc()['total'];
             </div>
             <div class="modal-body text-center">
                 <img id="modalImage" src="" alt="" class="img-fluid" style="max-height: 400px;">
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import Modal -->
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importModalLabel">Import Commodities</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="import-instructions">
+                    <h5>CSV Format Instructions</h5>
+                    <p>Your CSV file should have the following columns in order:</p>
+                    <ol>
+                        <li><strong>HS Code</strong> (required)</li>
+                        <li><strong>Category</strong> (required, will be created if doesn't exist)</li>
+                        <li><strong>Commodity Name</strong> (required)</li>
+                        <li><strong>Variety</strong> (optional)</li>
+                        <li><strong>Packaging & Units</strong> (optional, comma-separated, e.g. "10kg, 25kg, 50kg")</li>
+                        <li><strong>Aliases & Countries</strong> (optional, comma-separated pairs, e.g. "Maize:Kenya, Corn:USA")</li>
+                    </ol>
+                    <a href="downloads/commodities_template.csv" class="download-template">
+                        <i class="fas fa-download"></i> Download CSV Template
+                    </a>
+                </div>
+                
+                <form method="POST" enctype="multipart/form-data" id="importForm">
+                    <div class="mb-3">
+                        <label for="csv_file" class="form-label">Select CSV File</label>
+                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                    </div>
+                    
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="overwriteExisting" name="overwrite_existing">
+                        <label class="form-check-label" for="overwriteExisting">
+                            Overwrite existing commodities with matching HS Code and Name
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="importForm" name="import_csv" class="btn btn-primary">
+                    <i class="fas fa-upload"></i> Import
+                </button>
             </div>
         </div>
     </div>
@@ -405,6 +803,12 @@ document.addEventListener("DOMContentLoaded", function() {
     if (typeof updateBreadcrumb === 'function') {
         updateBreadcrumb('Base', 'Commodities');
     }
+    
+    // Show import modal if there was an error
+    <?php if (isset($import_message) && $import_status === 'danger'): ?>
+        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
+        importModal.show();
+    <?php endif; ?>
 });
 
 function applyFilters() {
@@ -449,16 +853,37 @@ function deleteSelected() {
         alert('Please select at least one commodity to delete.');
         return;
     }
-    
+
     if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected commodity(ies)?`)) {
         const ids = Array.from(checkedBoxes).map(cb => cb.value);
-        // Implement your delete logic here
-        console.log('Deleting commodities with IDs:', ids);
-        // Example: fetch('delete_commodities.php', { method: 'POST', body: JSON.stringify({ ids }) })
-        // .then(response => response.json())
-        // .then(data => { if(data.success) location.reload(); });
+
+        fetch('delete_commodity.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ids: ids })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error('Network error');
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            alert('Request failed: ' + error.message);
+        });
     }
 }
+
+
 
 function exportSelected(format) {
     const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
