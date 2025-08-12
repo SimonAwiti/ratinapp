@@ -277,6 +277,88 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
         padding: 6px;
         margin-left: 5px;
     }
+    
+    /* Modal styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.4);
+    }
+    
+    .modal-content {
+        background-color: #fefefe;
+        margin: 10% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        width: 50%;
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .close-modal {
+        color: #aaa;
+        float: right;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    
+    .close-modal:hover {
+        color: black;
+    }
+    
+    /* Progress bar styles */
+    #uploadProgress {
+        margin-top: 20px;
+        display: none;
+    }
+    
+    #progressBar {
+        height: 20px;
+        width: 0%;
+        background-color: rgba(180, 80, 50, 1);
+        border-radius: 4px;
+        text-align: center;
+        color: white;
+        line-height: 20px;
+        transition: width 0.3s;
+    }
+    
+    /* Results box styles */
+    #uploadResults {
+        margin-top: 20px;
+        display: none;
+    }
+    
+    #resultsContent {
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 10px;
+        border-radius: 4px;
+    }
+    
+    /* Form input styles */
+    #bulkUploadForm input[type="file"],
+    #bulkUploadForm input[type="text"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        margin-bottom: 15px;
+    }
+    
+    #bulkUploadForm label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
 </style>
 
 <div class="text-wrapper-8"><h3>Market Prices Management</h3></div>
@@ -288,6 +370,9 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
             <a href="../data/add_marketprices.php" class="primary" style="display: inline-block; width: 302px; height: 52px; margin-right: 15px; text-align: center; line-height: 52px; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
                 <i class="fa fa-plus" style="margin-right: 6px;"></i> Add New
             </a>
+            <button class="bulk-upload-btn">
+                <i class="fa fa-upload" style="margin-right: 6px;"></i> Bulk Upload
+            </button>
             <button class="delete-btn">
                 <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
             </button>
@@ -403,6 +488,42 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
             <?php if ($page < $total_pages): ?>
                 <a href="?page=<?php echo $page + 1; ?>" class="page">›</a>
             <?php endif; ?>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Upload Modal -->
+<div id="bulkUploadModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close-modal">&times;</span>
+        <h3>Bulk Upload Market Prices</h3>
+        <p>Upload a CSV file containing market price data. <a href="#" id="downloadTemplate" style="color: rgba(180, 80, 50, 1);">Download CSV template</a></p>
+        
+        <form id="bulkUploadForm" enctype="multipart/form-data" style="margin-top: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label for="bulkFile">CSV File:</label>
+                <input type="file" id="bulkFile" name="bulkFile" accept=".csv" required>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="dataSource">Data Source:</label>
+                <input type="text" id="dataSource" name="dataSource" placeholder="Source of this data">
+            </div>
+            <div style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" class="close-modal" style="padding: 10px 20px; background-color: #eee; border: none; border-radius: 4px; cursor: pointer;">Cancel</button>
+                <button type="submit" style="padding: 10px 20px; background-color: rgba(180, 80, 50, 1); color: white; border: none; border-radius: 4px; cursor: pointer;">Upload</button>
+            </div>
+        </form>
+        
+        <div id="uploadProgress" style="margin-top: 20px; display: none;">
+            <div style="width: 100%; background-color: #f1f1f1; border-radius: 4px;">
+                <div id="progressBar" style="height: 20px; width: 0%; background-color: rgba(180, 80, 50, 1); border-radius: 4px; text-align: center; color: white; line-height: 20px;">0%</div>
+            </div>
+            <p id="progressText" style="text-align: center; margin-top: 5px;">Processing...</p>
+        </div>
+        
+        <div id="uploadResults" style="margin-top: 20px; display: none;">
+            <h4>Upload Results:</h4>
+            <div id="resultsContent" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px;"></div>
         </div>
     </div>
 </div>
@@ -624,9 +745,156 @@ function initializeMarketPrices() {
     }
 }
 
-// Initialize the market prices functionality when the DOM is fully loaded
+// Bulk Upload functionality
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize market prices as before
     initializeMarketPrices();
+    
+    // Bulk Upload Modal Handling
+    const modal = document.getElementById('bulkUploadModal');
+    const btn = document.querySelector('.bulk-upload-btn');
+    const closeButtons = document.querySelectorAll('.close-modal');
+    const downloadTemplate = document.getElementById('downloadTemplate');
+    const bulkUploadForm = document.getElementById('bulkUploadForm');
+    
+    if (btn) {
+        btn.addEventListener('click', function() {
+            modal.style.display = 'block';
+        });
+    }
+    
+    closeButtons.forEach(function(closeBtn) {
+        closeBtn.addEventListener('click', function() {
+            modal.style.display = 'none';
+            // Reset form and results when closing
+            bulkUploadForm.reset();
+            document.getElementById('uploadProgress').style.display = 'none';
+            document.getElementById('uploadResults').style.display = 'none';
+        });
+    });
+    
+    // Close modal when clicking outside
+    window.addEventListener('click', function(event) {
+        if (event.target === modal) {
+            modal.style.display = 'none';
+            // Reset form and results when closing
+            bulkUploadForm.reset();
+            document.getElementById('uploadProgress').style.display = 'none';
+            document.getElementById('uploadResults').style.display = 'none';
+        }
+    });
+    
+    // Download CSV template
+    if (downloadTemplate) {
+        downloadTemplate.addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            // CSV template content
+            const csvContent = "market_id,market,commodity_id,commodity_name,wholesale_price,retail_price,date_posted\n" +
+                              "1,Nairobi Market,1,Maize,50.00,55.00," + new Date().toISOString().split('T')[0] + "\n" +
+                              "2,Mombasa Market,2,Rice,80.00,85.00," + new Date().toISOString().split('T')[0];
+            
+            // Create download link
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'market_prices_template.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+    }
+    
+    // Handle bulk upload form submission
+    if (bulkUploadForm) {
+        bulkUploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('bulkFile');
+            const dataSource = document.getElementById('dataSource').value;
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const uploadResults = document.getElementById('uploadResults');
+            const resultsContent = document.getElementById('resultsContent');
+            
+            if (!fileInput.files.length) {
+                alert('Please select a CSV file to upload');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('data_source', dataSource);
+            
+            // Show progress bar
+            document.getElementById('uploadProgress').style.display = 'block';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            progressText.textContent = 'Processing...';
+            
+            // Hide previous results
+            uploadResults.style.display = 'none';
+            
+            fetch('../data/bulk_upload_marketprices.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Update progress bar to 100%
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                progressText.textContent = 'Upload complete!';
+                
+                // Show results
+                uploadResults.style.display = 'block';
+                
+                if (data.success) {
+                    resultsContent.innerHTML = `
+                        <p><strong>Success:</strong> ${data.message}</p>
+                        <p>Records processed: ${data.processed}</p>
+                        <p>Records inserted: ${data.inserted}</p>
+                        ${data.errors && data.errors.length ? `
+                            <p><strong>Errors:</strong></p>
+                            <ul>
+                                ${data.errors.map(error => `<li>Row ${error.row}: ${error.message}</li>`).join('')}
+                            </ul>
+                        ` : ''}
+                    `;
+                    
+                    // Reload the page after 3 seconds to show new data
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 3000);
+                } else {
+                    resultsContent.innerHTML = `
+                        <p><strong>Error:</strong> ${data.message}</p>
+                        ${data.errors && data.errors.length ? `
+                            <p><strong>Details:</strong></p>
+                            <ul>
+                                ${data.errors.map(error => `<li>${error}</li>`).join('')}
+                            </ul>
+                        ` : ''}
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('Error during bulk upload:', error);
+                progressText.textContent = 'Upload failed!';
+                
+                // Show error in results
+                uploadResults.style.display = 'block';
+                resultsContent.innerHTML = `<p><strong>Error:</strong> ${error.message}</p>`;
+            });
+        });
+    }
     
     // Update breadcrumb if the function exists
     if (typeof updateBreadcrumb === 'function') {
