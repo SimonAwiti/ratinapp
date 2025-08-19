@@ -539,14 +539,11 @@ foreach ($prices_data as $price) {
             <a href="#" class="nav-link active">
                 <i class="fas fa-store-alt"></i> Market Prices
             </a>
-            <a href="#" class="nav-link">
+            <a href="millerprices.php" class="nav-link">
                 <i class="fas fa-industry"></i> Miller Prices
             </a>
-            <a href="#" class="nav-link">
+            <a href="xbtvols.php" class="nav-link">
                 <i class="fas fa-exchange-alt"></i> XBT Volumes
-            </a>
-            <a href="#" class="nav-link">
-                <i class="fas fa-money-bill-wave"></i> Currency Rates
             </a>
         </div>
     </div>
