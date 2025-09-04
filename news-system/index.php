@@ -8,7 +8,7 @@ error_reporting(E_ALL);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>News Management System</title>
+    <title>Ratin Website Management System</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.6/quill.snow.css" rel="stylesheet">
@@ -292,7 +292,7 @@ error_reporting(E_ALL);
 <body>
     <!-- Header -->
     <div class="header">
-        <h1><i class="fas fa-newspaper"></i> News Management System</h1>
+        <h1><i class="fas fa-newspaper"></i> Ratin Website Management System</h1>
         <div class="header-buttons">
             <select id="categoryFilter" class="form-select" style="width: auto;">
                 <option value="">All Categories</option>
@@ -304,6 +304,9 @@ error_reporting(E_ALL);
             </select>
             <button class="btn btn-primary" onclick="showCreateModal()">
                 <i class="fas fa-plus"></i> Create Article
+            </button>
+            <button class="btn btn-primary" onclick="window.location.href='https://beta.ratin.net/ratinapp/admin'">
+                Admin Portal
             </button>
         </div>
     </div>
