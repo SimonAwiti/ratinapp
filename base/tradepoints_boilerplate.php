@@ -672,7 +672,7 @@ $millers_count = $millers_result->fetch_assoc()['total'];
 <div class="container">
     <div class="table-container">
         <div class="btn-group">
-            <a href="add_tradepoint.php" class="btn btn-add-new">
+            <a href="addtradepoint.php" class="btn btn-add-new">
                 <i class="fas fa-plus" style="margin-right: 5px;"></i>
                 Add New
             </a>
