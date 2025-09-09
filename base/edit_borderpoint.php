@@ -23,7 +23,7 @@ if ($id > 0) {
 }
 
 if (!$border_data) {
-    echo "<script>alert('Border point not found'); window.location.href='../base/sidebar.php';</script>";
+    echo "<script>alert('Border point not found'); window.location.href='../base/commodities_boilerplate.php';</script>";
     exit;
 }
 
@@ -99,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($stmt->errno) {
         $error_message = "MySQL Error: " . $stmt->error;
     } else {
-        echo "<script>alert('Border point updated successfully'); window.location.href='../base/sidebar.php';</script>";
+        echo "<script>alert('Border point updated successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
         exit;
     }
 }
@@ -337,7 +337,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
         
         <h2>Edit Border Point</h2>
         <p>Update the border point details below</p>

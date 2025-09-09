@@ -10,7 +10,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
 
 // Only allow 'admin' role to create new admins
 if ($_SESSION['admin_role'] !== 'admin') {
-    header("Location: base/sidebar.php");
+    header("Location: base/comodi.php");
     exit;
 }
 
@@ -445,7 +445,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['create_admin'])) {
             </button>
             
             <div class="text-center">
-                <a href="../base/sidebar.php" class="back-link">
+                <a href="../base/commodities_boilerplate.php" class="back-link">
                     <i class="fas fa-arrow-left"></i> Back to Dashboard
                 </a>
             </div>

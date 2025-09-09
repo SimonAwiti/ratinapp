@@ -570,7 +570,7 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['country'])) {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
         
         <!-- Left Sidebar with Steps -->
         <div class="steps-sidebar">

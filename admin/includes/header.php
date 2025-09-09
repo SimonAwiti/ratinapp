@@ -232,8 +232,9 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             <i class="fa fa-chevron-down"></i>
         </a>
         <div class="collapse submenu" id="webSubmenu">
-            <a href="#" class="nav-link"><i class="fa fa-link"></i> Website</a>
+            <a href="https://beta.ratin.net/frontend/" class="nav-link"><i class="fa fa-link"></i> Website</a>
             <a href="../frontend/marketprices.php" class="nav-link"><i class="fa fa-link"></i> Data display</a>
+            <a href="../news-system/index.php" class="nav-link"><i class="fa fa-link"></i> Website manager</a>
         </div>
 
         <a href="#userSubmenu" class="nav-link collapsed" data-bs-toggle="collapse" aria-expanded="false" aria-controls="userSubmenu">

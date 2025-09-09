@@ -140,7 +140,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit'])) {
             $destination, $data_source_id, $data_source_name, $id);
 
         if ($stmt->execute()) {
-            echo "<script>alert('XBT Volume updated successfully'); window.location.href='../base/sidebar.php';</script>";
+            echo "<script>alert('XBT Volume updated successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
         } else {
             $errors[] = "Error updating record: " . $con->error;
         }
@@ -303,7 +303,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit'])) {
 
             <div class="form-group text-end">
                 <button type="submit" name="submit" class="btn btn-primary">Update</button>
-                <a href="../base/sidebar.php" class="btn btn-secondary">Cancel</a>
+                <a href="../base/commodities_boilerplate.php" class="btn btn-secondary">Cancel</a>
             </div>
         </form>
     </div>

@@ -151,7 +151,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit'])) {
         $date_posted, $day, $month, $year, $status);
     
     if ($stmt->execute()) {
-        echo "<script>alert('Miller price added successfully'); window.location.href='../base/sidebar.php';</script>";
+        echo "<script>alert('Miller price added successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
     } else {
         echo "<script>alert('Error adding miller price: " . $con->error . "');</script>";
     }
@@ -271,7 +271,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit'])) {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
         <div class="steps">
             <div class="step">
                 <div class="step-circle active"></div>

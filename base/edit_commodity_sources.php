@@ -23,7 +23,7 @@ if ($id > 0) {
 }
 
 if (!$source) {
-    echo "<script>alert('Commodity Source not found'); window.location.href='../base/sidebar.php';</script>";
+    echo "<script>alert('Commodity Source not found'); window.location.href='../base/commodities_boilerplate.php';</script>";
     exit;
 }
 
@@ -219,7 +219,7 @@ $con->close();
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
         
         <h2>Edit Commodity Source</h2>
         <p>Update the geographical origin details below</p>

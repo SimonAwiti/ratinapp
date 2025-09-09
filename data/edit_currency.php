@@ -18,11 +18,11 @@ if ($currency_id > 0) {
     $currency_data = $result->fetch_assoc();
     
     if (!$currency_data) {
-        echo "<script>alert('Currency record not found'); window.location.href='../base/sidebar.php';</script>";
+        echo "<script>alert('Currency record not found'); window.location.href='../base/commodities_boilerplate.php';</script>";
         exit;
     }
 } else {
-    echo "<script>alert('Invalid currency ID'); window.location.href='../base/sidebar.php';</script>";
+    echo "<script>alert('Invalid currency ID'); window.location.href='../base/commodities_boilerplate.php';</script>";
     exit;
 }
 
@@ -70,7 +70,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
         $currency_id);
     
     if ($stmt->execute()) {
-        echo "<script>alert('Currency rate updated successfully'); window.location.href='../base/sidebar.php';</script>";
+        echo "<script>alert('Currency rate updated successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
     } else {
         echo "<script>alert('Error updating currency rate: " . $con->error . "');</script>";
     }
@@ -209,7 +209,7 @@ if (isset($con)) {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
         <div class="form-container">
             <div>
                 <h2>Edit Currency Rate</h2>

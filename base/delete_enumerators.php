@@ -13,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($ids) || !is_array($ids)) {
         $_SESSION['error_message'] = 'No enumerator IDs provided for deletion.';
-        header("Location: sidebar.php"); // Redirect back
+        header("Location: commodities_boilerplate.php"); // Redirect back
         exit;
     }
 
@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($clean_ids)) {
         $_SESSION['error_message'] = 'Invalid enumerator IDs provided.';
-        header("Location: sidebar.php");
+        header("Location: commodities_boilerplate.php");
         exit;
     }
 
@@ -52,6 +52,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $con->close();
-header("Location: sidebar.php"); // Always redirect back after processing
+header("Location: commodities_boilerplate.php"); // Always redirect back after processing
 exit;
 ?>

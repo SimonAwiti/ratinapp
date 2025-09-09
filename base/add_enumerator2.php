@@ -33,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     session_unset();
     session_destroy();
-    header("Location: sidebar.php");
+    header("Location: commodities_boilerplate.php");
     exit;
 }
 
@@ -367,7 +367,7 @@ while ($row = $result->fetch_assoc()) {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='sidebar.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='commodities_boilerplate.php'">×</button>
         
         <!-- Left Sidebar with Steps -->
         <div class="steps-sidebar">

@@ -116,7 +116,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update'])) {
         $price_id);
     
     if ($stmt->execute()) {
-        echo "<script>alert('Miller price updated successfully'); window.location.href='../base/sidebar.php?page=millerprices';</script>";
+        echo "<script>alert('Miller price updated successfully'); window.location.href='../base/commodities_boilerplate.php?page=millerprices';</script>";
     } else {
         echo "<script>alert('Error updating miller price: " . $con->error . "');</script>";
     }
@@ -178,7 +178,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update'])) {
 </head>
 <body>
     <div class="container">
-        <a href="../base/sidebar.php?page=millerprices" class="close-btn">×</a>
+        <a href="../base/commodities_boilerplate.php?page=millerprices" class="close-btn">×</a>
         <h2>Edit Miller Price</h2>
         
         <form method="POST" action="">

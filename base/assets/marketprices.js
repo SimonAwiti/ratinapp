@@ -218,5 +218,5 @@ function initializeMarketPrices() {
 }
 
 // IMPORTANT: This script no longer calls initializeMarketPrices() itself.
-// It relies on sidebar.php's loadContent function to call initializeMarketPrices()
+// It relies on commodities_boilerplate.php's loadContent function to call initializeMarketPrices()
 // once the marketprices_boilerplate.php content and this script are both loaded into the DOM.

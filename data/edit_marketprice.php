@@ -117,7 +117,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit'])) {
     );
     
     if ($stmt->execute()) {
-        header("Location: ../base/sidebar.php?success=1");
+        header("Location: ../base/commodities_boilerplate.php?success=1");
         exit();
     } else {
         $error = "Error updating record: " . $stmt->error;
@@ -325,7 +325,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit'])) {
             
             <div class="form-group">
                 <button type="submit" name="submit" class="btn">Update Price</button>
-                <a href="../base/sidebar.php" class="btn btn-cancel">Cancel</a>
+                <a href="../base/commodities_boilerplate.php" class="btn btn-cancel">Cancel</a>
             </div>
         </form>
     </div>

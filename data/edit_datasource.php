@@ -27,7 +27,7 @@ if (isset($_GET['id']) && !empty($_GET['id'])) {
                 $countries_covered_array = explode(", ", $row['countries_covered']);
             } else {
                 // If data source not found, redirect to the list page
-                echo "<script>alert('Data source not found!'); window.location.href='../base/sidebar.php';</script>";
+                echo "<script>alert('Data source not found!'); window.location.href='../base/commodities_boilerplate.php';</script>";
                 exit;
             }
             $stmt->close();
@@ -271,7 +271,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit']) && isset($co
 </head>
 <body>
   <div class="container">
-    <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+    <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
 
     <div class="steps">
       <div class="step">

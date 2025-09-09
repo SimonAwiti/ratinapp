@@ -213,7 +213,7 @@
 </head>
 <body>
   <div class="container">
-    <button class="close-btn" onclick="window.location.href='../base/sidebar.php'">×</button>
+    <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
 
     <div class="steps">
       <div class="step">
