@@ -139,7 +139,7 @@ error_reporting(E_ALL);
             min-height: 200px;
         }
         
-        /* Articles Table */
+        /* Tables */
         .table {
             margin-bottom: 0;
         }
@@ -255,6 +255,15 @@ error_reporting(E_ALL);
             color: #ccc;
         }
         
+        /* Toast notification */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            min-width: 300px;
+        }
+        
         /* Responsive */
         @media (max-width: 768px) {
             .header {
@@ -290,6 +299,9 @@ error_reporting(E_ALL);
     </style>
 </head>
 <body>
+    <!-- Toast container -->
+    <div id="toastContainer" class="toast-container"></div>
+    
     <!-- Header -->
     <div class="header">
         <h1><i class="fas fa-newspaper"></i> Ratin Website Management System</h1>
@@ -304,6 +316,9 @@ error_reporting(E_ALL);
             </select>
             <button class="btn btn-primary" onclick="showCreateModal()">
                 <i class="fas fa-plus"></i> Create Article
+            </button>
+            <button class="btn btn-primary" onclick="showCreateInsightModal()">
+                <i class="fas fa-lightbulb"></i> Create Insight
             </button>
             <button class="btn btn-primary" onclick="window.location.href='https://beta.ratin.net/ratinapp/admin'">
                 Admin Portal
@@ -328,6 +343,11 @@ error_reporting(E_ALL);
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="drafts-tab" data-bs-toggle="tab" data-bs-target="#drafts" type="button" role="tab">
                     <i class="fas fa-edit"></i> Drafts
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="insights-tab" data-bs-toggle="tab" data-bs-target="#insights" type="button" role="tab">
+                    <i class="fas fa-lightbulb"></i> Insights
                 </button>
             </li>
         </ul>
@@ -386,6 +406,27 @@ error_reporting(E_ALL);
             <div class="tab-pane fade" id="drafts" role="tabpanel">
                 <div id="draftArticlesContainer">
                     <!-- Draft articles will be loaded here -->
+                </div>
+            </div>
+
+            <!-- Insights Tab -->
+            <div class="tab-pane fade" id="insights" role="tabpanel">
+                <div class="filter-section">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>Search Insights</label>
+                            <input type="text" id="insightSearchInput" class="form-control" placeholder="Search insights...">
+                        </div>
+                        <div class="filter-group">
+                            <button class="btn btn-primary" onclick="applyInsightFilters()">
+                                <i class="fas fa-filter"></i> Filter
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="insightsTableContainer">
+                    <!-- Insights table will be loaded here -->
                 </div>
             </div>
         </div>
@@ -473,19 +514,62 @@ error_reporting(E_ALL);
         </div>
     </div>
 
+    <!-- Create/Edit Insight Modal -->
+    <div class="modal fade" id="insightModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="insightModalTitle">Create New Insight</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="insightForm">
+                        <input type="hidden" id="insightId" name="id">
+                        
+                        <!-- Basic Information -->
+                        <div class="form-section">
+                            <h5><i class="fas fa-lightbulb"></i> Insight Information</h5>
+                            
+                            <div class="form-group">
+                                <label for="insightTitle" class="required">Title</label>
+                                <input type="text" id="insightTitle" name="title" required maxlength="255" placeholder="Enter insight title...">
+                            </div>
+                        </div>
+
+                        <!-- Content Section -->
+                        <div class="form-section">
+                            <h5><i class="fas fa-file-alt"></i> Content</h5>
+                            
+                            <div class="form-group">
+                                <label for="insightBody" class="required">Insight Content</label>
+                                <div id="insightEditor" class="editor-container">
+                                    <!-- Rich text editor will be initialized here -->
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveInsight()">Save Insight</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Delete Confirmation Modal -->
     <div class="modal fade" id="deleteModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title text-danger">
-                        <i class="fas fa-exclamation-triangle"></i> Delete Article
+                        <i class="fas fa-exclamation-triangle"></i> <span id="deleteModalTitle">Delete Article</span>
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <p>Are you sure you want to delete this article? This action cannot be undone.</p>
-                    <div id="deleteArticleInfo"></div>
+                    <p id="deleteModalText">Are you sure you want to delete this article? This action cannot be undone.</p>
+                    <div id="deleteItemInfo"></div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -504,13 +588,18 @@ error_reporting(E_ALL);
     <script>
         // Global variables
         let articles = [];
+        let insights = [];
         let quill;
+        let insightQuill;
         let currentArticleId = null;
+        let currentInsightId = null;
+        let currentDeleteType = null;
         const API_BASE = 'api/'; // Adjust this path as needed
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
             initializeEditor();
+            initializeInsightEditor();
             loadArticles();
             
             // Tab change handlers
@@ -519,11 +608,13 @@ error_reporting(E_ALL);
                     loadPublishedArticles();
                 } else if (e.target.id === 'drafts-tab') {
                     loadDraftArticles();
+                } else if (e.target.id === 'insights-tab') {
+                    loadInsights();
                 }
             });
         });
 
-        // Initialize Quill editor
+        // Initialize Quill editor for articles
         function initializeEditor() {
             quill = new Quill('#editor', {
                 theme: 'snow',
@@ -541,6 +632,27 @@ error_reporting(E_ALL);
                     ]
                 },
                 placeholder: 'Write your article content here...'
+            });
+        }
+
+        // Initialize Quill editor for insights
+        function initializeInsightEditor() {
+            insightQuill = new Quill('#insightEditor', {
+                theme: 'snow',
+                modules: {
+                    toolbar: [
+                        [{ 'header': [1, 2, 3, false] }],
+                        ['bold', 'italic', 'underline', 'strike'],
+                        [{ 'color': [] }, { 'background': [] }],
+                        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                        [{ 'indent': '-1'}, { 'indent': '+1' }],
+                        [{ 'align': [] }],
+                        ['blockquote', 'code-block'],
+                        ['link'],
+                        ['clean']
+                    ]
+                },
+                placeholder: 'Write your insight content here...'
             });
         }
 
@@ -612,6 +724,23 @@ error_reporting(E_ALL);
             }
         }
 
+        // Load insights from API
+        async function loadInsights() {
+            showLoading('insightsTableContainer');
+            
+            try {
+                insights = await apiRequest('insights.php');
+                renderInsightsTable(insights, 'insightsTableContainer');
+            } catch (error) {
+                document.getElementById('insightsTableContainer').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        Failed to load insights. Please check your connection and try again.
+                    </div>
+                `;
+            }
+        }
+
         // Show loading spinner
         function showLoading(containerId) {
             document.getElementById(containerId).innerHTML = `
@@ -619,7 +748,7 @@ error_reporting(E_ALL);
                     <div class="spinner-border" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>
-                    <p class="mt-3">Loading articles...</p>
+                    <p class="mt-3">Loading...</p>
                 </div>
             `;
         }
@@ -702,6 +831,64 @@ error_reporting(E_ALL);
             container.innerHTML = tableHTML;
         }
 
+        // Render insights table
+        function renderInsightsTable(insightsData, containerId) {
+            const container = document.getElementById(containerId);
+            
+            if (!insightsData || insightsData.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-lightbulb"></i>
+                        <h4>No insights found</h4>
+                        <p>Start by creating your first insight.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const tableHTML = `
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th width="60%">Title</th>
+                                <th width="20%">Created</th>
+                                <th width="20%">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${insightsData.map(insight => `
+                                <tr>
+                                    <td>
+                                        <div>
+                                            <strong>${escapeHtml(insight.title)}</strong>
+                                            <br>
+                                            <small class="text-muted">
+                                                ${stripHtmlTags(insight.body).substring(0, 100)}${stripHtmlTags(insight.body).length > 100 ? '...' : ''}
+                                            </small>
+                                        </div>
+                                    </td>
+                                    <td>${formatDate(insight.created_at)}</td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <button class="btn btn-info btn-sm" onclick="editInsight(${insight.id})" title="Edit">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="btn btn-danger btn-sm" onclick="deleteInsight(${insight.id})" title="Delete">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            
+            container.innerHTML = tableHTML;
+        }
+
         // Utility functions
         function escapeHtml(text) {
             if (!text) return '';
@@ -715,7 +902,15 @@ error_reporting(E_ALL);
             return text.replace(/[&<>"']/g, function(m) { return map[m]; });
         }
 
+        function stripHtmlTags(html) {
+            if (!html) return '';
+            const div = document.createElement('div');
+            div.innerHTML = html;
+            return div.textContent || div.innerText || '';
+        }
+
         function formatDate(dateString) {
+            if (!dateString) return '-';
             const date = new Date(dateString);
             return date.toLocaleDateString('en-US', {
                 year: 'numeric',
@@ -733,6 +928,17 @@ error_reporting(E_ALL);
             document.getElementById('imagePreview').style.display = 'none';
             
             const modal = new bootstrap.Modal(document.getElementById('articleModal'));
+            modal.show();
+        }
+
+        // Show create insight modal
+        function showCreateInsightModal() {
+            document.getElementById('insightModalTitle').textContent = 'Create New Insight';
+            document.getElementById('insightForm').reset();
+            document.getElementById('insightId').value = '';
+            insightQuill.setText('');
+            
+            const modal = new bootstrap.Modal(document.getElementById('insightModal'));
             modal.show();
         }
 
@@ -761,6 +967,24 @@ error_reporting(E_ALL);
                 
             } catch (error) {
                 showToast('Failed to load article for editing.', 'danger');
+            }
+        }
+
+        // Edit insight
+        async function editInsight(insightId) {
+            try {
+                const insight = await apiRequest(`insights.php/${insightId}`);
+                
+                document.getElementById('insightModalTitle').textContent = 'Edit Insight';
+                document.getElementById('insightId').value = insight.id;
+                document.getElementById('insightTitle').value = insight.title;
+                insightQuill.root.innerHTML = insight.body;
+                
+                const modal = new bootstrap.Modal(document.getElementById('insightModal'));
+                modal.show();
+                
+            } catch (error) {
+                showToast('Failed to load insight for editing.', 'danger');
             }
         }
 
@@ -831,6 +1055,51 @@ error_reporting(E_ALL);
             }
         }
 
+        // Save insight
+        async function saveInsight() {
+            const form = document.getElementById('insightForm');
+            const formData = new FormData(form);
+            const insightId = formData.get('id');
+            
+            const insightData = {
+                title: formData.get('title'),
+                body: insightQuill.root.innerHTML
+            };
+
+            // Validate required fields
+            if (!insightData.title || !insightData.body || insightData.body === '<p><br></p>') {
+                showToast('Please fill in all required fields.', 'warning');
+                return;
+            }
+
+            try {
+                if (insightId) {
+                    // Update existing insight
+                    await apiRequest(`insights.php/${insightId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify(insightData)
+                    });
+                    showToast('Insight updated successfully!', 'success');
+                } else {
+                    // Create new insight
+                    await apiRequest('insights.php', {
+                        method: 'POST',
+                        body: JSON.stringify(insightData)
+                    });
+                    showToast('Insight created successfully!', 'success');
+                }
+
+                // Close modal and refresh table
+                const modal = bootstrap.Modal.getInstance(document.getElementById('insightModal'));
+                modal.hide();
+                
+                loadInsights();
+                
+            } catch (error) {
+                showToast('Failed to save insight. Please try again.', 'danger');
+            }
+        }
+
         // Publish article
         async function publishArticle(articleId) {
             try {
@@ -870,9 +1139,12 @@ error_reporting(E_ALL);
         // Delete article
         function deleteArticle(articleId) {
             currentArticleId = articleId;
+            currentDeleteType = 'article';
             const article = articles.find(a => a.id == articleId);
             if (article) {
-                document.getElementById('deleteArticleInfo').innerHTML = `
+                document.getElementById('deleteModalTitle').textContent = 'Delete Article';
+                document.getElementById('deleteModalText').textContent = 'Are you sure you want to delete this article? This action cannot be undone.';
+                document.getElementById('deleteItemInfo').innerHTML = `
                     <div class="alert alert-danger">
                         <strong>Title:</strong> ${escapeHtml(article.title)}<br>
                         <strong>Category:</strong> ${escapeHtml(article.category)}<br>
@@ -885,29 +1157,56 @@ error_reporting(E_ALL);
             }
         }
 
-        // Confirm delete
-        async function confirmDelete() {
-            if (currentArticleId) {
-                try {
-                    await apiRequest(`articles.php/${currentArticleId}`, {
-                        method: 'DELETE'
-                    });
-                    
-                    loadArticles();
-                    
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
-                    modal.hide();
-                    
-                    showToast('Article deleted successfully!', 'success');
-                } catch (error) {
-                    showToast('Failed to delete article.', 'danger');
-                }
+        // Delete insight
+        function deleteInsight(insightId) {
+            currentInsightId = insightId;
+            currentDeleteType = 'insight';
+            const insight = insights.find(i => i.id == insightId);
+            if (insight) {
+                document.getElementById('deleteModalTitle').textContent = 'Delete Insight';
+                document.getElementById('deleteModalText').textContent = 'Are you sure you want to delete this insight? This action cannot be undone.';
+                document.getElementById('deleteItemInfo').innerHTML = `
+                    <div class="alert alert-danger">
+                        <strong>Title:</strong> ${escapeHtml(insight.title)}<br>
+                        <strong>Created:</strong> ${formatDate(insight.created_at)}
+                    </div>
+                `;
                 
-                currentArticleId = null;
+                const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+                modal.show();
             }
         }
 
-        // Apply filters
+        // Confirm delete
+        async function confirmDelete() {
+            try {
+                if (currentDeleteType === 'article' && currentArticleId) {
+                    await apiRequest(`articles.php/${currentArticleId}`, {
+                        method: 'DELETE'
+                    });
+                    loadArticles();
+                    showToast('Article deleted successfully!', 'success');
+                } else if (currentDeleteType === 'insight' && currentInsightId) {
+                    await apiRequest(`insights.php/${currentInsightId}`, {
+                        method: 'DELETE'
+                    });
+                    loadInsights();
+                    showToast('Insight deleted successfully!', 'success');
+                }
+                
+                const modal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
+                modal.hide();
+                
+            } catch (error) {
+                showToast(`Failed to delete ${currentDeleteType}.`, 'danger');
+            }
+            
+            currentArticleId = null;
+            currentInsightId = null;
+            currentDeleteType = null;
+        }
+
+        // Apply filters for articles
         async function applyFilters() {
             const searchTerm = document.getElementById('searchInput').value.trim();
             const categoryFilter = document.getElementById('categoryFilterTab').value;
@@ -933,18 +1232,40 @@ error_reporting(E_ALL);
             }
         }
 
+        // Apply filters for insights
+        async function applyInsightFilters() {
+            const searchTerm = document.getElementById('insightSearchInput').value.trim();
+
+            showLoading('insightsTableContainer');
+
+            try {
+                const params = new URLSearchParams();
+                if (searchTerm) params.append('search', searchTerm);
+
+                const queryString = params.toString();
+                const endpoint = queryString ? `insights.php?${queryString}` : 'insights.php';
+                
+                const filteredInsights = await apiRequest(endpoint);
+                renderInsightsTable(filteredInsights, 'insightsTableContainer');
+            } catch (error) {
+                document.getElementById('insightsTableContainer').innerHTML = `
+                    <div class="alert alert-danger">Failed to filter insights.</div>
+                `;
+            }
+        }
+
         // Show toast notification
         function showToast(message, type) {
             const toast = document.createElement('div');
-            toast.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
-            toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+            toast.className = `alert alert-${type} alert-dismissible fade show`;
             toast.innerHTML = `
                 ${message}
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             `;
             
-            document.body.appendChild(toast);
+            document.getElementById('toastContainer').appendChild(toast);
             
+            // Auto remove after 3 seconds
             setTimeout(() => {
                 if (toast.parentNode) {
                     toast.remove();
@@ -961,6 +1282,11 @@ error_reporting(E_ALL);
         document.getElementById('searchInput').addEventListener('input', function() {
             clearTimeout(this.searchTimeout);
             this.searchTimeout = setTimeout(applyFilters, 300);
+        });
+
+        document.getElementById('insightSearchInput').addEventListener('input', function() {
+            clearTimeout(this.searchTimeout);
+            this.searchTimeout = setTimeout(applyInsightFilters, 300);
         });
     </script>
 </body>
