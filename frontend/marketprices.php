@@ -4,8 +4,8 @@
 // Include your database configuration file
 include '../admin/includes/config.php';
 
-// Function to fetch prices data from the database
-function getPricesData($con, $limit = 10, $offset = 0) {
+// Function to build the SQL query with filters
+function buildPricesQuery($filters = []) {
     $sql = "SELECT
                 p.id,
                 p.market,
@@ -30,11 +30,61 @@ function getPricesData($con, $limit = 10, $offset = 0) {
             LEFT JOIN
                 (SELECT * FROM exchange_rates ORDER BY date DESC LIMIT 1) er ON 1=1
             WHERE
-                p.status IN ('published', 'approved')  
-            ORDER BY
-                p.date_posted DESC
-            LIMIT $limit OFFSET $offset";
+                p.status IN ('published', 'approved')";
+    
+    // Apply filters
+    if (!empty($filters['country'])) {
+        $sql .= " AND p.country_admin_0 = '" . $filters['country'] . "'";
+    }
+    
+    if (!empty($filters['market'])) {
+        $sql .= " AND p.market = '" . $filters['market'] . "'";
+    }
+    
+    if (!empty($filters['commodity'])) {
+        $sql .= " AND p.commodity = " . (int)$filters['commodity'];
+    }
+    
+    if (!empty($filters['price_type'])) {
+        $sql .= " AND p.price_type = '" . $filters['price_type'] . "'";
+    }
+    
+    if (!empty($filters['data_source'])) {
+        $sql .= " AND p.data_source = '" . $filters['data_source'] . "'";
+    }
+    
+    if (!empty($filters['commodity_category'])) {
+        $sql .= " AND c.category = '" . $filters['commodity_category'] . "'";
+    }
+    
+    if (!empty($filters['date_from'])) {
+        $sql .= " AND DATE(p.date_posted) >= '" . $filters['date_from'] . "'";
+    }
+    
+    if (!empty($filters['date_to'])) {
+        $sql .= " AND DATE(p.date_posted) <= '" . $filters['date_to'] . "'";
+    }
+    
+    if (!empty($filters['price_range'])) {
+        // Handle price range filter (assuming format like "100-200")
+        $priceRange = explode('-', $filters['price_range']);
+        if (count($priceRange) == 2) {
+            $minPrice = (float)$priceRange[0];
+            $maxPrice = (float)$priceRange[1];
+            $sql .= " AND p.Price BETWEEN $minPrice AND $maxPrice";
+        }
+    }
+    
+    $sql .= " ORDER BY p.date_posted DESC";
+    
+    return $sql;
+}
 
+// Function to fetch prices data from the database with filters
+function getPricesData($con, $limit = 10, $offset = 0, $filters = []) {
+    $sql = buildPricesQuery($filters);
+    $sql .= " LIMIT $limit OFFSET $offset";
+    
     $result = $con->query($sql);
     $data = [];
     if ($result) {
@@ -50,8 +100,9 @@ function getPricesData($con, $limit = 10, $offset = 0) {
     return $data;
 }
 
-function getTotalPriceRecords($con) {
-    $sql = "SELECT count(*) as total FROM market_prices";
+function getTotalPriceRecords($con, $filters = []) {
+    $sql = buildPricesQuery($filters);
+    $sql = "SELECT COUNT(*) as total FROM ($sql) as count_query";
     $result = $con->query($sql);
      if ($result) {
         $row = $result->fetch_assoc();
@@ -60,16 +111,29 @@ function getTotalPriceRecords($con) {
      return 0;
 }
 
-// Get total number of records
-$total_records = getTotalPriceRecords($con);
+// Get filter values from request
+$filters = [
+    'country' => isset($_GET['country']) ? $_GET['country'] : '',
+    'market' => isset($_GET['market']) ? $_GET['market'] : '',
+    'commodity' => isset($_GET['commodity']) ? $_GET['commodity'] : '',
+    'price_type' => isset($_GET['price_type']) ? $_GET['price_type'] : '',
+    'data_source' => isset($_GET['data_source']) ? $_GET['data_source'] : '',
+    'commodity_category' => isset($_GET['commodity_category']) ? $_GET['commodity_category'] : '',
+    'date_from' => isset($_GET['date_from']) ? $_GET['date_from'] : '',
+    'date_to' => isset($_GET['date_to']) ? $_GET['date_to'] : '',
+    'price_range' => isset($_GET['price_range']) ? $_GET['price_range'] : ''
+];
+
+// Get total number of records with filters
+$total_records = getTotalPriceRecords($con, $filters);
 
 // Set pagination parameters
 $limit = 10;
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
 
-// Fetch prices data
-$prices_data = getPricesData($con, $limit, $offset);
+// Fetch prices data with filters
+$prices_data = getPricesData($con, $limit, $offset, $filters);
 
 // Calculate total pages
 $total_pages = ceil($total_records / $limit);
@@ -133,6 +197,58 @@ foreach ($prices_data as $price) {
     $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'] . '_' . $price['data_source'];
     $grouped_data[$group_key][] = $price;
 }
+
+// Get filter options for dropdowns
+$countries = [];
+$markets = [];
+$commodities = [];
+$price_types = [];
+$data_sources = [];
+
+$options_query = "SELECT DISTINCT country_admin_0 FROM market_prices WHERE status IN ('published', 'approved')";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $countries[] = $row['country_admin_0'];
+    }
+    $result->free();
+}
+
+$options_query = "SELECT DISTINCT market FROM market_prices WHERE status IN ('published', 'approved')";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $markets[] = $row['market'];
+    }
+    $result->free();
+}
+
+$options_query = "SELECT id, commodity_name FROM commodities";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $commodities[$row['id']] = $row['commodity_name'];
+    }
+    $result->free();
+}
+
+$options_query = "SELECT DISTINCT price_type FROM market_prices WHERE status IN ('published', 'approved')";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $price_types[] = $row['price_type'];
+    }
+    $result->free();
+}
+
+$options_query = "SELECT DISTINCT data_source FROM market_prices WHERE status IN ('published', 'approved')";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $data_sources[] = $row['data_source'];
+    }
+    $result->free();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -143,6 +259,7 @@ foreach ($prices_data as $price) {
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <style>
+        /* Your existing CSS styles */
         body {
             font-family: Arial, sans-serif;
             background-color: #f8f9fa;
@@ -507,6 +624,11 @@ foreach ($prices_data as $price) {
             margin-bottom: 20px;
         }
 
+        .commodity-category-btn.active {
+            background-color: #8B4513;
+            color: white;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
@@ -567,76 +689,91 @@ foreach ($prices_data as $price) {
 
         <!-- Content -->
         <div class="main-content">
-            <div class="filter-section">
-                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
-                    <div>
-                        <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Country/District</label>
-                        <select style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                            <option>Select Country</option>
-                            <option>Kenya</option>
-                            <option>Uganda</option>
-                            <option>Rwanda</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Market</label>
-                        <select style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                            <option>Select Market</option>
-                            <option>Nyamakima</option>
-                            <option>Eldoret</option>
-                            <option>Kampala</option>
-                            <option>Kimironko</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Commodity</label>
-                        <select style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                            <option>Select Commodity</option>
-                            <option>Maize (White)</option>
-                            <option>Beans (Yellow)</option>
-                            <option>Millet (Pearl)</option>
-                            <option>Rice (Kigori)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Price type</label>
-                        <select style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                            <option>All Types</option>
-                            <option>Wholesale</option>
-                            <option>Retail</option>
-                        </select>
-                    </div>
-                </div>
-                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
-                    <div>
-                        <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Data Source</label>
-                        <select style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                            <option>All Sources</option>
-                            <option>EAGC RATIN</option>
-                            <option>MoALD Kenya</option>
-                            <option>MoA/Esoko RW</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Date Range</label>
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <input type="date" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                            <span style="color: #666;">to</span>
-                            <input type="date" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+            <form id="filter-form" method="GET">
+                <div class="filter-section">
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
+                        <div>
+                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Country/District</label>
+                            <select name="country" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                                <option value="">Select Country</option>
+                                <?php foreach ($countries as $country): ?>
+                                    <option value="<?php echo htmlspecialchars($country); ?>" <?php echo isset($filters['country']) && $filters['country'] == $country ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($country); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Market</label>
+                            <select name="market" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                                <option value="">Select Market</option>
+                                <?php foreach ($markets as $market): ?>
+                                    <option value="<?php echo htmlspecialchars($market); ?>" <?php echo isset($filters['market']) && $filters['market'] == $market ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($market); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Commodity</label>
+                            <select name="commodity" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                                <option value="">Select Commodity</option>
+                                <?php foreach ($commodities as $id => $name): ?>
+                                    <option value="<?php echo $id; ?>" <?php echo isset($filters['commodity']) && $filters['commodity'] == $id ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($name); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Price type</label>
+                            <select name="price_type" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                                <option value="">All Types</option>
+                                <?php foreach ($price_types as $type): ?>
+                                    <option value="<?php echo htmlspecialchars($type); ?>" <?php echo isset($filters['price_type']) && $filters['price_type'] == $type ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($type); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
                     </div>
-                    <div>
-                        <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Market Prices</label>
-                        <input type="text" placeholder="Enter price range" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                    </div>
-                    <div style="display: flex; align-items: end;">
-                        <button style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; font-weight: 500; color: #374151; background: white; cursor: pointer;">
-                            <i class="fa fa-refresh"></i>
-                            Reset filters
-                        </button>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+                        <div>
+                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Data Source</label>
+                            <select name="data_source" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                                <option value="">All Sources</option>
+                                <?php foreach ($data_sources as $source): ?>
+                                    <option value="<?php echo htmlspecialchars($source); ?>" <?php echo isset($filters['data_source']) && $filters['data_source'] == $source ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($source); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Date Range</label>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <input type="date" name="date_from" value="<?php echo isset($filters['date_from']) ? $filters['date_from'] : ''; ?>" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                                <span style="color: #666;">to</span>
+                                <input type="date" name="date_to" value="<?php echo isset($filters['date_to']) ? $filters['date_to'] : ''; ?>" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                            </div>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Market Prices</label>
+                            <input type="text" name="price_range" value="<?php echo isset($filters['price_range']) ? $filters['price_range'] : ''; ?>" placeholder="Enter price range (e.g., 100-200)" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                        </div>
+                        <div style="display: flex; align-items: end; gap: 8px;">
+                            <button type="submit" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; font-weight: 500; color: white; background: #8B4513; cursor: pointer;">
+                                <i class="fa fa-filter"></i>
+                                Apply filters
+                            </button>
+                            <button type="button" id="reset-filters" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; font-weight: 500; color: #374151; background: white; cursor: pointer;">
+                                <i class="fa fa-refresh"></i>
+                                Reset filters
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
+            </form>
 
             <div class="container">
                 <div style="border-bottom: 1px solid #eee;">
@@ -658,28 +795,24 @@ foreach ($prices_data as $price) {
 
                 <div style="padding: 16px 24px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between;">
                     <div style="display: flex; align-items: center; gap: 8px;">
-                        <button style="padding: 8px 16px; background: #8B4513; color: white; font-size: 14px; font-weight: 500; border-radius: 6px; border: none; display: flex; align-items: center; gap: 8px;">
+                        <button type="button" class="commodity-category-btn <?php echo empty($filters['commodity_category']) ? 'active' : ''; ?>" data-category="">
                             <i class="fa fa-ellipsis-h"></i>
                             All
                         </button>
-                        <button style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <button type="button" class="commodity-category-btn <?php echo isset($filters['commodity_category']) && $filters['commodity_category'] == 'Cereals' ? 'active' : ''; ?>" data-category="Cereals">
                             <i class="fa fa-seedling"></i>
                             Cereals
                         </button>
-                        <button style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <button type="button" class="commodity-category-btn <?php echo isset($filters['commodity_category']) && $filters['commodity_category'] == 'Oilseeds' ? 'active' : ''; ?>" data-category="Oilseeds">
                             <i class="fa fa-tint"></i>
                             Oilseeds
                         </button>
-                        <button style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <button type="button" class="commodity-category-btn <?php echo isset($filters['commodity_category']) && $filters['commodity_category'] == 'Pulses' ? 'active' : ''; ?>" data-category="Pulses">
                             <i class="fa fa-leaf"></i>
                             Pulses
                         </button>
-                        <button style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            Currency
-                            <i class="fa fa-chevron-down"></i>
-                        </button>
                     </div>
-                    <button style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <button id="download-btn" style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
                         Download
                         <i class="fa fa-download"></i>
                     </button>
@@ -820,19 +953,16 @@ foreach ($prices_data as $price) {
                             <label for="country-filter" class="form-label">Country</label>
                             <select id="country-filter" class="form-select">
                                 <option value="all">All Countries</option>
-                                <option value="Kenya">Kenya</option>
-                                <option value="Uganda">Uganda</option>
-                                <option value="Rwanda">Rwanda</option>
-                                <option value="Tanzania">Tanzania</option>
+                                <?php foreach ($countries as $country): ?>
+                                    <option value="<?php echo htmlspecialchars($country); ?>"><?php echo htmlspecialchars($country); ?></option>
+                                <?php endforeach; ?>
                             </select>
                         </div>
                         <div>
                             <label for="market-filter" class="form-label">Market</label>
                             <select id="market-filter" class="form-select">
                                 <option value="all">All Markets</option>
-                                <?php 
-                                $markets = array_unique(array_column($prices_data, 'market'));
-                                foreach ($markets as $market): ?>
+                                <?php foreach ($markets as $market): ?>
                                     <option value="<?php echo htmlspecialchars($market); ?>"><?php echo htmlspecialchars($market); ?></option>
                                 <?php endforeach; ?>
                             </select>
@@ -841,10 +971,8 @@ foreach ($prices_data as $price) {
                             <label for="commodity-filter" class="form-label">Commodity</label>
                             <select id="commodity-filter" class="form-select">
                                 <option value="all">All Commodities</option>
-                                <?php 
-                                $commodities = array_unique(array_column($prices_data, 'commodity_name'));
-                                foreach ($commodities as $commodity): ?>
-                                    <option value="<?php echo htmlspecialchars($commodity); ?>"><?php echo htmlspecialchars($commodity); ?></option>
+                                <?php foreach ($commodities as $id => $name): ?>
+                                    <option value="<?php echo htmlspecialchars($name); ?>"><?php echo htmlspecialchars($name); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -885,7 +1013,7 @@ foreach ($prices_data as $price) {
                     </div>
                     <div class="flex items-center gap-2">
                         <button
-                            onclick="window.location.href='?page=<?php echo $page - 1; ?>'"
+                            onclick="window.location.href='?<?php echo http_build_query(array_merge($filters, ['page' => $page - 1])); ?>'"
                             <?php echo $page <= 1 ? 'disabled' : ''; ?>
                             style="<?php echo $page <= 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''; ?>"
                         >
@@ -898,7 +1026,7 @@ foreach ($prices_data as $price) {
                         $endPage = min($total_pages, $startPage + $visiblePages - 1);
                         
                         if ($startPage > 1) {
-                            echo '<button onclick="window.location.href=\'?page=1\'" class="page">1</button>';
+                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => 1])) . '\'" class="page">1</button>';
                             if ($startPage > 2) {
                                 echo '<span class="px-3 py-1 text-sm text-gray-700">...</span>';
                             }
@@ -906,19 +1034,19 @@ foreach ($prices_data as $price) {
                         
                         for ($i = $startPage; $i <= $endPage; $i++) {
                             $activeClass = $i == $page ? 'current' : '';
-                            echo '<button onclick="window.location.href=\'?page='.$i.'\'" class="page '.$activeClass.'">'.$i.'</button>';
+                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => $i])) . '\'" class="page '.$activeClass.'">'.$i.'</button>';
                         }
                         
                         if ($endPage < $total_pages) {
                             if ($endPage < $total_pages - 1) {
                                 echo '<span class="px-3 py-1 text-sm text-gray-700">...</span>';
                             }
-                            echo '<button onclick="window.location.href=\'?page='.$total_pages.'\'" class="page">'.$total_pages.'</button>';
+                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => $total_pages])) . '\'" class="page">'.$total_pages.'</button>';
                         }
                         ?>
                         
                         <button
-                            onclick="window.location.href='?page=<?php echo $page + 1; ?>'"
+                            onclick="window.location.href='?<?php echo http_build_query(array_merge($filters, ['page' => $page + 1])); ?>'"
                             <?php echo $page >= $total_pages ? 'disabled' : ''; ?>
                             style="<?php echo $page >= $total_pages ? 'opacity: 0.5; cursor: not-allowed;' : ''; ?>"
                         >
@@ -1217,6 +1345,80 @@ document.addEventListener('DOMContentLoaded', function() {
         const chartData = <?php echo json_encode($prices_data); ?>;
         initCharts(chartData);
     }
+
+    // Commodity category buttons
+    const categoryButtons = document.querySelectorAll('.commodity-category-btn');
+    categoryButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const category = this.getAttribute('data-category');
+            
+            // Update active state
+            categoryButtons.forEach(btn => btn.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Add hidden input for category filter
+            let categoryInput = document.querySelector('input[name="commodity_category"]');
+            if (!categoryInput) {
+                categoryInput = document.createElement('input');
+                categoryInput.type = 'hidden';
+                categoryInput.name = 'commodity_category';
+                document.getElementById('filter-form').appendChild(categoryInput);
+            }
+            categoryInput.value = category;
+            
+            // Submit the form
+            document.getElementById('filter-form').submit();
+        });
+    });
+
+    // Reset filters button
+    document.getElementById('reset-filters')?.addEventListener('click', function() {
+        // Clear all form inputs
+        const form = document.getElementById('filter-form');
+        const inputs = form.querySelectorAll('select, input');
+        inputs.forEach(input => {
+            if (input.type !== 'submit' && input.type !== 'button') {
+                input.value = '';
+            }
+        });
+        
+        // Submit the form
+        form.submit();
+    });
+
+    // Download button functionality
+    document.getElementById('download-btn')?.addEventListener('click', function() {
+        // Create a form to submit download request
+        const downloadForm = document.createElement('form');
+        downloadForm.method = 'POST';
+        downloadForm.action = 'download_market_prices.php';
+        downloadForm.target = '_blank';
+        
+        // Add all current filters as hidden inputs
+        const filterForm = document.getElementById('filter-form');
+        const inputs = filterForm.querySelectorAll('select, input');
+        inputs.forEach(input => {
+            if (input.name && input.value) {
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = input.name;
+                hiddenInput.value = input.value;
+                downloadForm.appendChild(hiddenInput);
+            }
+        });
+        
+        // Add page information
+        const pageInput = document.createElement('input');
+        pageInput.type = 'hidden';
+        pageInput.name = 'page';
+        pageInput.value = '<?php echo $page; ?>';
+        downloadForm.appendChild(pageInput);
+        
+        // Add to document and submit
+        document.body.appendChild(downloadForm);
+        downloadForm.submit();
+        document.body.removeChild(downloadForm);
+    });
 });
 </script>
 </body>
