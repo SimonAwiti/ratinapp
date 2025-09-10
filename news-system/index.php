@@ -456,15 +456,8 @@ error_reporting(E_ALL);
                             <div class="row">
                                 <div class="col-md-6">
                                     <div class="form-group">
-                                        <label for="category" class="required">Category</label>
-                                        <select id="category" name="category" required>
-                                            <option value="">Select Category</option>
-                                            <option value="Market Policy">Market Policy</option>
-                                            <option value="Export">Export</option>
-                                            <option value="Import">Import</option>
-                                            <option value="Agriculture">Agriculture</option>
-                                            <option value="Trade">Trade</option>
-                                        </select>
+                                        <label for="Category">Category</label>
+                                        <input type="text" id="category" name="category" placeholder="e.g. Agriculture">
                                     </div>
                                 </div>
                                 <div class="col-md-6">
