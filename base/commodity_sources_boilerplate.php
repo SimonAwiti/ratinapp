@@ -279,7 +279,7 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
                     <th>ID</th>
                     <th>Admin-0 (Country)</th>
                     <th>Admin-1 (County/District)</th>
-                    <th>Created At</th>
+                    <th>Created On</th>
                     <th>Actions</th>
                 </tr>
                 <tr class="filter-row" style="background-color: white !important; color: black !important;">
