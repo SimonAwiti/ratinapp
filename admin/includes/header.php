@@ -166,6 +166,11 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             font-size: 1.2em; /* Adjust icon size as needed */
             color: #6c757d;
         }
+        .no-gap-icon {
+            margin-right: 0 !important;
+            width: auto !important;
+        }
+
     </style>
 </head>
 <body>
@@ -177,6 +182,14 @@ $currentPage = basename($_SERVER['PHP_SELF']);
         </div><br>
         <h6>Management</h6>
 
+        <h6 style="display:flex; align-items:center; text-transform:none;">
+            <a href="../base/landing_page.php" 
+            style="text-decoration:none; color:inherit; display:flex; align-items:center; font-family: Arial, sans-serif; font-size: 2.0.0em;">
+                <i class="fa fa-home" style="color:#8B4513; margin-right:18px; font-size: 1.0em;"></i>
+                Homepage
+            </a>
+        </h6>
+
         <a href="#baseSubmenu" class="nav-link collapsed" data-bs-toggle="collapse" aria-expanded="false" aria-controls="baseSubmenu">
             <span><i class="fa fa-table"></i> Base</span>
             <i class="fa fa-chevron-down"></i>
@@ -185,14 +198,17 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             <a href="../base/commodities_boilerplate.php" class="nav-link <?= ($currentPage == 'commodities_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-box-open" style="color:#8B4513;"></i> Commodities
             </a>
-            <a href="../base/commodity_sources_boilerplate.php" class="nav-link <?= ($currentPage == 'commodity_sources_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-database" style="color:#8B4513;"></i> Sources
-            </a>
             <a href="../base/tradepoints_boilerplate.php" class="nav-link <?= ($currentPage == 'tradepoints_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-map-marker-alt" style="color:#8B4513;"></i> Trade Points
             </a>
             <a href="../base/enumerator_boilerplate.php" class="nav-link <?= ($currentPage == 'enumerator_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-users" style="color:#8B4513;"></i> Enumerators
+            </a>
+            <a href="../data/currencies_boilerplate.php" class="nav-link <?= ($currentPage == 'currencies_boilerplate.php') ? 'active' : '' ?>">
+                <i class="fa fa-money-bill-wave"></i> Currency Rates
+            </a>
+            <a href="../base/commodity_sources_boilerplate.php" class="nav-link <?= ($currentPage == 'commodity_sources_boilerplate.php') ? 'active' : '' ?>">
+                <i class="fa fa-database" style="color:#8B4513;"></i> Geographic Units
             </a>
         </div>
 
@@ -218,9 +234,6 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             </a>
             <a href="../data/miller_price_boilerplate.php" class="nav-link <?= ($currentPage == 'miller_price_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-industry"></i> Miller Prices
-            </a>
-            <a href="../data/currencies_boilerplate.php" class="nav-link <?= ($currentPage == 'currencies_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-money-bill-wave"></i> Currency Rates
             </a>
             <a href="../data/countries_boilerplate.php" class="nav-link <?= ($currentPage == 'countries_boilerplate.php') ? 'active' : '' ?>">
                 <i class="fa fa-globe-africa"></i> Countries
