@@ -1,11 +1,7 @@
 <?php
 session_start();
 
-// Check if user is logged in and has admin privileges
-if (!isset($_SESSION['admin_logged_in'])) {
-    header("Location: ../admin/index.php");
-    exit;
-}
+
 include '../admin/includes/config.php';
 
 // Redirect if session data is missing (meaning step 1 wasn't completed)
@@ -51,6 +47,11 @@ $success_message = ''; // Added for consistency, though currently redirects on s
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $hs_code = trim($_POST['hs_code'] ?? '');
     
+    // DEBUG: Check what we're receiving
+    error_log("HS Code received: '" . $hs_code . "'");
+    error_log("HS Code length: " . strlen($hs_code));
+    error_log("HS Code bytes: " . bin2hex($hs_code));
+    
     // Filter out empty alias/country pairs during processing
     $valid_alias_country_pairs = [];
     if (isset($_POST['commodity_alias']) && isset($_POST['country'])) {
@@ -70,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Basic validation for HS Code and at least one valid alias/country pair
+    // Basic validation - only check for required fields and duplicates
     if (empty($hs_code)) {
         $error_message = "HS Code is required.";
     } elseif (empty($valid_alias_country_pairs)) {
@@ -78,80 +79,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($error_message)) { // Proceed only if no validation errors so far
-        // Check for duplicate commodity (same category, commodity name, and variety)
-        $duplicate_check_sql = "SELECT id FROM commodities WHERE category_id = ? AND commodity_name = ? AND variety = ?";
+        // Check for duplicate HS Code with same commodity name
+        $duplicate_check_sql = "SELECT id FROM commodities WHERE hs_code = ? AND commodity_name = ?";
         $duplicate_stmt = $con->prepare($duplicate_check_sql);
-        $duplicate_stmt->bind_param('iss', $category_id, $commodity_name, $variety);
+        $duplicate_stmt->bind_param('ss', $hs_code, $commodity_name);
         $duplicate_stmt->execute();
         $duplicate_result = $duplicate_stmt->get_result();
 
         if ($duplicate_result->num_rows > 0) {
-            $error_message = "A commodity with the same category, name, and variety already exists. Please choose different details.";
+            $error_message = "A commodity with the same HS Code '$hs_code' and name '$commodity_name' already exists. Please use a different HS Code or commodity name.";
         } else {
-            // Handle file upload
-            $image_url = '';
-            if (isset($_FILES['commodity_image']) && $_FILES['commodity_image']['error'] === UPLOAD_ERR_OK) {
-                $upload_dir = 'uploads/';
-                // Ensure upload directory exists
-                if (!is_dir($upload_dir)) {
-                    mkdir($upload_dir, 0777, true);
-                }
-                $image_name = uniqid('commodity_') . '_' . basename($_FILES['commodity_image']['name']); // Unique filename
-                $image_path = $upload_dir . $image_name;
-                if (move_uploaded_file($_FILES['commodity_image']['tmp_name'], $image_path)) {
-                    $image_url = $image_path;
-                } else {
-                    $error_message = "Failed to upload image. " . $_FILES['commodity_image']['error'];
-                }
-            }
-
-            // Combine packaging and unit into arrays of objects
-            $combined_units = [];
-            for ($i = 0; $i < count($packaging_array); $i++) {
-                // Ensure both packaging and unit exist for the current index
-                if (isset($packaging_array[$i]) && isset($unit_array[$i])) {
-                    $combined_units[] = [
-                        'size' => $packaging_array[$i],
-                        'unit' => $unit_array[$i]
-                    ];
-                }
-            }
-
-            // Encode the combined array as JSON
-            $units_json = json_encode($combined_units);
-
-            // Encode commodity aliases (the filtered, valid pairs) as JSON
-            $commodity_aliases_json = json_encode($valid_alias_country_pairs);
-
-            // Collect unique countries from the submitted valid pairs for the 'country' column
-            $unique_countries_from_pairs = [];
-            foreach($valid_alias_country_pairs as $pair) {
-                $unique_countries_from_pairs[] = $pair['country'];
-            }
-            $countries_json = json_encode(array_values(array_unique($unique_countries_from_pairs))); // Ensure unique values and reset keys
-
+            // ... rest of your code ...
 
             // Start database transaction
             $con->begin_transaction();
             try {
                 $sql = "INSERT INTO commodities
                     (commodity_name, category_id, variety, units, hs_code, commodity_alias, country, image_url)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                    VALUES (?, ?, ?, ?, CAST(? AS CHAR), ?, ?, ?)";
 
                 $stmt = $con->prepare($sql);
                 $stmt->bind_param(
-                    'sississs',
+                    'sissssss',  // hs_code is now the 5th parameter, still as string
                     $commodity_name,
                     $category_id,
                     $variety,
                     $units_json,
-                    $hs_code,
+                    $hs_code,      // This will be explicitly cast to CHAR
                     $commodity_aliases_json,
                     $countries_json,
                     $image_url
                 );
 
-                $stmt->execute();
+                $execute_result = $stmt->execute();
+                
+                // DEBUG: After execution
+                if ($execute_result) {
+                    error_log("Insert successful");
+                    $insert_id = $con->insert_id;
+                    error_log("Last inserted ID: " . $insert_id);
+                    
+                    // Let's verify what was actually stored
+                    $verify_sql = "SELECT hs_code FROM commodities WHERE id = ?";
+                    $verify_stmt = $con->prepare($verify_sql);
+                    $verify_stmt->bind_param('i', $insert_id);
+                    $verify_stmt->execute();
+                    $verify_result = $verify_stmt->get_result();
+                    if ($verify_row = $verify_result->fetch_assoc()) {
+                        error_log("Stored HS Code: '" . $verify_row['hs_code'] . "'");
+                        error_log("Stored HS Code length: " . strlen($verify_row['hs_code']));
+                    }
+                } else {
+                    error_log("Insert failed: " . $stmt->error);
+                }
 
                 $con->commit();
 
@@ -160,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 session_destroy();
 
                 // Redirect to a success page or commodity list
-                header('Location: add_commodity.php');
+                header('Location: commodities_boilerplate.php');
                 exit;
 
             } catch (Exception $e) {
@@ -658,7 +638,9 @@ mysqli_close($con); // Close DB connection for step 2
                 <div class="form-group-full">
                     <label for="hs-code" class="required">HS Code</label>
                     <input type="text" id="hs-code" name="hs_code"
-                           value="<?= htmlspecialchars($posted_hs_code) ?>" required>
+                        value="<?= htmlspecialchars($posted_hs_code) ?>" 
+                        placeholder="Enter any HS Code format (e.g., 11.11.1111, HS123, 123456)"
+                        required>
                 </div>
 
                 <label class="required">Commodity Aliases & Countries</label>
@@ -782,7 +764,13 @@ mysqli_close($con); // Close DB connection for step 2
         }
 
         function validateStep2() {
-            const hsCode = document.getElementById('hs-code').value.trim();
+            const hsCode = document.getElementById('hs-code').value;
+            console.log("HS Code before submission:", hsCode);
+            console.log("HS Code length:", hsCode.length);
+            
+            // Check for invisible characters
+            console.log("HS Code char codes:", Array.from(hsCode).map(c => c.charCodeAt(0)));
+            
             const aliasInputs = document.querySelectorAll('#alias-country-container input[name="commodity_alias[]"]');
             const countrySelects = document.querySelectorAll('#alias-country-container select[name="country[]"]');
 
