@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard Home | RATIN Trade Analytics</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         :root {
             --primary-color: #8B4513;
@@ -555,6 +556,80 @@
             border-top: 1px solid rgba(0, 0, 0, 0.1);
         }
 
+        /* Stats Section Styles */
+        .stats-section {
+            margin-bottom: 2rem;
+        }
+        
+        .stats-container {
+            display: flex;
+            gap: 15px;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: nowrap;
+            width: 100%;
+            max-width: 100%;
+            margin: 0 auto 20px auto;
+        }
+        
+        .stats-container > div {
+            flex: 1;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            min-height: 120px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .stats-icon {
+            width: 40px;
+            height: 40px;
+            margin-bottom: 10px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .total-icon {
+            background-color: #9b59b6;
+            color: white;
+        }
+        
+        .cereals-icon {
+            background-color: #f39c12;
+            color: white;
+        }
+        
+        .pulses-icon {
+            background-color: #27ae60;
+            color: white;
+        }
+        
+        .oil-seeds-icon {
+            background-color: #e74c3c;
+            color: white;
+        }
+        
+        .stats-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin: 8px 0 5px 0;
+        }
+        
+        .stats-number {
+            font-size: 24px;
+            font-weight: 700;
+            color: #34495e;
+        }
+
         /* Responsive Design */
         @media (max-width: 1200px) {
             .sidebar {
@@ -620,6 +695,15 @@
             .quick-stats {
                 grid-template-columns: repeat(2, 1fr);
             }
+            
+            .stats-container {
+                flex-wrap: wrap;
+            }
+            
+            .stats-container > div {
+                flex: 1 1 calc(50% - 10px);
+                min-width: 150px;
+            }
         }
 
         @media (max-width: 576px) {
@@ -648,6 +732,10 @@
             .quick-stats {
                 grid-template-columns: 1fr;
             }
+            
+            .stats-container > div {
+                flex: 1 1 100%;
+            }
         }
 
         /* Micro Animations */
@@ -673,7 +761,6 @@
             <span class="logo-text">RATIN Analytics</span>
         </div>
 
-        
         <div class="user-menu">
             <div class="notification-bell">
                 <i class="fas fa-bell"></i>
@@ -688,23 +775,21 @@
         <!-- Sidebar - Consistent with other pages -->
         <aside class="sidebar">
             <div class="sidebar-menu">
-                <div class="sidebar-section">
-                    <h3>Dashboard</h3>
-                    <a href="../dashboard/index.php" class="sidebar-link active">
-                        <i class="fas fa-tachometer-alt"></i> Overview
-                    </a>
-                </div>
+
                 
                 <div class="sidebar-section">
                     <h3>Base Management</h3>
                     <a href="../base/commodities_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-apple-alt"></i> Commodities
+                        <i class="fas fa-seedling"></i> Commodities
                     </a>
                     <a href="../base/tradepoints_boilerplate.php" class="sidebar-link">
                         <i class="fas fa-map-marker-alt"></i> Trade Points
                     </a>
                     <a href="../base/enumerator_boilerplate.php" class="sidebar-link">
                         <i class="fas fa-user-tie"></i> Enumerators
+                    </a>
+                    <a href="../data/currencies_boilerplate.php" class="sidebar-link">
+                        <i class="fas fa-money-bill-wave"></i> Currency Rates
                     </a>
                 </div>
                 
@@ -719,18 +804,18 @@
                     <a href="../data/miller_price_boilerplate.php" class="sidebar-link">
                         <i class="fas fa-industry"></i> Miller Prices
                     </a>
-                    <a href="../data/currencies_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-money-bill-wave"></i> Currency Rates
-                    </a>
                 </div>
-                
+
                 <div class="sidebar-section">
-                    <h3>Reports</h3>
-                    <a href="../reports/price_trends.php" class="sidebar-link">
-                        <i class="fas fa-chart-line"></i> Price Trends
+                    <h3>Web</h3>
+                    <a href="https://beta.ratin.net/frontend/" class="sidebar-link">
+                        <i class="fas fa-store-alt"></i> WebSite
                     </a>
-                    <a href="../reports/trade_flows.php" class="sidebar-link">
-                        <i class="fas fa-project-diagram"></i> Trade Flows
+                    <a href="../frontend/marketprices.php" class="sidebar-link">
+                        <i class="fas fa-exchange-alt"></i> Data display
+                    </a>
+                    <a href="../news-system/index.php" class="sidebar-link">
+                        <i class="fas fa-industry"></i> Website manager
                     </a>
                 </div>
                 
@@ -763,60 +848,47 @@
                     </div>
                 </div>
 
-                <!-- Quick Stats -->
-                <div class="quick-stats" id="quick-stats">
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <div class="stat-icon">
-                                <i class="fas fa-chart-line"></i>
+                <!-- Stats Section -->
+                <div class="stats-section">
+                    <h3>Commodities Overview</h3>
+                    <p>Summary of agricultural commodities in the system</p>
+
+                    <div class="stats-container">
+                        <div class="overlap-6">
+                            <div class="stats-icon total-icon">
+                                <i class="fas fa-seedling"></i>
                             </div>
+                            <div class="stats-title">Total Commodities</div>
+                            <div class="stats-number">42</div>
                         </div>
-                        <div class="stat-value">
-                            2,847
-                            <span class="stat-change positive">+12%</span>
-                        </div>
-                        <div class="stat-label">Total Trade Records</div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <div class="stat-icon">
-                                <i class="fas fa-map-marker-alt"></i>
+                        
+                        <div class="overlap-6">
+                            <div class="stats-icon cereals-icon">
+                                <i class="fas fa-wheat-awn"></i>
                             </div>
+                            <div class="stats-title">Cereals</div>
+                            <div class="stats-number">15</div>
                         </div>
-                        <div class="stat-value">
-                            43
-                            <span class="stat-change positive">+2</span>
-                        </div>
-                        <div class="stat-label">Active Trade Points</div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <div class="stat-icon">
-                                <i class="fas fa-users"></i>
+                        
+                        <div class="overlap-7">
+                            <div class="stats-icon pulses-icon">
+                                <i class="fas fa-dot-circle"></i>
                             </div>
+                            <div class="stats-title">Pulses</div>
+                            <div class="stats-number">12</div>
                         </div>
-                        <div class="stat-value">
-                            18
-                            <span class="stat-change positive">+3</span>
-                        </div>
-                        <div class="stat-label">Active Enumerators</div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <div class="stat-icon">
-                                <i class="fas fa-clock"></i>
+                        
+                        <div class="overlap-7">
+                            <div class="stats-icon oil-seeds-icon">
+                                <i class="fas fa-leaf"></i>
                             </div>
+                            <div class="stats-title">Oil Seeds</div>
+                            <div class="stats-number">8</div>
                         </div>
-                        <div class="stat-value">
-                            24h
-                            <span class="stat-change negative">+2h</span>
-                        </div>
-                        <div class="stat-label">Last Data Update</div>
                     </div>
                 </div>
+
+
 
                 <!-- Sections Grid -->
                 <div class="sections-grid">
@@ -831,7 +903,7 @@
                         <ul>
                             <li>
                                 <a href="../base/commodities_boilerplate.php">
-                                    <i class="fas fa-apple-alt"></i> Commodities
+                                    <i class="fas fa-seedling"></i> Commodities
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage agricultural commodities and varieties</span></span>
                                 </a>
                             </li>
@@ -904,18 +976,6 @@
                         </div>
                         <ul>
                             <li>
-                                <a href="../reports/price_trends.php">
-                                    <i class="fas fa-chart-line"></i> Price Trends
-                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Analyze commodity price trends</span></span>
-                                </a>
-                            </li>
-                            <li>
-                                <a href="../reports/trade_flows.php">
-                                    <i class="fas fa-project-diagram"></i> Trade Flows
-                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View cross-border trade patterns</span></span>
-                                </a>
-                            </li>
-                            <li>
                                 <a href="#" style="opacity: 0.6; cursor: not-allowed;">
                                     <i class="fas fa-file-export"></i> Export Reports
                                     <span class="badge" style="background: #6b7280; color: white;">Soon</span>
@@ -964,6 +1024,7 @@
         <p>© 2023 RATIN Trade Analytics. All rights reserved. | Version 2.1.0</p>
     </footer>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Enhanced JavaScript functionality
         document.addEventListener('DOMContentLoaded', function() {
