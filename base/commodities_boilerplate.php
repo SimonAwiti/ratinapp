@@ -893,9 +893,42 @@ function exportSelected(format) {
     }
     
     const ids = Array.from(checkedBoxes).map(cb => cb.value);
-    // Implement your export logic here
-    console.log(`Exporting ${format} for commodities with IDs:`, ids);
-    // Example: window.location.href = `export_commodities.php?format=${format}&ids=${ids.join(',')}`;
+    
+    // Create a form to submit the export request
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = 'export_commodities.php';
+    
+    // Add format parameter
+    const formatInput = document.createElement('input');
+    formatInput.type = 'hidden';
+    formatInput.name = 'export_format';
+    formatInput.value = format;
+    form.appendChild(formatInput);
+    
+    // Add selected IDs
+    ids.forEach(id => {
+        const idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'selected_ids[]';
+        idInput.value = id;
+        form.appendChild(idInput);
+    });
+    
+    // Add CSRF token if available (you might want to add this for security)
+    const csrfToken = document.querySelector('meta[name="csrf-token"]');
+    if (csrfToken) {
+        const tokenInput = document.createElement('input');
+        tokenInput.type = 'hidden';
+        tokenInput.name = 'csrf_token';
+        tokenInput.value = csrfToken.getAttribute('content');
+        form.appendChild(tokenInput);
+    }
+    
+    // Submit the form
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
 }
 </script>
 
