@@ -1,0 +1,6 @@
+market_name,category,type,country,county_district,longitude,latitude,radius,currency,primary_commodities,additional_datasource
+"Nairobi Central Market","Urban","Retail","Kenya","Nairobi County",36.8219,-1.2921,5,"KES","Maize,Beans,Wheat","Ministry of Agriculture"
+"Mombasa Wholesale Market","Urban","Wholesale","Kenya","Mombasa County",39.6682,-4.0435,10,"KES","Rice,Maize,Sugar","County Government"
+"Eldoret Grain Market","Rural","Wholesale","Kenya","Uasin Gishu County",35.2712,0.5143,3,"KES","Maize,Wheat,Beans","Local Association"
+"Kisumu Fish Market","Urban","Retail","Kenya","Kisumu County",34.7616,-0.1022,2,"KES","Fish,Vegetables","Fisheries Department"
+"Namanga Border Market","Border","Wholesale","Kenya","Kajiado County",36.7833,-2.5500,1,"KES","Livestock,Grains","Cross-border Authority"
