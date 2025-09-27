@@ -30,19 +30,57 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
         while (($data = fgetcsv($handle, 1000, ","))) {
             $rowNumber++;
             
-            // Skip empty rows
+            // Skip completely empty rows
             if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
-                continue;
+                continue; // Skip empty rows without counting as errors
             }
             
             // Process based on tradepoint type
             switch ($tradepoint_type) {
                 case 'Markets':
                     // Validate required fields for Markets
-                    if (empty(trim($data[0])) || empty(trim($data[1])) || empty(trim($data[2])) || 
-                        empty(trim($data[3])) || empty(trim($data[4])) || empty(trim($data[5])) || 
-                        empty(trim($data[6])) || empty(trim($data[7])) || empty(trim($data[8]))) {
-                        $errors[] = "Row $rowNumber: Missing required fields for Market";
+                    if (empty(trim($data[0]))) { // Market Name
+                        $errors[] = "Row $rowNumber: Market Name is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[1]))) { // Category
+                        $errors[] = "Row $rowNumber: Category is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[2]))) { // Type
+                        $errors[] = "Row $rowNumber: Type is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[3]))) { // Country
+                        $errors[] = "Row $rowNumber: Country is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[4]))) { // County/District
+                        $errors[] = "Row $rowNumber: County/District is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[5]))) { // Longitude
+                        $errors[] = "Row $rowNumber: Longitude is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[6]))) { // Latitude
+                        $errors[] = "Row $rowNumber: Latitude is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[7]))) { // Radius
+                        $errors[] = "Row $rowNumber: Radius is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[8]))) { // Currency
+                        $errors[] = "Row $rowNumber: Currency is required";
                         $errorCount++;
                         continue;
                     }
@@ -59,6 +97,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     $currency = trim($data[8]);
                     $primary_commodities = isset($data[9]) ? trim($data[9]) : '';
                     $additional_datasource = isset($data[10]) ? trim($data[10]) : '';
+                    $image_urls = ''; // Set empty image_urls for import
                     
                     // Check if market exists
                     $check_query = "SELECT id FROM markets WHERE market_name = ?";
@@ -80,12 +119,19 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                                 radius = ?, 
                                 currency = ?, 
                                 primary_commodity = ?, 
-                                additional_datasource = ? 
+                                additional_datasource = ?,
+                                image_urls = ?
                                 WHERE market_name = ?";
                             
                             $update_stmt = $con->prepare($update_query);
+                            if (!$update_stmt) {
+                                $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
+                                $errorCount++;
+                                continue;
+                            }
+                            
                             $update_stmt->bind_param(
-                                'ssssdddssss',
+                                'ssssdddsssss',
                                 $category,
                                 $type,
                                 $country,
@@ -96,6 +142,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                                 $currency,
                                 $primary_commodities,
                                 $additional_datasource,
+                                $image_urls,
                                 $market_name
                             );
                             
@@ -126,12 +173,19 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                         currency, 
                         primary_commodity, 
                         additional_datasource,
+                        image_urls,
                         tradepoint
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Markets')";
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Markets')";
                     
                     $insert_stmt = $con->prepare($insert_query);
+                    if (!$insert_stmt) {
+                        $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
+                        $errorCount++;
+                        continue;
+                    }
+                    
                     $insert_stmt->bind_param(
-                        'ssssdddssss',
+                        'ssssdddsssss',
                         $market_name,
                         $category,
                         $type,
@@ -142,7 +196,8 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                         $radius,
                         $currency,
                         $primary_commodities,
-                        $additional_datasource
+                        $additional_datasource,
+                        $image_urls
                     );
                     
                     if ($insert_stmt->execute()) {
@@ -156,8 +211,18 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     
                 case 'Millers':
                     // Validate required fields for Millers
-                    if (empty(trim($data[0])) || empty(trim($data[1])) || empty(trim($data[2]))) {
-                        $errors[] = "Row $rowNumber: Missing required fields for Miller";
+                    if (empty(trim($data[0]))) { // Miller Name
+                        $errors[] = "Row $rowNumber: Miller Name is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[1]))) { // Country
+                        $errors[] = "Row $rowNumber: Country is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[2]))) { // County/District
+                        $errors[] = "Row $rowNumber: County/District is required";
                         $errorCount++;
                         continue;
                     }
@@ -166,16 +231,29 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     $miller_name = trim($data[0]);
                     $country = trim($data[1]);
                     $county_district = trim($data[2]);
-                    $millers = isset($data[3]) ? array_map('trim', explode(',', trim($data[3]))) : [];
+                    $millers_csv = isset($data[3]) ? trim($data[3]) : '';
                     
-                    // Validate millers (max 2)
-                    if (count($millers) > 2) {
-                        $errors[] = "Row $rowNumber: Maximum of 2 millers allowed (found " . count($millers) . ")";
+                    // Process millers (comma-separated, max 2)
+                    $millers_array = [];
+                    if (!empty($millers_csv)) {
+                        $millers = array_map('trim', explode(',', $millers_csv));
+                        if (count($millers) > 2) {
+                            $errors[] = "Row $rowNumber: Maximum of 2 millers allowed (found " . count($millers) . ")";
+                            $errorCount++;
+                            continue;
+                        }
+                        $millers_array = $millers;
+                    }
+                    
+                    $millers_json = json_encode($millers_array, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    if ($millers_json === false) {
+                        $errors[] = "Row $rowNumber: Failed to encode millers as JSON - " . json_last_error_msg();
                         $errorCount++;
                         continue;
                     }
                     
-                    $millers_json = json_encode($millers);
+                    // Auto-determine currency from country
+                    $currency = getCurrencyFromCountry($country);
                     
                     // Check if miller exists
                     $check_query = "SELECT id FROM miller_details WHERE miller_name = ?";
@@ -190,15 +268,23 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                             $update_query = "UPDATE miller_details SET 
                                 country = ?, 
                                 county_district = ?, 
-                                miller = ? 
+                                miller = ?,
+                                currency = ?
                                 WHERE miller_name = ?";
                             
                             $update_stmt = $con->prepare($update_query);
+                            if (!$update_stmt) {
+                                $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
+                                $errorCount++;
+                                continue;
+                            }
+                            
                             $update_stmt->bind_param(
-                                'ssss',
+                                'sssss',
                                 $country,
                                 $county_district,
                                 $millers_json,
+                                $currency,
                                 $miller_name
                             );
                             
@@ -222,16 +308,24 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                         country, 
                         county_district, 
                         miller,
+                        currency,
                         tradepoint
-                    ) VALUES (?, ?, ?, ?, 'Millers')";
+                    ) VALUES (?, ?, ?, ?, ?, 'Millers')";
                     
                     $insert_stmt = $con->prepare($insert_query);
+                    if (!$insert_stmt) {
+                        $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
+                        $errorCount++;
+                        continue;
+                    }
+                    
                     $insert_stmt->bind_param(
-                        'ssss',
+                        'sssss',
                         $miller_name,
                         $country,
                         $county_district,
-                        $millers_json
+                        $millers_json,
+                        $currency
                     );
                     
                     if ($insert_stmt->execute()) {
@@ -245,9 +339,28 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     
                 case 'Border Points':
                     // Validate required fields for Border Points
-                    if (empty(trim($data[0])) || empty(trim($data[1])) || empty(trim($data[2])) || 
-                        empty(trim($data[3])) || empty(trim($data[4]))) {
-                        $errors[] = "Row $rowNumber: Missing required fields for Border Point";
+                    if (empty(trim($data[0]))) { // Name
+                        $errors[] = "Row $rowNumber: Name is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[1]))) { // Country
+                        $errors[] = "Row $rowNumber: Country is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[2]))) { // County
+                        $errors[] = "Row $rowNumber: County is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[3]))) { // Longitude
+                        $errors[] = "Row $rowNumber: Longitude is required";
+                        $errorCount++;
+                        continue;
+                    }
+                    if (empty(trim($data[4]))) { // Latitude
+                        $errors[] = "Row $rowNumber: Latitude is required";
                         $errorCount++;
                         continue;
                     }
@@ -277,6 +390,12 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                                 WHERE name = ?";
                             
                             $update_stmt = $con->prepare($update_query);
+                            if (!$update_stmt) {
+                                $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
+                                $errorCount++;
+                                continue;
+                            }
+                            
                             $update_stmt->bind_param(
                                 'ssdds',
                                 $country,
@@ -311,6 +430,12 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     ) VALUES (?, ?, ?, ?, ?, 'Border Points')";
                     
                     $insert_stmt = $con->prepare($insert_query);
+                    if (!$insert_stmt) {
+                        $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
+                        $errorCount++;
+                        continue;
+                    }
+                    
                     $insert_stmt->bind_param(
                         'sssdd',
                         $name,
@@ -336,14 +461,27 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
             }
         }
         
-        // Commit transaction if no critical errors
-        if (count($errors) === 0) {
+        // Commit transaction if no critical errors (allow warnings)
+        $criticalErrors = 0;
+        foreach ($errors as $error) {
+            if (strpos($error, 'Warning') === false) {
+                $criticalErrors++;
+            }
+        }
+        
+        if ($criticalErrors === 0) {
             $con->commit();
-            $import_message = "Successfully imported $successCount tradepoints.";
-            $import_status = 'success';
+            $warningCount = count($errors) - $criticalErrors;
+            if ($warningCount > 0) {
+                $import_message = "Successfully imported $successCount tradepoints with $warningCount warnings. Warnings: " . implode('<br>', $errors);
+                $import_status = 'warning';
+            } else {
+                $import_message = "Successfully imported $successCount tradepoints.";
+                $import_status = 'success';
+            }
         } else {
             $con->rollback();
-            $import_message = "Import rolled back due to errors. Processed $successCount rows successfully. Errors: " . implode('<br>', $errors);
+            $import_message = "Import rolled back due to $criticalErrors critical errors. Processed $successCount rows successfully. Errors: " . implode('<br>', $errors);
             $import_status = 'danger';
         }
         
@@ -359,9 +497,63 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
     $import_status = 'danger';
 }
 
-// Show import message if exists
-if (isset($import_message)) {
-    echo '<div class="alert alert-' . $import_status . '">' . $import_message . '</div>';
+// Function to get currency from country
+function getCurrencyFromCountry($country) {
+    $currency_map = [
+        'Kenya' => 'KES',
+        'Uganda' => 'UGX',
+        'Tanzania' => 'TZS',
+        'Rwanda' => 'RWF',
+        'Burundi' => 'BIF',
+        'South Sudan' => 'SSP',
+        'Ethiopia' => 'ETB',
+        'Somalia' => 'SOS',
+        'Democratic Republic of Congo' => 'CDF',
+        'Congo' => 'CDF',
+        'DRC' => 'CDF',
+        'Sudan' => 'SDG',
+        'Egypt' => 'EGP',
+        'Zambia' => 'ZMW',
+        'Zimbabwe' => 'ZWL',
+        'Malawi' => 'MWK',
+        'Mozambique' => 'MZN',
+        'Angola' => 'AOA',
+        'Nigeria' => 'NGN',
+        'Ghana' => 'GHS',
+        'South Africa' => 'ZAR',
+        'Botswana' => 'BWP',
+        'Namibia' => 'NAD',
+        'Lesotho' => 'LSL',
+        'Eswatini' => 'SZL',
+        'Madagascar' => 'MGA',
+        'Mauritius' => 'MUR',
+        'Seychelles' => 'SCR'
+    ];
+    
+    // Clean the country name and try to match
+    $country = trim($country);
+    
+    // Exact match first
+    if (isset($currency_map[$country])) {
+        return $currency_map[$country];
+    }
+    
+    // Case-insensitive search
+    foreach ($currency_map as $map_country => $currency) {
+        if (strtolower($map_country) === strtolower($country)) {
+            return $currency;
+        }
+    }
+    
+    // Partial match (if country contains the key)
+    foreach ($currency_map as $map_country => $currency) {
+        if (stripos($country, $map_country) !== false) {
+            return $currency;
+        }
+    }
+    
+    // Default to USD if no match found
+    return 'USD';
 }
 
 // --- Fetch all data for the table ---
@@ -397,7 +589,10 @@ $query = "
     ORDER BY name ASC
 ";
 $result = $con->query($query);
-$tradepoints = $result->fetch_all(MYSQLI_ASSOC);
+$tradepoints = array();
+if ($result) {
+    $tradepoints = $result->fetch_all(MYSQLI_ASSOC);
+}
 
 // Pagination and Filtering Logic
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
@@ -409,20 +604,202 @@ $startIndex = ($page - 1) * $itemsPerPage;
 $tradepoints_paged = array_slice($tradepoints, $startIndex, $itemsPerPage);
 
 // --- Fetch counts for summary boxes ---
-$total_tradepoints = count($tradepoints);
+$total_tradepoints_query = "SELECT COUNT(*) AS total FROM (
+    SELECT id FROM markets 
+    UNION ALL 
+    SELECT id FROM border_points 
+    UNION ALL 
+    SELECT id FROM miller_details
+) AS combined";
+$total_tradepoints_result = $con->query($total_tradepoints_query);
+$total_tradepoints = 0;
+if ($total_tradepoints_result) {
+    $row = $total_tradepoints_result->fetch_assoc();
+    $total_tradepoints = $row['total'];
+}
 
 $markets_query = "SELECT COUNT(*) AS total FROM markets";
 $markets_result = $con->query($markets_query);
-$markets_count = $markets_result->fetch_assoc()['total'];
+$markets_count = 0;
+if ($markets_result) {
+    $row = $markets_result->fetch_assoc();
+    $markets_count = $row['total'];
+}
 
 $border_points_query = "SELECT COUNT(*) AS total FROM border_points";
 $border_points_result = $con->query($border_points_query);
-$border_points_count = $border_points_result->fetch_assoc()['total'];
+$border_points_count = 0;
+if ($border_points_result) {
+    $row = $border_points_result->fetch_assoc();
+    $border_points_count = $row['total'];
+}
 
 $millers_query = "SELECT COUNT(*) AS total FROM miller_details";
 $millers_result = $con->query($millers_query);
-$millers_count = $millers_result->fetch_assoc()['total'];
+$millers_count = 0;
+if ($millers_result) {
+    $row = $millers_result->fetch_assoc();
+    $millers_count = $row['total'];
+}
 ?>
+
+<!-- Rest of your HTML/CSS remains the same until the JavaScript section -->
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    // Initialize filter functionality
+    const filterInputs = document.querySelectorAll('.filter-input');
+    filterInputs.forEach(input => {
+        input.addEventListener('keyup', applyFilters);
+    });
+
+    // Initialize select all checkbox
+    document.getElementById('selectAll').addEventListener('change', function() {
+        document.querySelectorAll('.row-checkbox').forEach(checkbox => {
+            checkbox.checked = this.checked;
+        });
+    });
+
+    // Update breadcrumb
+    if (typeof updateBreadcrumb === 'function') {
+        updateBreadcrumb('Base', 'Tradepoints');
+    }
+    
+    // Handle tradepoint type selection in import modal
+    document.getElementById('tradepoint_type').addEventListener('change', function() {
+        const type = this.value;
+        document.getElementById('selected_tradepoint_type').value = type;
+        
+        // Hide all instruction blocks first
+        document.querySelectorAll('.type-instructions').forEach(el => {
+            el.style.display = 'none';
+        });
+        
+        // Show the relevant instruction block
+        if (type === 'Markets') {
+            document.getElementById('marketsInstructions').style.display = 'block';
+        } else if (type === 'Millers') {
+            document.getElementById('millersInstructions').style.display = 'block';
+        } else if (type === 'Border Points') {
+            document.getElementById('borderInstructions').style.display = 'block';
+        }
+    });
+    
+    // Show import modal if there was an error
+    <?php if (isset($import_message) && $import_status === 'danger'): ?>
+        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
+        importModal.show();
+    <?php endif; ?>
+});
+
+function applyFilters() {
+    const filters = {
+        name: document.getElementById('filterName').value.toLowerCase(),
+        type: document.getElementById('filterType').value.toLowerCase(),
+        country: document.getElementById('filterCountry').value.toLowerCase(),
+        region: document.getElementById('filterRegion').value.toLowerCase()
+    };
+
+    const rows = document.querySelectorAll('#tradepointTable tr');
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        const matches = 
+            cells[1].textContent.toLowerCase().includes(filters.name) &&
+            cells[2].textContent.toLowerCase().includes(filters.type) &&
+            cells[3].textContent.toLowerCase().includes(filters.country) &&
+            cells[4].textContent.toLowerCase().includes(filters.region);
+        
+        row.style.display = matches ? '' : 'none';
+    });
+}
+
+function updateItemsPerPage(value) {
+    const url = new URL(window.location);
+    url.searchParams.set('limit', value);
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
+}
+
+function deleteSelected() {
+    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
+    if (checkedBoxes.length === 0) {
+        alert('Please select at least one tradepoint to delete.');
+        return;
+    }
+
+    if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected tradepoint(s)?`)) {
+        const ids = Array.from(checkedBoxes).map(cb => cb.value);
+
+        fetch('delete_tradepoint.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ids: ids })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error('Network error');
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            alert('Request failed: ' + error.message);
+        });
+    }
+}
+
+function exportSelected(format) {
+    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
+    if (checkedBoxes.length === 0) {
+        alert('Please select at least one tradepoint to export.');
+        return;
+    }
+    
+    const ids = Array.from(checkedBoxes).map(cb => cb.value);
+    
+    // Create a form to submit the export request
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = 'export_tradepoints.php';
+    
+    // Add format parameter
+    const formatInput = document.createElement('input');
+    formatInput.type = 'hidden';
+    formatInput.name = 'export_format';
+    formatInput.value = format;
+    form.appendChild(formatInput);
+    
+    // Add selected IDs
+    ids.forEach(id => {
+        const idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'selected_ids[]';
+        idInput.value = id;
+        form.appendChild(idInput);
+    });
+    
+    // Submit the form
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+}
+</script>
+
+<?php 
+// Show import message if exists
+if (isset($import_message)): ?>
+    <div class="alert alert-<?= $import_status ?>">
+        <?= $import_message ?>
+    </div>
+<?php endif; ?>
 
 <style>
     .table-container {
@@ -804,7 +1181,7 @@ $millers_count = $millers_result->fetch_assoc()['total'];
 
 <!-- Import Modal -->
 <div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="importModalLabel">Import Tradepoints</h5>
@@ -829,18 +1206,19 @@ $millers_count = $millers_result->fetch_assoc()['total'];
                         <h6>Markets CSV Format</h6>
                         <p>Your CSV file should have these columns in order:</p>
                         <ol>
-                            <li><strong>Market Name</strong> (required)</li>
-                            <li><strong>Category</strong> (required)</li>
-                            <li><strong>Type</strong> (required)</li>
-                            <li><strong>Country</strong> (required)</li>
-                            <li><strong>County/District</strong> (required)</li>
-                            <li><strong>Longitude</strong> (required)</li>
-                            <li><strong>Latitude</strong> (required)</li>
-                            <li><strong>Radius</strong> (required)</li>
-                            <li><strong>Currency</strong> (required)</li>
-                            <li><strong>Primary Commodities</strong> (comma-separated)</li>
-                            <li><strong>Additional Data Source</strong></li>
+                            <li><strong>market_name</strong> (required) - Name of the market</li>
+                            <li><strong>category</strong> (required) - Urban, Rural, Border, etc.</li>
+                            <li><strong>type</strong> (required) - Retail, Wholesale, etc.</li>
+                            <li><strong>country</strong> (required) - Country name</li>
+                            <li><strong>county_district</strong> (required) - County or district name</li>
+                            <li><strong>longitude</strong> (required) - Geographic coordinate</li>
+                            <li><strong>latitude</strong> (required) - Geographic coordinate</li>
+                            <li><strong>radius</strong> (required) - Coverage radius in km</li>
+                            <li><strong>currency</strong> (required) - Currency code (KES, UGX, etc.)</li>
+                            <li><strong>primary_commodities</strong> (optional) - Comma-separated list</li>
+                            <li><strong>additional_datasource</strong> (optional) - Data source information</li>
                         </ol>
+                        <p><strong>Example:</strong> <code>"Nairobi Market","Urban","Retail","Kenya","Nairobi",36.82,-1.29,5,"KES","Maize,Beans","Government"</code></p>
                         <a href="downloads/markets_template.csv" class="download-template">
                             <i class="fas fa-download"></i> Download Markets Template
                         </a>
@@ -850,11 +1228,12 @@ $millers_count = $millers_result->fetch_assoc()['total'];
                         <h6>Millers CSV Format</h6>
                         <p>Your CSV file should have these columns in order:</p>
                         <ol>
-                            <li><strong>Miller Name</strong> (required)</li>
-                            <li><strong>Country</strong> (required)</li>
-                            <li><strong>County/District</strong> (required)</li>
-                            <li><strong>Millers</strong> (comma-separated list, max 2)</li>
+                            <li><strong>miller_name</strong> (required) - Name of the milling company</li>
+                            <li><strong>country</strong> (required) - Country name</li>
+                            <li><strong>county_district</strong> (required) - County or district name</li>
+                            <li><strong>millers</strong> (optional) - Comma-separated list of miller brands (max 2)</li>
                         </ol>
+                        <p><strong>Example:</strong> <code>"Unga Group","Kenya","Nairobi","Unga Millers,Capwell Millers"</code></p>
                         <a href="downloads/millers_template.csv" class="download-template">
                             <i class="fas fa-download"></i> Download Millers Template
                         </a>
@@ -864,12 +1243,13 @@ $millers_count = $millers_result->fetch_assoc()['total'];
                         <h6>Border Points CSV Format</h6>
                         <p>Your CSV file should have these columns in order:</p>
                         <ol>
-                            <li><strong>Name</strong> (required)</li>
-                            <li><strong>Country</strong> (required)</li>
-                            <li><strong>County</strong> (required)</li>
-                            <li><strong>Longitude</strong> (required)</li>
-                            <li><strong>Latitude</strong> (required)</li>
+                            <li><strong>name</strong> (required) - Name of the border point</li>
+                            <li><strong>country</strong> (required) - Country name</li>
+                            <li><strong>county</strong> (required) - County name</li>
+                            <li><strong>longitude</strong> (required) - Geographic coordinate</li>
+                            <li><strong>latitude</strong> (required) - Geographic coordinate</li>
                         </ol>
+                        <p><strong>Example:</strong> <code>"Namanga Border","Kenya","Kajiado",36.78,-2.55</code></p>
                         <a href="downloads/border_points_template.csv" class="download-template">
                             <i class="fas fa-download"></i> Download Border Points Template
                         </a>
@@ -982,14 +1362,33 @@ function deleteSelected() {
         alert('Please select at least one tradepoint to delete.');
         return;
     }
-    
+
     if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected tradepoint(s)?`)) {
         const ids = Array.from(checkedBoxes).map(cb => cb.value);
-        // Implement your delete logic here
-        console.log('Deleting tradepoints with IDs:', ids);
-        // Example: fetch('delete_tradepoints.php', { method: 'POST', body: JSON.stringify({ ids }) })
-        // .then(response => response.json())
-        // .then(data => { if(data.success) location.reload(); });
+
+        fetch('delete_tradepoint.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ids: ids })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error('Network error');
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            alert('Request failed: ' + error.message);
+        });
     }
 }
 
@@ -1001,9 +1400,32 @@ function exportSelected(format) {
     }
     
     const ids = Array.from(checkedBoxes).map(cb => cb.value);
-    // Implement your export logic here
-    console.log(`Exporting ${format} for tradepoints with IDs:`, ids);
-    // Example: window.location.href = `export_tradepoints.php?format=${format}&ids=${ids.join(',')}`;
+    
+    // Create a form to submit the export request
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = 'export_tradepoints.php';
+    
+    // Add format parameter
+    const formatInput = document.createElement('input');
+    formatInput.type = 'hidden';
+    formatInput.name = 'export_format';
+    formatInput.value = format;
+    form.appendChild(formatInput);
+    
+    // Add selected IDs
+    ids.forEach(id => {
+        const idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'selected_ids[]';
+        idInput.value = id;
+        form.appendChild(idInput);
+    });
+    
+    // Submit the form
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
 }
 </script>
 
