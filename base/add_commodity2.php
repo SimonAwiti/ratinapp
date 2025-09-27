@@ -136,8 +136,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $con->commit();
 
                 // Clear session data after successful insertion
-                session_unset();
-                session_destroy();
+                //unset($_SESSION['category']);
+                //unset($_SESSION['commodity_name']); 
+                //unset($_SESSION['variety']);
+                //unset($_SESSION['packaging']);
+                //unset($_SESSION['unit']);
 
                 // Redirect to a success page or commodity list
                 header('Location: commodities_boilerplate.php');
