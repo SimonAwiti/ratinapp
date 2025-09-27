@@ -1,4 +1,0 @@
-market_name,category,type,country,county_district,longitude,latitude,radius,currency,primary_commodities,additional_datasource
-"Nakuru Main Market","Urban","Wholesale","Kenya","Nakuru",36.0735,-0.3031,500,"KES","Maize,Beans,Wheat","Ministry of Agriculture"
-"Busia Border Market","Border","Retail","Kenya","Busia",34.0919,0.4609,300,"KES","Rice,Sugar,Vegetables","County Government"
-"Kisumu Fish Market","Specialty","Fish","Kenya","Kisumu",34.7617,-0.0917,200,"KES","Fish,Dried Fish","Fisheries Department"
