@@ -1,5 +1,9 @@
 <?php
 header("Content-Type: application/json");
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: POST");
+header("Access-Control-Allow-Headers: Content-Type");
+
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
@@ -15,97 +19,88 @@ if (!$con) {
 
 // Get the raw POST data
 $json_data = file_get_contents('php://input');
-$data = json_decode($json_data, true);
 
-// Check if data is valid and all required fields are present
-if ($data === null || !isset($data['tradepoint_id']) || !isset($data['title']) || !isset($data['description']) || !isset($data['tradepoint_type'])) {
+// Check if data was received
+if (empty($json_data)) {
     http_response_code(400);
-    echo json_encode(["success" => false, "message" => "Invalid JSON data or missing required fields."]);
+    echo json_encode(["success" => false, "message" => "No data received."]);
     exit;
 }
 
+// Decode JSON data
+$data = json_decode($json_data, true);
+
+// Check if JSON decoding failed
+if ($data === null) {
+    http_response_code(400);
+    echo json_encode(["success" => false, "message" => "Invalid JSON format."]);
+    exit;
+}
+
+// Check if all required fields are present
+$required_fields = ['tradepoint_id', 'title', 'description'];
+foreach ($required_fields as $field) {
+    if (!isset($data[$field])) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "Missing required field: $field"]);
+        exit;
+    }
+}
+
+// Sanitize and validate input
 $tradepoint_id = (int)$data['tradepoint_id'];
 $title = trim($data['title']);
 $description = trim($data['description']);
-$tradepoint_type = trim($data['tradepoint_type']);
 
-// Validate that tradepoint_id is a positive integer
+// Validate inputs
 if ($tradepoint_id <= 0) {
     http_response_code(400);
-    echo json_encode(["success" => false, "message" => "Invalid tradepoint ID."]);
+    echo json_encode(["success" => false, "message" => "Invalid tradepoint ID. Must be a positive number."]);
     exit;
 }
 
-// Determine which table to query based on tradepoint type
-$query = "";
-$name_column = "";
-
-switch ($tradepoint_type) {
-    case 'Millers':
-        $query = "SELECT miller_name AS tradepoint_name, country FROM miller_details WHERE id = ?";
-        $name_column = 'tradepoint_name';
-        break;
-    case 'Markets':
-        $query = "SELECT market_name AS tradepoint_name, country FROM markets WHERE id = ?";
-        $name_column = 'tradepoint_name';
-        break;
-    case 'Border Points':
-        $query = "SELECT name AS tradepoint_name, country FROM border_points WHERE id = ?";
-        $name_column = 'tradepoint_name';
-        break;
-    default:
-        http_response_code(400);
-        echo json_encode(["success" => false, "message" => "Invalid tradepoint type specified."]);
-        exit;
+if (empty($title)) {
+    http_response_code(400);
+    echo json_encode(["success" => false, "message" => "Title cannot be empty."]);
+    exit;
 }
 
-// Fetch tradepoint details from the correct table
-$stmt_tradepoint = $con->prepare($query);
-if (!$stmt_tradepoint) {
+if (empty($description)) {
+    http_response_code(400);
+    echo json_encode(["success" => false, "message" => "Description cannot be empty."]);
+    exit;
+}
+
+// Prepare and execute the INSERT statement
+$stmt = $con->prepare("INSERT INTO tradepoint_insights (tradepoint_id, title, description) VALUES (?, ?, ?)");
+
+if (!$stmt) {
     http_response_code(500);
-    echo json_encode(["success" => false, "message" => "Failed to prepare tradepoint query: " . $con->error]);
+    echo json_encode(["success" => false, "message" => "Database preparation failed: " . $con->error]);
     exit;
 }
 
-$stmt_tradepoint->bind_param("i", $tradepoint_id);
-$stmt_tradepoint->execute();
-$result_tradepoint = $stmt_tradepoint->get_result();
+$stmt->bind_param("iss", $tradepoint_id, $title, $description);
 
-if ($result_tradepoint->num_rows === 0) {
-    http_response_code(404);
-    echo json_encode(["success" => false, "message" => "Tradepoint ID not found for the specified type."]);
-    exit;
-}
-
-$tradepoint_data = $result_tradepoint->fetch_assoc();
-$tradepoint_name = $tradepoint_data['tradepoint_name'];
-$country = $tradepoint_data['country'];
-
-// Prepare date value
-$date_posted = date('Y-m-d H:i:s');
-$status = 'pending'; // Default status for new insights
-
-// Insert into the new 'tradepoint_insights' table
-$stmt_insert = $con->prepare("INSERT INTO tradepoint_insights
-                                  (tradepoint_id, tradepoint_name, country, title, description, date_posted)
-                                  VALUES (?, ?, ?, ?, ?, ?)");
-    
-if (!$stmt_insert) {
-    http_response_code(500);
-    echo json_encode(["success" => false, "message" => "Failed to prepare insert statement: " . $con->error]);
-    exit;
-}
-
-$stmt_insert->bind_param("isssss",
-    $tradepoint_id, $tradepoint_name, $country, $title, $description, $date_posted);
-
-if ($stmt_insert->execute()) {
-    http_response_code(201); // 201 Created
-    echo json_encode(["success" => true, "message" => "Insight submitted successfully.", "insight_id" => $con->insert_id]);
+if ($stmt->execute()) {
+    // Success response
+    http_response_code(201);
+    echo json_encode([
+        "success" => true, 
+        "message" => "Insight submitted successfully.",
+        "insight_id" => $con->insert_id,
+        "data" => [
+            "tradepoint_id" => $tradepoint_id,
+            "title" => $title,
+            "description" => $description
+        ]
+    ]);
 } else {
     http_response_code(500);
-    echo json_encode(["success" => false, "message" => "Error submitting insight: " . $stmt_insert->error]);
+    echo json_encode(["success" => false, "message" => "Database insertion failed: " . $stmt->error]);
 }
 
+// Close connections
+$stmt->close();
 $con->close();
 ?>
