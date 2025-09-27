@@ -1,0 +1,6 @@
+name,email,phone,gender,country,county_district,username,password,latitude,longitude,tradepoints
+"John Doe","john.doe@example.com","+254712345678","Male","Kenya","Nairobi County","john.doe123","password123",-1.2921,36.8219,"Market:1,Border Point:2"
+"Jane Smith","jane.smith@example.com","+254723456789","Female","Kenya","Mombasa County","jane.smith456","password456",-4.0435,39.6682,"Miller:3"
+"Mike Johnson","mike.johnson@example.com","+254734567890","Male","Uganda","Kampala District","mike.johnson789","password789",0.3136,32.5811,"Border Point:4,Market:5"
+"Sarah Williams","sarah.williams@example.com","+254745678901","Female","Tanzania","Arusha Region","sarah.williams012","password012",-3.3667,36.6833,"Miller:6"
+"David Brown","david.brown@example.com","+254756789012","Male","Kenya","Kisumu County","david.brown345","password345",-0.1022,34.7616,"Market:7"
