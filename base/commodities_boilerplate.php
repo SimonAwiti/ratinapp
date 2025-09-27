@@ -1,4 +1,5 @@
 <?php
+session_start();
 // base/commodities_boilerplate.php
 
 // Include the configuration file first
