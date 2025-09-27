@@ -7,6 +7,276 @@ include '../admin/includes/config.php';
 // Include the shared header with the sidebar and initial HTML
 include '../admin/includes/header.php';
 
+// Handle CSV import
+if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
+    $file = $_FILES['csv_file']['tmp_name'];
+    $handle = fopen($file, "r");
+    $overwrite = isset($_POST['overwrite_existing']);
+    
+    // Skip header row
+    fgetcsv($handle);
+    
+    $successCount = 0;
+    $errorCount = 0;
+    $errors = array();
+    
+    // Start transaction
+    $con->begin_transaction();
+    
+    try {
+        $rowNumber = 1; // Track row numbers for better error reporting
+        
+        while (($data = fgetcsv($handle, 1000, ","))) {
+            $rowNumber++;
+            
+            // Skip completely empty rows
+            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
+                continue; // Skip empty rows without counting as errors
+            }
+            
+            // Validate required fields
+            if (empty(trim($data[0]))) { // Name
+                $errors[] = "Row $rowNumber: Name is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[1]))) { // Email
+                $errors[] = "Row $rowNumber: Email is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[2]))) { // Phone
+                $errors[] = "Row $rowNumber: Phone is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[3]))) { // Gender
+                $errors[] = "Row $rowNumber: Gender is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[4]))) { // Country
+                $errors[] = "Row $rowNumber: Country is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[5]))) { // County/District
+                $errors[] = "Row $rowNumber: County/District is required";
+                $errorCount++;
+                continue;
+            }
+            
+            // Prepare enumerator data
+            $name = trim($data[0]);
+            $email = trim($data[1]);
+            $phone = trim($data[2]);
+            $gender = trim($data[3]);
+            $country = trim($data[4]);
+            $county_district = trim($data[5]);
+            $username = isset($data[6]) ? trim($data[6]) : generateUsername($name);
+            $password = isset($data[7]) ? trim($data[7]) : generateRandomPassword();
+            $latitude = isset($data[8]) ? floatval(trim($data[8])) : 0.0;
+            $longitude = isset($data[9]) ? floatval(trim($data[9])) : 0.0;
+            
+            // Process tradepoints (format: "Market:1,Border Point:2,Miller:3")
+            $tradepoints_json = '[]';
+            if (isset($data[10]) && !empty(trim($data[10]))) {
+                $tradepoints_array = [];
+                $tradepoints_csv = trim($data[10]);
+                $tradepoint_pairs = array_map('trim', explode(',', $tradepoints_csv));
+                
+                foreach ($tradepoint_pairs as $pair) {
+                    if (strpos($pair, ':') !== false) {
+                        $parts = explode(':', $pair, 2);
+                        if (count($parts) == 2) {
+                            $type = trim($parts[0]);
+                            $id = intval(trim($parts[1]));
+                            
+                            // Validate tradepoint type
+                            $valid_types = ['Market', 'Border Point', 'Miller', 'Markets', 'Border Points', 'Millers'];
+                            if (in_array($type, $valid_types) && $id > 0) {
+                                // Normalize type names
+                                if ($type === 'Markets') $type = 'Market';
+                                if ($type === 'Border Points') $type = 'Border Point';
+                                if ($type === 'Millers') $type = 'Miller';
+                                
+                                $tradepoints_array[] = [
+                                    'id' => $id,
+                                    'type' => $type
+                                ];
+                            } else {
+                                $errors[] = "Row $rowNumber: Warning - Invalid tradepoint format: '$pair'";
+                            }
+                        }
+                    }
+                }
+                $tradepoints_json = json_encode($tradepoints_array, JSON_UNESCAPED_UNICODE);
+            }
+            
+            // Check if enumerator exists (by email)
+            $check_query = "SELECT id FROM enumerators WHERE email = ?";
+            $check_stmt = $con->prepare($check_query);
+            $check_stmt->bind_param('s', $email);
+            $check_stmt->execute();
+            $check_result = $check_stmt->get_result();
+            
+            if ($check_result->num_rows > 0) {
+                if ($overwrite) {
+                    // Update existing enumerator
+                    $update_query = "UPDATE enumerators SET 
+                        name = ?, 
+                        phone = ?, 
+                        gender = ?, 
+                        country = ?, 
+                        county_district = ?, 
+                        username = ?, 
+                        password = ?, 
+                        latitude = ?, 
+                        longitude = ?, 
+                        tradepoints = ? 
+                        WHERE email = ?";
+                    
+                    $update_stmt = $con->prepare($update_query);
+                    if (!$update_stmt) {
+                        $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
+                        $errorCount++;
+                        continue;
+                    }
+                    
+                    $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                    $update_stmt->bind_param(
+                        'ssssssddss',
+                        $name,
+                        $phone,
+                        $gender,
+                        $country,
+                        $county_district,
+                        $username,
+                        $hashed_password,
+                        $latitude,
+                        $longitude,
+                        $tradepoints_json,
+                        $email
+                    );
+                    
+                    if ($update_stmt->execute()) {
+                        $successCount++;
+                    } else {
+                        $errors[] = "Row $rowNumber: Update failed - " . $update_stmt->error;
+                        $errorCount++;
+                    }
+                    $update_stmt->close();
+                } else {
+                    $errors[] = "Row $rowNumber: Enumerator with email '$email' already exists (use overwrite option to update)";
+                    $errorCount++;
+                }
+                continue;
+            }
+            
+            // Insert new enumerator
+            $insert_query = "INSERT INTO enumerators (
+                name, 
+                email, 
+                phone, 
+                gender, 
+                country, 
+                county_district, 
+                username, 
+                password, 
+                latitude, 
+                longitude, 
+                tradepoints,
+                token
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            
+            $insert_stmt = $con->prepare($insert_query);
+            if (!$insert_stmt) {
+                $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
+                $errorCount++;
+                continue;
+            }
+            
+            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+            $token = bin2hex(random_bytes(16)); // Generate random token
+            
+            $insert_stmt->bind_param(
+                'ssssssssddss',
+                $name,
+                $email,
+                $phone,
+                $gender,
+                $country,
+                $county_district,
+                $username,
+                $hashed_password,
+                $latitude,
+                $longitude,
+                $tradepoints_json,
+                $token
+            );
+            
+            if ($insert_stmt->execute()) {
+                $successCount++;
+            } else {
+                $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
+                $errorCount++;
+            }
+            $insert_stmt->close();
+        }
+        
+        // Commit transaction if no critical errors (allow warnings)
+        $criticalErrors = 0;
+        foreach ($errors as $error) {
+            if (strpos($error, 'Warning') === false) {
+                $criticalErrors++;
+            }
+        }
+        
+        if ($criticalErrors === 0) {
+            $con->commit();
+            $warningCount = count($errors) - $criticalErrors;
+            if ($warningCount > 0) {
+                $import_message = "Successfully imported $successCount enumerators with $warningCount warnings. Warnings: " . implode('<br>', $errors);
+                $import_status = 'warning';
+            } else {
+                $import_message = "Successfully imported $successCount enumerators.";
+                $import_status = 'success';
+            }
+        } else {
+            $con->rollback();
+            $import_message = "Import rolled back due to $criticalErrors critical errors. Processed $successCount rows successfully. Errors: " . implode('<br>', $errors);
+            $import_status = 'danger';
+        }
+        
+    } catch (Exception $e) {
+        $con->rollback();
+        $import_message = "Import failed with exception: " . $e->getMessage();
+        $import_status = 'danger';
+    }
+    
+    fclose($handle);
+} elseif (isset($_POST['import_csv'])) {
+    $import_message = "Please select a valid CSV file to import.";
+    $import_status = 'danger';
+}
+
+// Function to generate username from name
+function generateUsername($name) {
+    $username = strtolower(str_replace(' ', '.', $name));
+    $username = preg_replace('/[^a-z0-9.]/', '', $username);
+    return $username . rand(100, 999);
+}
+
+// Function to generate random password
+function generateRandomPassword($length = 12) {
+    $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()';
+    $password = '';
+    for ($i = 0; $i < $length; $i++) {
+        $password .= $chars[random_int(0, strlen($chars) - 1)];
+    }
+    return $password;
+}
+
 // Function to fetch the actual name of a tradepoint based on ID and type
 function getTradepointName($con, $id, $type) {
     $tableName = '';
@@ -301,6 +571,38 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
         font-style: italic;
         font-size: 12px;
     }
+    .import-instructions {
+        background-color: #f8f9fa;
+        border-left: 4px solid rgba(180, 80, 50, 1);
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    .import-instructions h5 {
+        color: rgba(180, 80, 50, 1);
+        margin-top: 0;
+    }
+    .import-instructions h6 {
+        color: rgba(180, 80, 50, 0.8);
+        margin-top: 15px;
+    }
+    .download-template {
+        display: inline-block;
+        margin-top: 10px;
+        color: rgba(180, 80, 50, 1);
+        text-decoration: none;
+    }
+    .download-template:hover {
+        text-decoration: underline;
+    }
+    .btn-import {
+        background-color: white;
+        color: black;
+        border: 1px solid #ddd;
+        padding: 8px 16px;
+    }
+    .btn-import:hover {
+        background-color: #f8f9fa;
+    }
 </style>
 
 <div class="stats-section">
@@ -342,6 +644,12 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
     </div>
 </div>
 
+<?php if (isset($import_message)): ?>
+    <div class="alert alert-<?= $import_status ?>">
+        <?= $import_message ?>
+    </div>
+<?php endif; ?>
+
 <div class="container">
     <div class="table-container">
         <div class="btn-group">
@@ -369,6 +677,11 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
                     </a></li>
                 </ul>
             </div>
+            
+            <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
+                <i class="fas fa-upload" style="margin-right: 3px;"></i>
+                Import
+            </button>
         </div>
 
         <table class="table table-striped table-hover">
@@ -495,6 +808,70 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
     </div>
 </div>
 
+<!-- Import Modal -->
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importModalLabel">Import Enumerators</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="import-instructions">
+                    <h5>CSV Import Instructions</h5>
+                    <p>Your CSV file should have the following columns in order:</p>
+                    <ol>
+                        <li><strong>Name</strong> (required) - Full name of the enumerator</li>
+                        <li><strong>Email</strong> (required) - Email address</li>
+                        <li><strong>Phone</strong> (required) - Phone number</li>
+                        <li><strong>Gender</strong> (required) - Male/Female/Other</li>
+                        <li><strong>Country</strong> (required) - Country name</li>
+                        <li><strong>County/District</strong> (required) - Region or district</li>
+                        <li><strong>Username</strong> (optional) - Will be auto-generated if empty</li>
+                        <li><strong>Password</strong> (optional) - Will be auto-generated if empty</li>
+                        <li><strong>Latitude</strong> (optional) - Geographic coordinate</li>
+                        <li><strong>Longitude</strong> (optional) - Geographic coordinate</li>
+                        <li><strong>Tradepoints</strong> (optional) - Comma-separated list of "Type:ID" pairs</li>
+                    </ol>
+                    
+                    <h6>Tradepoints Format Examples:</h6>
+                    <ul>
+                        <li><code>Market:1,Border Point:2,Miller:3</code></li>
+                        <li><code>Markets:5</code> (for single tradepoint)</li>
+                        <li><code>Border Points:10,Millers:15</code></li>
+                    </ul>
+                    
+                    <p><strong>Note:</strong> To find tradepoint IDs, check the IDs in your Markets, Border Points, and Millers management pages.</p>
+                    
+                    <a href="downloads/enumerators_template.csv" class="download-template">
+                        <i class="fas fa-download"></i> Download Enumerators Template
+                    </a>
+                </div>
+                
+                <form method="POST" enctype="multipart/form-data" id="importForm">
+                    <div class="mb-3">
+                        <label for="csv_file" class="form-label">Select CSV File</label>
+                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                    </div>
+                    
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="overwriteExisting" name="overwrite_existing">
+                        <label class="form-check-label" for="overwriteExisting">
+                            Overwrite existing enumerators with matching emails
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="importForm" name="import_csv" class="btn btn-primary">
+                    <i class="fas fa-upload"></i> Import
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 document.addEventListener("DOMContentLoaded", function() {
     // Initialize filter functionality
@@ -514,6 +891,12 @@ document.addEventListener("DOMContentLoaded", function() {
     if (typeof updateBreadcrumb === 'function') {
         updateBreadcrumb('Base', 'Enumerators');
     }
+    
+    // Show import modal if there was an error
+    <?php if (isset($import_message) && $import_status === 'danger'): ?>
+        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
+        importModal.show();
+    <?php endif; ?>
 });
 
 function toggleTradepoints(button) {
@@ -564,14 +947,33 @@ function deleteSelected() {
         alert('Please select at least one enumerator to delete.');
         return;
     }
-    
+
     if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected enumerator(s)?`)) {
         const ids = Array.from(checkedBoxes).map(cb => cb.value);
-        // Implement your delete logic here
-        console.log('Deleting enumerators with IDs:', ids);
-        // Example: fetch('delete_enumerators.php', { method: 'POST', body: JSON.stringify({ ids }) })
-        // .then(response => response.json())
-        // .then(data => { if(data.success) location.reload(); });
+
+        fetch('delete_enumerator.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ids: ids })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error('Network error');
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            alert('Request failed: ' + error.message);
+        });
     }
 }
 
@@ -583,9 +985,32 @@ function exportSelected(format) {
     }
     
     const ids = Array.from(checkedBoxes).map(cb => cb.value);
-    // Implement your export logic here
-    console.log(`Exporting ${format} for enumerators with IDs:`, ids);
-    // Example: window.location.href = `export_enumerators.php?format=${format}&ids=${ids.join(',')}`;
+    
+    // Create a form to submit the export request
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = 'export_enumerators.php';
+    
+    // Add format parameter
+    const formatInput = document.createElement('input');
+    formatInput.type = 'hidden';
+    formatInput.name = 'export_format';
+    formatInput.value = format;
+    form.appendChild(formatInput);
+    
+    // Add selected IDs
+    ids.forEach(id => {
+        const idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'selected_ids[]';
+        idInput.value = id;
+        form.appendChild(idInput);
+    });
+    
+    // Submit the form
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
 }
 </script>
 
