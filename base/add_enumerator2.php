@@ -31,54 +31,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt->execute();
 
-    session_unset();
-    session_destroy();
+
     header("Location: commodities_boilerplate.php");
     exit;
 }
 
-// Fetch tradepoints
+// Fetch tradepoints - UPDATED to use miller_details for miller locations
 $tradepoints = [];
 $sql = "SELECT 
             id, 
+            miller_name AS name, 
+            'Miller' AS tradepoint_type,  
+            country AS admin0, 
+            county_district AS admin1,
+            '' AS longitude,  -- miller_details doesn't have coordinates
+            '' AS latitude,
+            '' AS radius,
+            miller AS miller_details,  -- This contains the JSON array of specific millers
+            miller_name AS location_name,
+            '' AS specific_miller  -- Not needed since we're assigning the location, not specific miller
+        FROM miller_details
+        WHERE miller_name IS NOT NULL
+        
+        UNION ALL
+        
+        SELECT 
+            id, 
             market_name AS name, 
-            'Markets' AS tradepoint_type, 
+            'Market' AS tradepoint_type, 
             country AS admin0, 
             county_district AS admin1,
             longitude,
             latitude,
-            radius
+            radius,
+            '' AS miller_details,
+            '' AS location_name,
+            '' AS specific_miller
         FROM markets
+        
         UNION ALL
+        
         SELECT 
             id, 
             name AS name, 
-            'Border Points' AS tradepoint_type, 
+            'Border Point' AS tradepoint_type, 
             country AS admin0, 
             county AS admin1,
             longitude,
             latitude,
-            radius
+            radius,
+            '' AS miller_details,
+            '' AS location_name,
+            '' AS specific_miller
         FROM border_points
-        UNION ALL
-        SELECT 
-            md.id, 
-            md.miller_name AS name, 
-            'Miller' AS tradepoint_type,  
-            md.country AS admin0, 
-            md.county_district AS admin1,
-            m.longitude,
-            m.latitude,
-            m.radius
-        FROM miller_details md
-        JOIN millers m ON md.miller_name = m.miller_name  -- Join using miller_name
-        WHERE md.miller_name IS NOT NULL AND m.miller_name IS NOT NULL
+        
         ORDER BY name ASC";
 
 $result = $con->query($sql);
 while ($row = $result->fetch_assoc()) {
     $tradepoints[] = $row;
 }
+
+// Prepare tradepoints data for JavaScript
+$js_tradepoints_data = json_encode($tradepoints);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -251,17 +266,76 @@ while ($row = $result->fetch_assoc()) {
             content: " *";
             color: #dc3545;
         }
-        select {
+        
+        /* Custom searchable dropdown styles */
+        .custom-select-wrapper {
+            position: relative;
+            margin-bottom: 15px;
+            width: 100%;
+        }
+
+        .custom-select-input {
+            width: 100%;
             padding: 10px;
             border: 1px solid #ccc;
             border-radius: 5px;
             font-size: 14px;
-            margin-bottom: 15px;
+            background-color: #fff;
+            box-sizing: border-box;
         }
-        select:focus {
+
+        .custom-select-input:focus {
             outline: none;
             border-color: rgba(180, 80, 50, 0.5);
             box-shadow: 0 0 5px rgba(180, 80, 50, 0.3);
+        }
+
+        .custom-select-dropdown {
+            position: absolute;
+            width: 100%;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #fff;
+            z-index: 100;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .custom-select-dropdown .dropdown-item {
+            padding: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #333;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .custom-select-dropdown .dropdown-item:hover,
+        .custom-select-dropdown .dropdown-item.selected {
+            background-color: #f0f0f0;
+        }
+        
+        .dropdown-item .tradepoint-type {
+            font-size: 12px;
+            color: #666;
+            margin-left: 8px;
+            font-weight: bold;
+        }
+        
+        .dropdown-item .tradepoint-location {
+            font-size: 11px;
+            color: #888;
+            display: block;
+            margin-top: 2px;
+        }
+        
+        .dropdown-item .miller-companies {
+            font-size: 11px;
+            color: #2c5aa0;
+            display: block;
+            margin-top: 2px;
+            font-style: italic;
         }
         
         /* Tags styling */
@@ -273,6 +347,7 @@ while ($row = $result->fetch_assoc()) {
             border-radius: 20px;
             margin: 5px;
             font-size: 14px;
+            position: relative;
         }
         .tag span {
             margin-left: 8px;
@@ -289,6 +364,24 @@ while ($row = $result->fetch_assoc()) {
             padding: 10px;
             border: 1px dashed #ccc;
             border-radius: 5px;
+        }
+        
+        .tag.market {
+            background-color: #ffeaea;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .tag.border-point {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .tag.miller {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
         }
         
         /* Button styling */
@@ -363,6 +456,13 @@ while ($row = $result->fetch_assoc()) {
                 flex-direction: column;
             }
         }
+        
+        .error-message {
+            color: #dc3545;
+            font-size: 14px;
+            margin-top: 5px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -389,23 +489,14 @@ while ($row = $result->fetch_assoc()) {
             <h2>Add Enumerator - Step 2</h2>
             <p>Assign tradepoints that this enumerator will be responsible for.</p>
             
-            <form method="POST">
+            <form method="POST" id="tradepoints-form">
                 <div class="form-group-full">
-                    <label for="tradepoint-select">Select Tradepoint(s):</label>
-                    <select id="tradepoint-select">
-                        <option value="">-- Select Tradepoint --</option>
-                        <?php foreach ($tradepoints as $tp): ?>
-                            <option
-                                value="<?= $tp['id'] ?>"
-                                data-type="<?= $tp['tradepoint_type'] ?>"
-                                data-longitude="<?= $tp['longitude'] ?>"
-                                data-latitude="<?= $tp['latitude'] ?>"
-                                data-radius="<?= $tp['radius'] ?>"
-                            >
-                                <?= htmlspecialchars("{$tp['name']} - {$tp['tradepoint_type']} ({$tp['admin1']}, {$tp['admin0']})") ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <label for="tradepoint-search" class="required">Search Tradepoints:</label>
+                    <div class="custom-select-wrapper">
+                        <input type="text" id="tradepoint-search" class="custom-select-input" placeholder="Search markets, border points, or miller locations...">
+                        <div id="tradepoint-dropdown" class="custom-select-dropdown"></div>
+                    </div>
+                    <div class="error-message" id="tradepoints_error">At least one tradepoint is required</div>
                 </div>
 
                 <div class="form-group-full">
@@ -428,99 +519,247 @@ while ($row = $result->fetch_assoc()) {
     </div>
 
     <script>
-        const select = document.getElementById('tradepoint-select');
-        const selectedContainer = document.getElementById('selected-tradepoints');
-        const hiddenInputs = document.getElementById('hidden-inputs');
+        // Data passed from PHP
+        const tradepointsData = <?php echo $js_tradepoints_data; ?>;
         const selectedTradepoints = new Map();
 
-        select.addEventListener('change', () => {
-            const selectedId = select.value;
-            const selectedText = select.options[select.selectedIndex].text;
-            const selectedType = select.options[select.selectedIndex].getAttribute('data-type');
-            const longitude = select.options[select.selectedIndex].getAttribute('data-longitude');
-            const latitude = select.options[select.selectedIndex].getAttribute('data-latitude');
-            const radius = select.options[select.selectedIndex].getAttribute('data-radius');
+        // Initialize searchable dropdown
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.getElementById('tradepoint-search');
+            const dropdown = document.getElementById('tradepoint-dropdown');
+            const selectedContainer = document.getElementById('selected-tradepoints');
+            const hiddenInputs = document.getElementById('hidden-inputs');
+            const form = document.getElementById('tradepoints-form');
 
-            if (selectedId && !selectedTradepoints.has(selectedId)) {
-                selectedTradepoints.set(selectedId, {
-                    id: selectedId,
-                    type: selectedType,
-                    name: selectedText,
-                    longitude: longitude,
-                    latitude: latitude,
-                    radius: radius
+            // Function to render dropdown items
+            const renderDropdown = (filteredData) => {
+                dropdown.innerHTML = '';
+                if (filteredData.length === 0) {
+                    const noResults = document.createElement('div');
+                    noResults.className = 'dropdown-item';
+                    noResults.textContent = 'No results found';
+                    dropdown.appendChild(noResults);
+                    return;
+                }
+
+                filteredData.forEach(tp => {
+                    // Skip if already selected
+                    if (selectedTradepoints.has(tp.id.toString())) {
+                        return;
+                    }
+
+                    const div = document.createElement('div');
+                    div.className = 'dropdown-item';
+                    
+                    // Create display content
+                    const typeBadge = document.createElement('span');
+                    typeBadge.className = 'tradepoint-type';
+                    typeBadge.textContent = `(${tp.tradepoint_type})`;
+                    
+                    const locationInfo = document.createElement('span');
+                    locationInfo.className = 'tradepoint-location';
+                    locationInfo.textContent = `${tp.admin1}, ${tp.admin0}`;
+                    
+                    // Enhanced display for millers to show companies
+                    if (tp.tradepoint_type === 'Miller') {
+                        div.innerHTML = `${tp.name} `;
+                        div.appendChild(typeBadge);
+                        div.appendChild(document.createElement('br'));
+                        div.appendChild(locationInfo);
+                        
+                        // Show miller companies if available
+                        if (tp.miller_details) {
+                            try {
+                                const millers = JSON.parse(tp.miller_details);
+                                if (Array.isArray(millers) && millers.length > 0) {
+                                    const companiesInfo = document.createElement('span');
+                                    companiesInfo.className = 'miller-companies';
+                                    companiesInfo.textContent = `Companies: ${millers.join(', ')}`;
+                                    div.appendChild(document.createElement('br'));
+                                    div.appendChild(companiesInfo);
+                                }
+                            } catch (e) {
+                                console.log('Error parsing miller details:', e);
+                            }
+                        }
+                    } else {
+                        // For markets and border points
+                        div.innerHTML = `${tp.name} `;
+                        div.appendChild(typeBadge);
+                        div.appendChild(document.createElement('br'));
+                        div.appendChild(locationInfo);
+                    }
+
+                    // Store all data as dataset attributes
+                    div.dataset.id = tp.id;
+                    div.dataset.name = tp.name;
+                    div.dataset.type = tp.tradepoint_type;
+                    div.dataset.admin0 = tp.admin0;
+                    div.dataset.admin1 = tp.admin1;
+                    div.dataset.longitude = tp.longitude;
+                    div.dataset.latitude = tp.latitude;
+                    div.dataset.radius = tp.radius;
+                    div.dataset.millerDetails = tp.miller_details || '';
+
+                    div.addEventListener('click', () => {
+                        addTradepoint(tp);
+                        searchInput.value = '';
+                        dropdown.style.display = 'none';
+                    });
+
+                    dropdown.appendChild(div);
                 });
+                dropdown.style.display = 'block';
+            };
 
-                // Create tag
+            // Function to add tradepoint to selection
+            function addTradepoint(tp) {
+                if (selectedTradepoints.has(tp.id.toString())) {
+                    return; // Already added
+                }
+
+                selectedTradepoints.set(tp.id.toString(), tp);
+
+                // Create tag with appropriate styling
                 const tag = document.createElement('div');
-                tag.className = 'tag';
-                tag.innerHTML = `${selectedText} <span onclick="removeTradepoint('${selectedId}')">×</span>`;
+                tag.className = `tag ${tp.tradepoint_type.toLowerCase().replace(' ', '-')}`;
+                
+                let displayText = tp.name;
+                
+                // For millers, show companies in the tag
+                if (tp.tradepoint_type === 'Miller' && tp.miller_details) {
+                    try {
+                        const millers = JSON.parse(tp.miller_details);
+                        if (Array.isArray(millers) && millers.length > 0) {
+                            displayText += ` (${millers.join(', ')})`;
+                        }
+                    } catch (e) {
+                        console.log('Error parsing miller details:', e);
+                    }
+                }
+                
+                tag.innerHTML = `${displayText} <span onclick="removeTradepoint('${tp.id}')">×</span>`;
                 selectedContainer.appendChild(tag);
 
-                // Create hidden inputs for all tradepoint details
-                createHiddenInputs(selectedId);
+                // Create hidden inputs
+                createHiddenInputs(tp);
+                
+                // Validate form
+                validateTradepoints();
             }
 
-            select.value = "";
-        });
+            // Function to create hidden inputs
+            function createHiddenInputs(tp) {
+                const hiddenInputId = document.createElement('input');
+                hiddenInputId.type = 'hidden';
+                hiddenInputId.name = `tradepoints[${tp.id}][id]`;
+                hiddenInputId.value = tp.id;
+                hiddenInputs.appendChild(hiddenInputId);
 
-        function createHiddenInputs(selectedId) {
-            const tradepoint = selectedTradepoints.get(selectedId);
+                const hiddenInputType = document.createElement('input');
+                hiddenInputType.type = 'hidden';
+                hiddenInputType.name = `tradepoints[${tp.id}][type]`;
+                hiddenInputType.value = tp.tradepoint_type;
+                hiddenInputs.appendChild(hiddenInputType);
 
-            const hiddenInputId = document.createElement('input');
-            hiddenInputId.type = 'hidden';
-            hiddenInputId.name = 'tradepoints[' + selectedId + '][id]';
-            hiddenInputId.value = tradepoint.id;
-            hiddenInputs.appendChild(hiddenInputId);
+                // Store display name for easier retrieval
+                const hiddenInputDisplayName = document.createElement('input');
+                hiddenInputDisplayName.type = 'hidden';
+                hiddenInputDisplayName.name = `tradepoints[${tp.id}][display_name]`;
+                hiddenInputDisplayName.value = tp.name;
+                hiddenInputs.appendChild(hiddenInputDisplayName);
 
-            const hiddenInputType = document.createElement('input');
-            hiddenInputType.type = 'hidden';
-            hiddenInputType.name = 'tradepoints[' + selectedId + '][type]';
-            hiddenInputType.value = tradepoint.type;
-            hiddenInputs.appendChild(hiddenInputType);
+                // Store miller companies if available
+                if (tp.miller_details) {
+                    const hiddenInputMillerDetails = document.createElement('input');
+                    hiddenInputMillerDetails.type = 'hidden';
+                    hiddenInputMillerDetails.name = `tradepoints[${tp.id}][miller_details]`;
+                    hiddenInputMillerDetails.value = tp.miller_details;
+                    hiddenInputs.appendChild(hiddenInputMillerDetails);
+                }
+            }
 
-            const hiddenInputLongitude = document.createElement('input');
-            hiddenInputLongitude.type = 'hidden';
-            hiddenInputLongitude.name = 'tradepoints[' + selectedId + '][longitude]';
-            hiddenInputLongitude.value = tradepoint.longitude;
-            hiddenInputs.appendChild(hiddenInputLongitude);
+            // Search functionality
+            searchInput.addEventListener('input', () => {
+                const searchTerm = searchInput.value.toLowerCase();
+                const filteredData = tradepointsData.filter(tp => 
+                    tp.name.toLowerCase().includes(searchTerm) ||
+                    tp.admin0.toLowerCase().includes(searchTerm) ||
+                    tp.admin1.toLowerCase().includes(searchTerm) ||
+                    tp.tradepoint_type.toLowerCase().includes(searchTerm) ||
+                    (tp.miller_details && tp.miller_details.toLowerCase().includes(searchTerm))
+                );
+                renderDropdown(filteredData);
+            });
 
-            const hiddenInputLatitude = document.createElement('input');
-            hiddenInputLatitude.type = 'hidden';
-            hiddenInputLatitude.name = 'tradepoints[' + selectedId + '][latitude]';
-            hiddenInputLatitude.value = tradepoint.latitude;
-            hiddenInputs.appendChild(hiddenInputLatitude);
-
-            const hiddenInputRadius = document.createElement('input');
-            hiddenInputRadius.type = 'hidden';
-            hiddenInputRadius.name = 'tradepoints[' + selectedId + '][radius]';
-            hiddenInputRadius.value = tradepoint.radius;
-            hiddenInputs.appendChild(hiddenInputRadius);
-        }
-
-        function removeTradepoint(selectedId) {
-            // Remove the tag
-            const tags = document.querySelectorAll('.tag');
-            tags.forEach(tag => {
-                if (tag.textContent.includes(selectedTradepoints.get(selectedId).name)) {
-                    tag.remove();
+            // Show dropdown on focus
+            searchInput.addEventListener('focus', () => {
+                if (searchInput.value.trim() === '' || dropdown.innerHTML === '') {
+                    renderDropdown(tradepointsData);
                 }
             });
-            
-            // Remove hidden inputs
-            const inputsToRemove = Array.from(hiddenInputs.querySelectorAll('input')).filter(input =>
-                input.name.startsWith('tradepoints[' + selectedId + ']')
-            );
-            inputsToRemove.forEach(input => hiddenInputs.removeChild(input));
-            
-            // Remove from map
-            selectedTradepoints.delete(selectedId);
+
+            // Hide dropdown when clicking outside
+            document.addEventListener('click', (event) => {
+                if (!searchInput.contains(event.target) && !dropdown.contains(event.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+
+            // Form validation
+            form.addEventListener('submit', (e) => {
+                if (selectedTradepoints.size === 0) {
+                    e.preventDefault();
+                    document.getElementById('tradepoints_error').style.display = 'block';
+                    searchInput.style.borderColor = '#dc3545';
+                    searchInput.focus();
+                }
+            });
+
+            // Initial render on page load
+            renderDropdown(tradepointsData);
+        });
+
+        // Function to remove tradepoint
+        function removeTradepoint(tradepointId) {
+            if (selectedTradepoints.has(tradepointId)) {
+                selectedTradepoints.delete(tradepointId);
+                
+                // Remove tag
+                const tags = document.querySelectorAll('.tag');
+                tags.forEach(tag => {
+                    if (tag.textContent.includes(selectedTradepoints.get(tradepointId)?.name || '')) {
+                        tag.remove();
+                    }
+                });
+                
+                // Remove hidden inputs
+                const inputsToRemove = document.querySelectorAll(`input[name^="tradepoints[${tradepointId}]"]`);
+                inputsToRemove.forEach(input => input.remove());
+                
+                // Re-validate
+                validateTradepoints();
+            }
         }
 
-        // Add smooth transitions for better UX
-        document.querySelectorAll('select').forEach(element => {
+        // Function to validate tradepoints
+        function validateTradepoints() {
+            const errorElement = document.getElementById('tradepoints_error');
+            const searchInput = document.getElementById('tradepoint-search');
+            
+            if (selectedTradepoints.size > 0) {
+                errorElement.style.display = 'none';
+                searchInput.style.borderColor = '#ccc';
+            } else {
+                errorElement.style.display = 'block';
+                searchInput.style.borderColor = '#dc3545';
+            }
+        }
+
+        // Add smooth transitions
+        document.querySelectorAll('input').forEach(element => {
             element.addEventListener('focus', function() {
-                this.style.transform = 'scale(1.02)';
+                this.style.transform = 'scale(1.01)';
                 this.style.transition = 'transform 0.2s ease';
             });
             

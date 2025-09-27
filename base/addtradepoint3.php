@@ -90,7 +90,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $con->commit();
                 
                 // Clear session data
-                session_unset();
+                //session_unset();
                 echo "<script>alert('Market added successfully!'); window.location.href='addtradepoint.php';</script>";
                 exit;
                 
@@ -128,7 +128,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 if ($stmt->execute()) {
                     $stmt->close();
                     // Clear session data
-                    session_unset();
+                    //session_unset();
                     echo "<script>alert('Miller details saved successfully!'); window.location.href='addtradepoint.php';</script>";
                     exit;
                 } else {

@@ -116,7 +116,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         );
         
         if ($stmt->execute()) {
-            session_unset();
+            
             echo "<script>alert('Border Point added successfully!'); window.location.href='addtradepoint.php';</script>";
             exit;
         } else {
@@ -214,7 +214,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             );
             
             if ($stmt->execute()) {
-                session_unset();
+               
                 echo "<script>alert('Miller added successfully!'); window.location.href='addtradepoint.php';</script>";
                 exit;
             } else {
