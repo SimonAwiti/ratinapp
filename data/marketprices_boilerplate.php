@@ -503,27 +503,28 @@ function getStatusDisplay($status) {
     }
 }
 
-function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $con) {
-    $yesterday = date('Y-m-d', strtotime('-1 day'));
-    
+function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
+    // Find the most recent price before the current date for the same commodity/market/price_type
     $sql = "SELECT Price FROM market_prices
             WHERE commodity = ? 
             AND market = ?
             AND price_type = ?
-            AND DATE(date_posted) = ?";
+            AND DATE(date_posted) < DATE(?)
+            ORDER BY date_posted DESC
+            LIMIT 1";
 
     $stmt = $con->prepare($sql);
     if (!$stmt) return 'N/A';
     
-    $stmt->bind_param('isss', $commodityId, $market, $priceType, $yesterday);
+    $stmt->bind_param('isss', $commodityId, $market, $priceType, $currentDate);
     $stmt->execute();
     $result = $stmt->get_result();
 
     if ($result && $result->num_rows > 0) {
-        $yesterdayData = $result->fetch_assoc();
-        $yesterdayPrice = $yesterdayData['Price'];
-        if($yesterdayPrice != 0){
-            $change = (($currentPrice - $yesterdayPrice) / $yesterdayPrice) * 100;
+        $previousData = $result->fetch_assoc();
+        $previousPrice = $previousData['Price'];
+        if ($previousPrice != 0) {
+            $change = (($currentPrice - $previousPrice) / $previousPrice) * 100;
             $stmt->close();
             return round($change, 2) . '%';
         }
@@ -532,30 +533,34 @@ function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $c
     return 'N/A';
 }
 
-function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $con) {
-    $firstDayOfLastMonth = date('Y-m-01', strtotime('-1 month'));
-    $lastDayOfLastMonth = date('Y-m-t', strtotime('-1 month'));
-
-    $sql = "SELECT AVG(Price) as avg_price FROM market_prices
+function calculateMoMChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
+    // Calculate date 30 days before current date
+    $thirtyDaysAgo = date('Y-m-d', strtotime($currentDate . ' -30 days'));
+    
+    // Find the closest price to 30 days ago (within a reasonable range)
+    $sql = "SELECT Price, ABS(DATEDIFF(DATE(date_posted), ?)) as date_diff 
+            FROM market_prices
             WHERE commodity = ?
             AND market = ?
             AND price_type = ?
-            AND DATE(date_posted) BETWEEN ? AND ?";
+            AND DATE(date_posted) BETWEEN DATE_SUB(?, INTERVAL 35 DAY) AND DATE_SUB(?, INTERVAL 25 DAY)
+            ORDER BY date_diff ASC
+            LIMIT 1";
 
     $stmt = $con->prepare($sql);
     if (!$stmt) return 'N/A';
     
-    $stmt->bind_param('issss', $commodityId, $market, $priceType, $firstDayOfLastMonth, $lastDayOfLastMonth);
+    $stmt->bind_param('sissss', $thirtyDaysAgo, $commodityId, $market, $priceType, $thirtyDaysAgo, $thirtyDaysAgo);
     $stmt->execute();
     $result = $stmt->get_result();
 
     if ($result && $result->num_rows > 0) {
-        $monthData = $result->fetch_assoc();
-        $averagePrice = $monthData['avg_price'];
-        if($averagePrice != 0){
-             $change = (($currentPrice - $averagePrice) / $averagePrice) * 100;
-             $stmt->close();
-             return round($change, 2) . '%';
+        $monthAgoData = $result->fetch_assoc();
+        $monthAgoPrice = $monthAgoData['Price'];
+        if ($monthAgoPrice != 0) {
+            $change = (($currentPrice - $monthAgoPrice) / $monthAgoPrice) * 100;
+            $stmt->close();
+            return round($change, 2) . '%';
         }
     }
     $stmt->close();
@@ -893,6 +898,16 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
         </div>
     </div>
 
+    <?php
+    // IMPORTANT: Data grouping logic - must come BEFORE the table display
+    $grouped_data = [];
+    foreach ($prices_data as $price) {
+        $date = date('Y-m-d', strtotime($price['date_posted']));
+        $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'];
+        $grouped_data[$group_key][] = $price;
+    }
+    ?>
+
     <table>
         <thead>
             <tr>
@@ -911,28 +926,28 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
         </thead>
         <tbody>
             <?php
-            $grouped_data = [];
-            foreach ($prices_data as $price) {
-                $date = date('Y-m-d', strtotime($price['date_posted']));
-                $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'];
-                $grouped_data[$group_key][] = $price;
-            }
-
+            // Updated table row generation - replace your existing tbody loop
             foreach ($grouped_data as $group_key => $prices_in_group):
                 $first_row = true;
                 $group_price_ids = array_column($prices_in_group, 'id');
                 $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
 
                 foreach($prices_in_group as $price):
-                    $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
-                    $month_change = calculateDoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
-                ?>
+                    // CORRECTED: Pass the actual date_posted from the record
+                    $price_date = $price['date_posted'];
+                    $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
+                    
+                    // Choose between Month-over-Month or Week-over-Week
+                    $month_change = calculateMoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
+                    // OR use Week-over-Week instead:
+                    // $week_change = calculateWoWChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
+                    ?>
                 <tr>
                     <?php if ($first_row): ?>
                         <td rowspan="<?php echo count($prices_in_group); ?>">
                             <input type="checkbox"
-                                   data-group-key="<?php echo $group_key; ?>"
-                                   data-price-ids="<?php echo $group_price_ids_json; ?>"
+                                data-group-key="<?php echo $group_key; ?>"
+                                data-price-ids="<?php echo $group_price_ids_json; ?>"
                             />
                         </td>
                         <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
