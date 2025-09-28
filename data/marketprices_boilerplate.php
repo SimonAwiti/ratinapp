@@ -1,19 +1,440 @@
 <?php
 // base/marketprices_boilerplate.php
 
+// Start session at the very beginning
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
 // Include the configuration file first
 include '../admin/includes/config.php';
 
-// Include the shared header with the sidebar and initial HTML
+// Handle CSV import BEFORE any HTML output
+if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
+    $file = $_FILES['csv_file']['tmp_name'];
+    $handle = fopen($file, "r");
+    $overwrite = isset($_POST['overwrite_existing']);
+    $data_source = $_POST['data_source'] ?? 'Manual Import';
+    
+    // Skip header row
+    fgetcsv($handle);
+    
+    $successCount = 0;
+    $errorCount = 0;
+    $errors = array();
+    
+    // Start transaction
+    $con->begin_transaction();
+    
+    try {
+        $rowNumber = 1;
+        
+        while (($data = fgetcsv($handle, 1000, ","))) {
+            $rowNumber++;
+            
+            // Skip completely empty rows
+            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
+                continue;
+            }
+            
+            // Validate required fields - Updated based on actual table structure
+            if (empty(trim($data[0]))) {
+                $errors[] = "Row $rowNumber: Market is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[1]))) {
+                $errors[] = "Row $rowNumber: Commodity ID is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[2]))) {
+                $errors[] = "Row $rowNumber: Price Type is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[3]))) {
+                $errors[] = "Row $rowNumber: Price is required";
+                $errorCount++;
+                continue;
+            }
+            if (empty(trim($data[4]))) {
+                $errors[] = "Row $rowNumber: Date is required";
+                $errorCount++;
+                continue;
+            }
+            
+            // Prepare market price data - Updated mapping based on CSV structure
+            $market = trim($data[0]);
+            $commodity_id = intval(trim($data[1]));
+            $price_type = trim($data[2]);
+            $price = floatval(trim($data[3]));
+            
+            // DEBUG: Check what we're actually getting from the CSV
+            $raw_date_string = trim($data[4]);
+            error_log("Raw date string from CSV: '$raw_date_string'");
+            
+            // FIXED: More robust date parsing with validation
+            $date_string = trim($data[4]);
+            $date_posted = null;
+            
+            // Remove any extra spaces and ensure proper format
+            $date_string = preg_replace('/\s+/', ' ', $date_string);
+            
+            // Try direct parsing first
+            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/', $date_string, $matches)) {
+                // Format: YYYY-MM-DD HH:MM:SS
+                $year = $matches[1];
+                $month = $matches[2];
+                $day = $matches[3];
+                $hour = $matches[4];
+                $minute = $matches[5];
+                $second = $matches[6];
+                
+                // Validate date components
+                if (checkdate($month, $day, $year) && 
+                    $hour >= 0 && $hour <= 23 && 
+                    $minute >= 0 && $minute <= 59 && 
+                    $second >= 0 && $second <= 59) {
+                    $date_posted = "$year-$month-$day $hour:$minute:$second";
+                }
+            }
+            
+            // If direct parsing failed, try DateTime
+            if ($date_posted === null) {
+                try {
+                    $date_time = new DateTime($date_string);
+                    $date_posted = $date_time->format('Y-m-d H:i:s');
+                } catch (Exception $e) {
+                    // DateTime failed, try strtotime as last resort
+                    $timestamp = strtotime($date_string);
+                    if ($timestamp !== false && $timestamp > 0) {
+                        $date_posted = date('Y-m-d H:i:s', $timestamp);
+                    }
+                }
+            }
+            
+            // Final validation
+            if ($date_posted === null || !preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $date_posted)) {
+                $errors[] = "Row $rowNumber: Invalid date format '$date_string'. Could not parse to valid datetime.";
+                $errorCount++;
+                continue;
+            }
+            
+            // Additional validation to ensure it's a reasonable date (not 1970 or future dates too far ahead)
+            $parsed_timestamp = strtotime($date_posted);
+            if ($parsed_timestamp < strtotime('2020-01-01') || $parsed_timestamp > strtotime('2030-12-31')) {
+                $errors[] = "Row $rowNumber: Date '$date_posted' is out of reasonable range (2020-2030)";
+                $errorCount++;
+                continue;
+            }
+            
+            error_log("Successfully parsed date: '$date_string' -> '$date_posted'");
+            
+            $status = isset($data[5]) ? trim($data[5]) : 'pending';
+            $variety = isset($data[6]) ? trim($data[6]) : '';
+            $weight = isset($data[7]) ? floatval(trim($data[7])) : 1.0;
+            $unit = isset($data[8]) ? trim($data[8]) : 'kg';
+            $country_admin_0 = isset($data[9]) ? trim($data[9]) : 'Kenya';
+            $subject = isset($data[10]) ? trim($data[10]) : 'Market Prices';
+            $supplied_volume = isset($data[11]) ? (trim($data[11]) !== '' ? intval(trim($data[11])) : null) : null;
+            $comments = isset($data[12]) ? trim($data[12]) : '';
+            $supply_status = isset($data[13]) ? trim($data[13]) : 'unknown';
+            $category = isset($data[14]) ? trim($data[14]) : 'General';
+            $commodity_sources_data = null;
+            
+            // Extract date components
+            $day = date('d', strtotime($date_posted));
+            $month = date('m', strtotime($date_posted));
+            $year = date('Y', strtotime($date_posted));
+            
+            // Validate price type
+            $valid_price_types = ['Wholesale', 'Retail'];
+            if (!in_array($price_type, $valid_price_types)) {
+                $errors[] = "Row $rowNumber: Invalid price type '$price_type'. Must be 'Wholesale' or 'Retail'";
+                $errorCount++;
+                continue;
+            }
+            
+            // Validate status
+            $valid_statuses = ['pending', 'approved', 'published', 'unpublished'];
+            if (!in_array($status, $valid_statuses)) {
+                $errors[] = "Row $rowNumber: Invalid status '$status'";
+                $errorCount++;
+                continue;
+            }
+            
+            // Get market ID from market name - with flexible matching
+            $market_id = 0;
+            $market_name_to_search = $market;
+            
+            // Handle market name variations
+            if (strtolower($market) === 'kangemi') {
+                $market_name_to_search = 'Kangemi Market';
+            } elseif (strtolower($market) === 'kibuye') {
+                $market_name_to_search = 'Kibuye Market';
+            }
+            
+            $market_query = "SELECT id FROM markets WHERE market_name = ? LIMIT 1";
+            $market_stmt = $con->prepare($market_query);
+            if (!$market_stmt) {
+                $errors[] = "Row $rowNumber: Failed to prepare market query: " . $con->error;
+                $errorCount++;
+                continue;
+            }
+            $market_stmt->bind_param('s', $market_name_to_search);
+            $market_stmt->execute();
+            $market_result = $market_stmt->get_result();
+            if ($market_result->num_rows > 0) {
+                $market_row = $market_result->fetch_assoc();
+                $market_id = $market_row['id'];
+            } else {
+                $errors[] = "Row $rowNumber: Market '$market' not found (searched as '$market_name_to_search')";
+                $errorCount++;
+                $market_stmt->close();
+                continue;
+            }
+            $market_stmt->close();
+            
+            // DEBUG: Log what we're about to insert
+            error_log("Preparing to insert: market=$market, commodity=$commodity_id, date=$date_posted");
+            
+            // Check if price record already exists
+            $check_query = "SELECT id FROM market_prices WHERE market = ? AND commodity = ? AND price_type = ? AND DATE(date_posted) = DATE(?)";
+            $check_stmt = $con->prepare($check_query);
+            if (!$check_stmt) {
+                $errors[] = "Row $rowNumber: Failed to prepare check query: " . $con->error;
+                $errorCount++;
+                continue;
+            }
+            $check_stmt->bind_param('siss', $market, $commodity_id, $price_type, $date_posted);
+            $check_stmt->execute();
+            $check_result = $check_stmt->get_result();
+            
+            if ($check_result->num_rows > 0) {
+                if ($overwrite) {
+                    // Update existing price
+                    $update_query = "UPDATE market_prices SET 
+                        Price = ?, 
+                        status = ?, 
+                        data_source = ?, 
+                        variety = ?, 
+                        weight = ?, 
+                        unit = ?, 
+                        country_admin_0 = ?, 
+                        subject = ?, 
+                        supplied_volume = ?, 
+                        comments = ?, 
+                        supply_status = ?,
+                        commodity_sources_data = ?
+                        WHERE market = ? AND commodity = ? AND price_type = ? AND DATE(date_posted) = DATE(?)";
+                    
+                    $update_stmt = $con->prepare($update_query);
+                    if (!$update_stmt) {
+                        $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
+                        $errorCount++;
+                        $check_stmt->close();
+                        continue;
+                    }
+                    
+                    // Correct parameter binding for update (16 parameters)
+                    $update_stmt->bind_param(
+                        'dsssdsssissssiss', // 16 type characters - CORRECTED
+                        $price,
+                        $status,
+                        $data_source,
+                        $variety,
+                        $weight,
+                        $unit,
+                        $country_admin_0,
+                        $subject,
+                        $supplied_volume,
+                        $comments,
+                        $supply_status,
+                        $commodity_sources_data,
+                        $market,
+                        $commodity_id,
+                        $price_type,
+                        $date_posted
+                    );
+                    
+                    if ($update_stmt->execute()) {
+                        $successCount++;
+                    } else {
+                        $errors[] = "Row $rowNumber: Update failed - " . $update_stmt->error;
+                        $errorCount++;
+                    }
+                    $update_stmt->close();
+                } else {
+                    $errors[] = "Row $rowNumber: Price record already exists (use overwrite option to update)";
+                    $errorCount++;
+                }
+                $check_stmt->close();
+                continue;
+            }
+            $check_stmt->close();
+            
+
+            // Insert new price record - CORRECTED to match actual table column order
+            $insert_query = "INSERT INTO market_prices (
+                category,
+                commodity,
+                country_admin_0,
+                market_id,
+                market,
+                weight,
+                unit,
+                price_type,
+                Price,
+                subject,
+                day,
+                month,
+                year,
+                date_posted,
+                status,
+                variety,
+                data_source,
+                supplied_volume,
+                comments,
+                supply_status,
+                commodity_sources_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+            $insert_stmt = $con->prepare($insert_query);
+            if (!$insert_stmt) {
+                $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
+                $errorCount++;
+                continue;
+            }
+
+            // Create arrays for cleaner parameter handling
+            $bind_types = [
+                's', // category
+                'i', // commodity
+                's', // country_admin_0
+                'i', // market_id
+                's', // market
+                'd', // weight
+                's', // unit
+                's', // price_type
+                'd', // Price
+                's', // subject
+                'i', // day
+                'i', // month
+                'i', // year
+                's', // date_posted
+                's', // status
+                's', // variety
+                's', // data_source
+                'i', // supplied_volume
+                's', // comments
+                's', // supply_status
+                's'  // commodity_sources_data
+            ];
+
+            $bind_values = [
+                $category,
+                $commodity_id,
+                $country_admin_0,
+                $market_id,
+                $market,
+                $weight,
+                $unit,
+                $price_type,
+                $price,
+                $subject,
+                $day,
+                $month,
+                $year,
+                $date_posted,
+                $status,
+                $variety,
+                $data_source,
+                $supplied_volume,
+                $comments,
+                $supply_status,
+                $commodity_sources_data
+            ];
+
+            // Debug: verify counts match
+            error_log("Bind types count: " . count($bind_types));
+            error_log("Bind values count: " . count($bind_values));
+
+            if (count($bind_types) !== count($bind_values)) {
+                $errors[] = "Row $rowNumber: Parameter count mismatch in binding";
+                $errorCount++;
+                $insert_stmt->close();
+                continue;
+            }
+
+            // Convert type array to string
+            $type_string = implode('', $bind_types);
+            error_log("Type string: $type_string (length: " . strlen($type_string) . ")");
+
+            // Bind parameters
+            $insert_stmt->bind_param($type_string, ...$bind_values);
+
+            if ($insert_stmt->execute()) {
+                $successCount++;
+                error_log("Insert successful for row $rowNumber");
+            } else {
+                $error_msg = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
+                $errors[] = $error_msg;
+                error_log($error_msg);
+                $errorCount++;
+            }
+            $insert_stmt->close();
+                    }
+        
+        // Commit or rollback transaction
+        if ($errorCount === 0) {
+            $con->commit();
+            $_SESSION['import_message'] = "Successfully imported $successCount market prices.";
+            $_SESSION['import_status'] = 'success';
+        } else {
+            $con->rollback();
+            $_SESSION['import_message'] = "Import failed with $errorCount errors. Errors: " . implode('<br>', array_slice($errors, 0, 10));
+            $_SESSION['import_status'] = 'danger';
+        }
+        
+    } catch (Exception $e) {
+        $con->rollback();
+        $_SESSION['import_message'] = "Import failed with exception: " . $e->getMessage();
+        $_SESSION['import_status'] = 'danger';
+    }
+    
+    fclose($handle);
+    
+    // Redirect to avoid form resubmission
+    header("Location: marketprices_boilerplate.php");
+    exit;
+    
+} elseif (isset($_POST['import_csv'])) {
+    $_SESSION['import_message'] = "Please select a valid CSV file to import.";
+    $_SESSION['import_status'] = 'danger';
+    header("Location: marketprices_boilerplate.php");
+    exit;
+}
+// Include the shared header AFTER handling POST requests
 include '../admin/includes/header.php';
+
+// Check for session messages
+$import_message = null;
+$import_status = null;
+if (isset($_SESSION['import_message'])) {
+    $import_message = $_SESSION['import_message'];
+    $import_status = $_SESSION['import_status'];
+    unset($_SESSION['import_message']);
+    unset($_SESSION['import_status']);
+}
 
 // Function to fetch prices data from the database
 function getPricesData($con, $limit = 10, $offset = 0) {
     $sql = "SELECT
                 p.id,
                 p.market,
-                p.commodity, -- This is now the commodity ID from market_prices
-                c.commodity_name, -- This will fetch the name from the commodities table
+                p.commodity,
+                c.commodity_name,
                 p.price_type,
                 p.Price,
                 p.date_posted,
@@ -22,7 +443,7 @@ function getPricesData($con, $limit = 10, $offset = 0) {
             FROM
                 market_prices p
             LEFT JOIN
-                commodities c ON p.commodity = c.id -- Correct join: p.commodity (ID) = c.id
+                commodities c ON p.commodity = c.id
             ORDER BY
                 p.date_posted DESC
             LIMIT $limit OFFSET $offset";
@@ -37,7 +458,7 @@ function getPricesData($con, $limit = 10, $offset = 0) {
         }
         $result->free();
     } else {
-        error_log("Error fetching prices data: " . $con->error); // Log error instead of echoing
+        error_log("Error fetching prices data: " . $con->error);
     }
     return $data;
 }
@@ -52,7 +473,7 @@ function getTotalPriceRecords($con){
      return 0;
 }
 
-//Get total number of records
+// Get total number of records
 $total_records = getTotalPriceRecords($con);
 
 // Set pagination parameters
@@ -75,91 +496,70 @@ function getStatusDisplay($status) {
             return '<span class="status-dot status-published"></span> Published';
         case 'approved':
             return '<span class="status-dot status-approved"></span> Approved';
-        case 'unpublished': // Add this new status display
+        case 'unpublished':
             return '<span class="status-dot status-unpublished"></span> Unpublished';
         default:
             return '<span class="status-dot"></span> Unknown';
     }
 }
 
-/**
- * Calculates the Day-over-Day (DoD) price change.
- *
- * @param float $currentPrice The current day's price.
- * @param int $commodityId The commodity ID (now correctly passed as an ID).
- * @param string $market The market.
- * @param string $priceType The price type (e.g., 'Wholesale', 'Retail').
- * @param mysqli $con The database connection.
- *
- * @return string The DoD change as a percentage (e.g., '2.04%') or 'N/A' if data is insufficient.
- */
 function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $con) {
-    // Get yesterday's date
     $yesterday = date('Y-m-d', strtotime('-1 day'));
-
-    // Query to fetch yesterday's price for the same commodity ID, market, and price type
+    
     $sql = "SELECT Price FROM market_prices
-            WHERE commodity = " . (int)$commodityId . " -- Use commodity ID from market_prices
-            AND market = '" . $con->real_escape_string($market) . "'
-            AND price_type = '" . $con->real_escape_string($priceType) . "'
-            AND DATE(date_posted) = '$yesterday'";
+            WHERE commodity = ? 
+            AND market = ?
+            AND price_type = ?
+            AND DATE(date_posted) = ?";
 
-    $result = $con->query($sql);
+    $stmt = $con->prepare($sql);
+    if (!$stmt) return 'N/A';
+    
+    $stmt->bind_param('isss', $commodityId, $market, $priceType, $yesterday);
+    $stmt->execute();
+    $result = $stmt->get_result();
 
     if ($result && $result->num_rows > 0) {
         $yesterdayData = $result->fetch_assoc();
         $yesterdayPrice = $yesterdayData['Price'];
         if($yesterdayPrice != 0){
             $change = (($currentPrice - $yesterdayPrice) / $yesterdayPrice) * 100;
+            $stmt->close();
             return round($change, 2) . '%';
         }
-        else{
-            return 'N/A';
-        }
-
-    } else {
-        return 'N/A'; // Not Available
     }
+    $stmt->close();
+    return 'N/A';
 }
 
-/**
- * Calculates the Day-over-Month (DoM) price change.
- *
- * @param float $currentPrice The current day's price.
- * @param int $commodityId The commodity ID (now correctly passed as an ID).
- * @param string $market The market.
- * @param string $priceType.
- * @param mysqli $con The database connection.
- *
- * @return string The DoM change as a percentage or 'N/A' if data is insufficient.
- */
 function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $con) {
-    // Get the date range for the previous month
     $firstDayOfLastMonth = date('Y-m-01', strtotime('-1 month'));
     $lastDayOfLastMonth = date('Y-m-t', strtotime('-1 month'));
 
-    // Query to get the average price for the previous month using commodity ID
     $sql = "SELECT AVG(Price) as avg_price FROM market_prices
-            WHERE commodity = " . (int)$commodityId . " -- Use commodity ID from market_prices
-            AND market = '" . $con->real_escape_string($market) . "'
-            AND price_type = '" . $con->real_escape_string($priceType) . "'
-            AND DATE(date_posted) BETWEEN '$firstDayOfLastMonth' AND '$lastDayOfLastMonth'";
+            WHERE commodity = ?
+            AND market = ?
+            AND price_type = ?
+            AND DATE(date_posted) BETWEEN ? AND ?";
 
-    $result = $con->query($sql);
+    $stmt = $con->prepare($sql);
+    if (!$stmt) return 'N/A';
+    
+    $stmt->bind_param('issss', $commodityId, $market, $priceType, $firstDayOfLastMonth, $lastDayOfLastMonth);
+    $stmt->execute();
+    $result = $stmt->get_result();
 
     if ($result && $result->num_rows > 0) {
         $monthData = $result->fetch_assoc();
         $averagePrice = $monthData['avg_price'];
         if($averagePrice != 0){
              $change = (($currentPrice - $averagePrice) / $averagePrice) * 100;
+             $stmt->close();
              return round($change, 2) . '%';
         }
-        else{
-            return 'N/A';
-        }
-    } else {
-        return 'N/A'; // Not Available
     }
+    $stmt->close();
+    return 'N/A';
 }
 ?>
 
@@ -209,7 +609,7 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
       color: white;
     }
     .toolbar .unpublish {
-      background-color: rgba(180, 80, 50, 1); /* Keep this color, it's distinct from green approve */
+      background-color: rgba(180, 80, 50, 1);
       color: white;
     }
     table {
@@ -245,7 +645,7 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
     .status-approved {
         background-color: green;
     }
-    .status-unpublished { /* New status color */
+    .status-unpublished {
         background-color: grey;
     }
     .actions {
@@ -269,6 +669,8 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
         border-radius: 6px;
         background-color: #eee;
         cursor: pointer;
+        text-decoration: none;
+        color: #333;
     }
     .pagination .current {
         background-color: #cddc39;
@@ -278,11 +680,54 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
         margin-left: 5px;
     }
     
-    /* Modal styles */
+    /* Import instructions styles */
+    .import-instructions {
+        background-color: #f8f9fa;
+        border-left: 4px solid rgba(180, 80, 50, 1);
+        padding: 15px;
+        margin-bottom: 20px;
+        max-height: 300px;
+        overflow-y: auto;
+        border-radius: 5px;
+    }
+    .import-instructions h5 {
+        color: rgba(180, 80, 50, 1);
+        margin-top: 0;
+        position: sticky;
+        top: 0;
+        background-color: #f8f9fa;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #dee2e6;
+        margin-bottom: 15px;
+    }
+    .import-instructions h6 {
+        color: rgba(180, 80, 50, 0.8);
+        margin-top: 15px;
+    }
+    .download-template {
+        display: inline-block;
+        margin-top: 10px;
+        color: rgba(180, 80, 50, 1);
+        text-decoration: none;
+    }
+    .download-template:hover {
+        text-decoration: underline;
+    }
+    .btn-import {
+        background-color: white;
+        color: black;
+        border: 1px solid #ddd;
+        padding: 8px 16px;
+    }
+    .btn-import:hover {
+        background-color: #f8f9fa;
+    }
+    
+    /* Fixed Modal styles */
     .modal {
         display: none;
         position: fixed;
-        z-index: 1000;
+        z-index: 1050;
         left: 0;
         top: 0;
         width: 100%;
@@ -291,78 +736,120 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
         background-color: rgba(0,0,0,0.4);
     }
     
+    .modal.show {
+        display: block;
+    }
+    
+    .modal-dialog {
+        margin: 5% auto;
+        max-width: 800px;
+    }
+    
     .modal-content {
         background-color: #fefefe;
-        margin: 10% auto;
         padding: 20px;
         border: 1px solid #888;
-        width: 50%;
         border-radius: 8px;
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+    
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 15px;
+        border-bottom: 1px solid #dee2e6;
+    }
+    
+    .modal-title {
+        margin: 0;
+        font-size: 1.25rem;
     }
     
     .close-modal {
         color: #aaa;
-        float: right;
         font-size: 28px;
         font-weight: bold;
         cursor: pointer;
+        background: none;
+        border: none;
     }
     
     .close-modal:hover {
         color: black;
     }
     
-    /* Progress bar styles */
-    #uploadProgress {
-        margin-top: 20px;
-        display: none;
+    /* Miller Prices Section */
+    .miller-section {
+        margin-top: 40px;
+        border-top: 2px solid #eee;
+        padding-top: 20px;
+    }
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    .section-title {
+        font-size: 1.5em;
+        color: rgba(180, 80, 50, 1);
+        margin: 0;
     }
     
-    #progressBar {
-        height: 20px;
-        width: 0%;
-        background-color: rgba(180, 80, 50, 1);
+    /* Instructions scrollbar styling */
+    .import-instructions::-webkit-scrollbar {
+        width: 6px;
+    }
+    .import-instructions::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 3px;
+    }
+    .import-instructions::-webkit-scrollbar-thumb {
+        background: rgba(180, 80, 50, 0.5);
+        border-radius: 3px;
+    }
+    .import-instructions::-webkit-scrollbar-thumb:hover {
+        background: rgba(180, 80, 50, 0.7);
+    }
+    
+    /* Alert styles */
+    .alert {
+        padding: 12px 20px;
+        margin-bottom: 20px;
+        border: 1px solid transparent;
         border-radius: 4px;
-        text-align: center;
-        color: white;
-        line-height: 20px;
-        transition: width 0.3s;
     }
     
-    /* Results box styles */
-    #uploadResults {
-        margin-top: 20px;
-        display: none;
+    .alert-success {
+        color: #155724;
+        background-color: #d4edda;
+        border-color: #c3e6cb;
     }
     
-    #resultsContent {
-        max-height: 200px;
-        overflow-y: auto;
-        border: 1px solid #ddd;
-        padding: 10px;
-        border-radius: 4px;
+    .alert-danger {
+        color: #721c24;
+        background-color: #f8d7da;
+        border-color: #f5c6cb;
     }
     
-    /* Form input styles */
-    #bulkUploadForm input[type="file"],
-    #bulkUploadForm input[type="text"] {
-        width: 100%;
-        padding: 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        margin-bottom: 15px;
-    }
-    
-    #bulkUploadForm label {
-        display: block;
-        margin-bottom: 5px;
-        font-weight: bold;
+    .alert-warning {
+        color: #856404;
+        background-color: #fff3cd;
+        border-color: #ffeaa7;
     }
 </style>
 
 <div class="text-wrapper-8"><h3>Market Prices Management</h3></div>
 <p class="p">Manage everything related to Market Prices data</p>
+
+<?php if (isset($import_message)): ?>
+    <div class="alert alert-<?= $import_status ?>">
+        <?= htmlspecialchars($import_message) ?>
+    </div>
+<?php endif; ?>
 
 <div class="container">
     <div class="toolbar">
@@ -370,27 +857,37 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
             <a href="../data/add_marketprices.php" class="primary" style="display: inline-block; width: 302px; height: 52px; margin-right: 15px; text-align: center; line-height: 52px; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
                 <i class="fa fa-plus" style="margin-right: 6px;"></i> Add New
             </a>
-            <button class="bulk-upload-btn">
-                <i class="fa fa-upload" style="margin-right: 6px;"></i> Bulk Upload
+            <button class="btn-import" onclick="openImportModal()">
+                <i class="fa fa-upload" style="margin-right: 6px;"></i> Import
             </button>
-            <button class="delete-btn">
+            <button class="delete-btn" onclick="deleteSelected()">
                 <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
             </button>
-            <button>
-                <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
-            </button>
+            <div class="dropdown">
+                <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
+                </button>
+                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
+                    <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">
+                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export to Excel
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
+                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
+                    </a></li>
+                </ul>
+            </div>
             <button>
                 <i class="fa fa-filter" style="margin-right: 6px;"></i> Filters
             </button>
         </div>
         <div class="toolbar-right">
-            <button class="approve">
+            <button class="approve" onclick="approveSelected()">
                 <i class="fa fa-check-circle" style="margin-right: 6px;"></i> Approve
             </button>
-            <button class="unpublish">
+            <button class="unpublish" onclick="unpublishSelected()">
                 <i class="fa fa-ban" style="margin-right: 6px;"></i> Unpublish
             </button>
-            <button class="primary">
+            <button class="primary" onclick="publishSelected()">
                 <i class="fa fa-upload" style="margin-right: 6px;"></i> Publish
             </button>
         </div>
@@ -417,19 +914,16 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
             $grouped_data = [];
             foreach ($prices_data as $price) {
                 $date = date('Y-m-d', strtotime($price['date_posted']));
-                // Group by commodity ID for consistency
                 $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'];
                 $grouped_data[$group_key][] = $price;
             }
 
             foreach ($grouped_data as $group_key => $prices_in_group):
                 $first_row = true;
-                // Collect all individual price IDs for this group
                 $group_price_ids = array_column($prices_in_group, 'id');
                 $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
 
                 foreach($prices_in_group as $price):
-                    // Pass 'commodity' (which is now the ID) to the functions
                     $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
                     $month_change = calculateDoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
                 ?>
@@ -442,7 +936,8 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
                             />
                         </td>
                         <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
-                        <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td> <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
+                        <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
+                        <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
                     <?php endif; ?>
                     <td><?php echo htmlspecialchars($price['price_type']); ?></td>
                     <td><?php echo htmlspecialchars($price['Price']); ?></td>
@@ -465,7 +960,8 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
             ?>
         </tbody>
     </table>
-   <div class="pagination">
+    
+    <div class="pagination">
         <div>
             Show
             <select>
@@ -492,48 +988,106 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
     </div>
 </div>
 
-<!-- Bulk Upload Modal -->
-<div id="bulkUploadModal" class="modal" style="display: none;">
-    <div class="modal-content">
-        <span class="close-modal">&times;</span>
-        <h3>Bulk Upload Market Prices</h3>
-        <p>Upload a CSV file containing market price data. <a href="#" id="downloadTemplate" style="color: rgba(180, 80, 50, 1);">Download CSV template</a></p>
-        
-        <form id="bulkUploadForm" enctype="multipart/form-data" style="margin-top: 20px;">
-            <div style="margin-bottom: 15px;">
-                <label for="bulkFile">CSV File:</label>
-                <input type="file" id="bulkFile" name="bulkFile" accept=".csv" required>
+<!-- Import Modal -->
+<div class="modal" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importModalLabel">Import Market Prices</h5>
+                <button type="button" class="close-modal" onclick="closeImportModal()" aria-label="Close">&times;</button>
             </div>
-            <div style="margin-bottom: 15px;">
-                <label for="dataSource">Data Source:</label>
-                <input type="text" id="dataSource" name="dataSource" placeholder="Source of this data">
+            <div class="modal-body">
+                <div class="import-instructions">
+                    <h5>CSV Import Instructions</h5>
+                    <p>Your CSV file should have the following columns in order:</p>
+                    <ol>
+                        <li><strong>Market</strong> (required) - Market name (must exist in markets table)</li>
+                        <li><strong>Commodity ID</strong> (required) - Commodity ID from commodities table</li>
+                        <li><strong>Price Type</strong> (required) - "Wholesale" or "Retail"</li>
+                        <li><strong>Price</strong> (required) - Price value (numeric)</li>
+                        <li><strong>Date Posted</strong> (required) - YYYY-MM-DD format</li>
+                        <li><strong>Status</strong> (optional) - pending/approved/published/unpublished (default: pending)</li>
+                        <li><strong>Variety</strong> (optional) - Commodity variety</li>
+                        <li><strong>Weight</strong> (optional) - Weight value (default: 1.0)</li>
+                        <li><strong>Unit</strong> (optional) - Measurement unit (default: kg)</li>
+                        <li><strong>Country</strong> (optional) - Country name (default: Kenya)</li>
+                        <li><strong>Subject</strong> (optional) - Price subject (default: Market Prices)</li>
+                        <li><strong>Supplied Volume</strong> (optional) - Volume as integer</li>
+                        <li><strong>Comments</strong> (optional) - Additional comments</li>
+                        <li><strong>Supply Status</strong> (optional) - Supply status (default: unknown)</li>
+                        <li><strong>Category</strong> (optional) - Commodity category (default: General)</li>
+                    </ol>
+                    
+                    <h6>Example CSV Format:</h6>
+                    <pre>Market,Commodity ID,Price Type,Price,Date Posted,Status,Variety
+Kangemi Market,40,Wholesale,1.14,2025-06-03,published,Yellow
+Kangemi Market,40,Retail,1.52,2025-06-03,published,Yellow</pre>
+                    
+                    <p><strong>Important Notes:</strong></p>
+                    <ul>
+                        <li>Market names must exist in your markets table</li>
+                        <li>Commodity IDs must exist in your commodities table</li>
+                        <li>The commodity name will be automatically fetched from the commodities table</li>
+                        <li>All required fields must have values</li>
+                    </ul>
+                    
+                    <a href="downloads/market_prices_template.csv" class="download-template">
+                        <i class="fas fa-download"></i> Download CSV Template
+                    </a>
+                </div>
+                
+                <form method="POST" enctype="multipart/form-data" id="importForm">
+                    <div class="mb-3">
+                        <label for="csv_file" class="form-label">Select CSV File</label>
+                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="data_source" class="form-label">Data Source</label>
+                        <input type="text" class="form-control" id="data_source" name="data_source" placeholder="Source of this data" required>
+                    </div>
+                    
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="overwriteExisting" name="overwrite_existing">
+                        <label class="form-check-label" for="overwriteExisting">
+                            Overwrite existing prices with matching market, commodity, price type and date
+                        </label>
+                    </div>
+                </form>
             </div>
-            <div style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
-                <button type="button" class="close-modal" style="padding: 10px 20px; background-color: #eee; border: none; border-radius: 4px; cursor: pointer;">Cancel</button>
-                <button type="submit" style="padding: 10px 20px; background-color: rgba(180, 80, 50, 1); color: white; border: none; border-radius: 4px; cursor: pointer;">Upload</button>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+                <button type="submit" form="importForm" name="import_csv" class="btn btn-primary">
+                    <i class="fas fa-upload"></i> Import
+                </button>
             </div>
-        </form>
-        
-        <div id="uploadProgress" style="margin-top: 20px; display: none;">
-            <div style="width: 100%; background-color: #f1f1f1; border-radius: 4px;">
-                <div id="progressBar" style="height: 20px; width: 0%; background-color: rgba(180, 80, 50, 1); border-radius: 4px; text-align: center; color: white; line-height: 20px;">0%</div>
-            </div>
-            <p id="progressText" style="text-align: center; margin-top: 5px;">Processing...</p>
-        </div>
-        
-        <div id="uploadResults" style="margin-top: 20px; display: none;">
-            <h4>Upload Results:</h4>
-            <div id="resultsContent" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px;"></div>
         </div>
     </div>
 </div>
 
 <script>
 /**
+ * Export selected items to Excel or PDF
+ */
+function exportSelected(format) {
+    const selectedIds = getSelectedPriceIds();
+    
+    if (selectedIds.length === 0) {
+        alert('Please select items to export.');
+        return;
+    }
+    
+    // Create URL parameters for export
+    const params = new URLSearchParams();
+    params.append('export', format);
+    params.append('ids', JSON.stringify(selectedIds));
+    
+    // Open export in new window
+    window.open('export_market_prices.php?' + params.toString(), '_blank');
+}
+
+/**
  * Displays a confirmation dialog and sends a request to update item status or delete items.
- *
- * @param {string} action - The action to perform ('approve', 'publish', 'unpublish', 'delete').
- * @param {Array<number>} ids - An array of item IDs to apply the action to.
  */
 function confirmAction(action, ids) {
     if (ids.length === 0) {
@@ -555,26 +1109,21 @@ function confirmAction(action, ids) {
         })
         .then(response => {
             if (!response.ok) {
-                // Attempt to parse JSON error message from server response
                 return response.json().catch(() => {
-                    // If JSON parsing fails, throw a generic error with status
                     throw new Error(`HTTP error! status: ${response.status} - No JSON response from server.`);
                 });
             }
-            return response.json(); // Parse the successful JSON response
+            return response.json();
         })
         .then(data => {
             if (data.success) {
                 alert('Items ' + action + ' successfully.');
-                // Reload the page to reflect the changes
                 window.location.reload();
             } else {
-                // Display the error message from the server
                 alert('Failed to ' + action + ' items: ' + (data.message || 'Unknown error.'));
             }
         })
         .catch(error => {
-            // Catch network errors or errors from the .then() blocks
             console.error('Fetch error during ' + action + ':', error);
             alert('An error occurred while ' + action + ' items: ' + error.message);
         });
@@ -582,323 +1131,173 @@ function confirmAction(action, ids) {
 }
 
 /**
+ * Get all selected price IDs
+ */
+function getSelectedPriceIds() {
+    const selectedIds = [];
+    const checkboxes = document.querySelectorAll('table tbody input[type="checkbox"]:checked');
+    
+    checkboxes.forEach(checkbox => {
+        try {
+            const priceIds = JSON.parse(checkbox.getAttribute('data-price-ids'));
+            selectedIds.push(...priceIds);
+        } catch (e) {
+            console.error('Error parsing price IDs:', e);
+        }
+    });
+    
+    return selectedIds;
+}
+
+// Modal management functions
+function openImportModal() {
+    const modal = document.getElementById('importModal');
+    if (modal) {
+        modal.style.display = 'block';
+        modal.classList.add('show');
+        // Create backdrop
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop fade show';
+        backdrop.style.zIndex = '1040';
+        document.body.appendChild(backdrop);
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+function closeImportModal() {
+    const modal = document.getElementById('importModal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.classList.remove('show');
+        // Remove backdrop
+        const backdrop = document.querySelector('.modal-backdrop');
+        if (backdrop) {
+            document.body.removeChild(backdrop);
+        }
+        document.body.style.overflow = '';
+    }
+}
+
+// Action functions
+function approveSelected() {
+    const ids = getSelectedPriceIds();
+    confirmAction('approve', ids);
+}
+
+function publishSelected() {
+    const ids = getSelectedPriceIds();
+    if (ids.length === 0) {
+        alert('Please select items to publish.');
+        return;
+    }
+    
+    // Check if all selected items are approved before publishing
+    fetch('../data/check_status.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ids: ids }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.allApproved) {
+            confirmAction('publish', ids);
+        } else {
+            alert('Cannot publish. All selected items must be approved first. ' + (data.message || ''));
+        }
+    })
+    .catch(error => {
+        console.error('Fetch error checking approval status:', error);
+        alert('An error occurred while checking approval status: ' + error.message);
+    });
+}
+
+function unpublishSelected() {
+    const ids = getSelectedPriceIds();
+    if (ids.length === 0) {
+        alert('Please select items to unpublish.');
+        return;
+    }
+    
+    // Check if all selected items are currently published before unpublishing
+    fetch('../data/check_status_for_unpublish.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ids: ids }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.allPublished) {
+            confirmAction('unpublish', ids);
+        } else {
+            alert('Cannot unpublish. All selected items must currently be in "Published" status.');
+        }
+    })
+    .catch(error => {
+        console.error('Fetch error checking status for unpublish:', error);
+        alert('An error occurred while checking status for unpublish: ' + error.message);
+    });
+}
+
+function deleteSelected() {
+    const ids = getSelectedPriceIds();
+    confirmAction('delete', ids);
+}
+
+/**
  * Initializes all event listeners for the market prices table.
- * This function should be called *after* the market prices HTML content is loaded into the DOM.
  */
 function initializeMarketPrices() {
     console.log("Initializing Market Prices functionality...");
 
+    // Initialize select all checkbox
     const selectAllCheckbox = document.getElementById('select-all');
-    // Select all group checkboxes based on their data attribute
     const groupCheckboxes = document.querySelectorAll('table tbody input[type="checkbox"][data-group-key]');
 
-    // Exit if essential elements are not found, meaning the content isn't loaded yet.
-    if (!selectAllCheckbox || groupCheckboxes.length === 0) {
-        console.log("Market prices elements (checkboxes) not found, skipping initialization.");
-        return;
-    }
-
-    // A Set to store unique price IDs for the currently selected rows
-    let selectedPriceIdsForAction = new Set();
-
-    /**
-     * Updates the `selectedPriceIdsForAction` Set based on currently checked group checkboxes.
-     * @returns {Array<number>} An array of the unique selected price IDs.
-     */
-    function updateSelectedIdsForAction() {
-        selectedPriceIdsForAction.clear(); // Clear previous selections
-        groupCheckboxes.forEach(checkbox => {
-            if (checkbox.checked) {
-                try {
-                    // Parse the JSON string from data-price-ids attribute
-                    const groupPriceIds = JSON.parse(checkbox.getAttribute('data-price-ids'));
-                    groupPriceIds.forEach(id => selectedPriceIdsForAction.add(id));
-                } catch (e) {
-                    console.error("Error parsing data-price-ids for checkbox:", checkbox, e);
-                }
-            }
-        });
-        return Array.from(selectedPriceIdsForAction); // Convert Set to Array
-    }
-
-    // Event listener for the "Select All" checkbox
-    if (selectAllCheckbox) {
-        selectAllCheckbox.addEventListener('change', () => {
-            const isChecked = selectAllCheckbox.checked;
+    if (selectAllCheckbox && groupCheckboxes.length > 0) {
+        selectAllCheckbox.addEventListener('change', function() {
             groupCheckboxes.forEach(checkbox => {
-                checkbox.checked = isChecked; // Set all group checkboxes to match "Select All"
+                checkbox.checked = this.checked;
             });
-            updateSelectedIdsForAction(); // Update the selected IDs
         });
-    }
 
-    // Event listener for individual group checkboxes
-    groupCheckboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', () => {
-            updateSelectedIdsForAction(); // Update selected IDs on individual checkbox change
-            // Check if all group checkboxes are checked to update "Select All" checkbox state
-            const allChecked = Array.from(groupCheckboxes).every(cb => cb.checked);
-            if (selectAllCheckbox) {
+        // Update select all when individual checkboxes change
+        groupCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const allChecked = Array.from(groupCheckboxes).every(cb => cb.checked);
                 selectAllCheckbox.checked = allChecked;
-            }
-        });
-    });
-
-    // --- Button Event Listeners ---
-
-    // Approve button
-    const approveButton = document.querySelector('.toolbar .approve');
-    if (approveButton) {
-        approveButton.addEventListener('click', () => {
-            const ids = updateSelectedIdsForAction();
-            confirmAction('approve', ids);
-        });
-    }
-
-    // Publish button
-    const publishButton = document.querySelector('.toolbar-right .primary');
-    if (publishButton) {
-        publishButton.addEventListener('click', () => {
-            const ids = updateSelectedIdsForAction();
-            if (ids.length === 0) {
-                alert('Please select items to publish.');
-                return;
-            }
-
-            // First, check if all selected items are approved before publishing
-            fetch('../data/check_status.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ ids: ids }),
-            })
-            .then(response => {
-                if (!response.ok) {
-                    return response.json().catch(() => {
-                        throw new Error(`HTTP error checking status! status: ${response.status} - No JSON response.`);
-                    });
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.allApproved) {
-                    confirmAction('publish', ids);
-                } else {
-                    alert('Cannot publish. All selected items must be approved first. ' + (data.message || ''));
-                }
-            })
-            .catch(error => {
-                console.error('Fetch error checking approval status:', error);
-                alert('An error occurred while checking approval status: ' + error.message);
             });
         });
     }
 
-    // Delete button (assuming it now has the class 'delete-btn')
-    const deleteButton = document.querySelector('.toolbar .delete-btn');
-    if (deleteButton) {
-        deleteButton.addEventListener('click', () => {
-            const ids = updateSelectedIdsForAction();
-            confirmAction('delete', ids); // Call confirmAction with 'delete'
-        });
-    }
-
-    // Unpublish button
-    const unpublishButton = document.querySelector('.toolbar .unpublish');
-    if (unpublishButton) {
-        unpublishButton.addEventListener('click', () => {
-            const ids = updateSelectedIdsForAction();
-            if (ids.length === 0) {
-                alert('Please select items to unpublish.');
-                return;
+    // Close modal when clicking outside
+    const modal = document.getElementById('importModal');
+    if (modal) {
+        modal.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                closeImportModal();
             }
-
-            // First, check if all selected items are currently published before unpublishing
-            fetch('../data/check_status_for_unpublish.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ ids: ids }),
-            })
-            .then(response => {
-                if (!response.ok) {
-                     return response.json().catch(() => {
-                        throw new Error(`HTTP error checking unpublish status! status: ${response.status} - No JSON response.`);
-                    });
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.allPublished) {
-                    confirmAction('unpublish', ids);
-                } else {
-                    alert('Cannot unpublish. All selected items must currently be in "Published" status.');
-                }
-            })
-            .catch(error => {
-                console.error('Fetch error checking status for unpublish:', error);
-                alert('An error occurred while checking status for unpublish: ' + error.message);
-            });
         });
     }
 }
 
-// Bulk Upload functionality
+// Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize market prices as before
     initializeMarketPrices();
-    
-    // Bulk Upload Modal Handling
-    const modal = document.getElementById('bulkUploadModal');
-    const btn = document.querySelector('.bulk-upload-btn');
-    const closeButtons = document.querySelectorAll('.close-modal');
-    const downloadTemplate = document.getElementById('downloadTemplate');
-    const bulkUploadForm = document.getElementById('bulkUploadForm');
-    
-    if (btn) {
-        btn.addEventListener('click', function() {
-            modal.style.display = 'block';
-        });
-    }
-    
-    closeButtons.forEach(function(closeBtn) {
-        closeBtn.addEventListener('click', function() {
-            modal.style.display = 'none';
-            // Reset form and results when closing
-            bulkUploadForm.reset();
-            document.getElementById('uploadProgress').style.display = 'none';
-            document.getElementById('uploadResults').style.display = 'none';
-        });
-    });
-    
-    // Close modal when clicking outside
-    window.addEventListener('click', function(event) {
-        if (event.target === modal) {
-            modal.style.display = 'none';
-            // Reset form and results when closing
-            bulkUploadForm.reset();
-            document.getElementById('uploadProgress').style.display = 'none';
-            document.getElementById('uploadResults').style.display = 'none';
-        }
-    });
-    
-    // Download CSV template
-    if (downloadTemplate) {
-        downloadTemplate.addEventListener('click', function(e) {
-            e.preventDefault();
-            
-            // CSV template content
-            const csvContent = "market_id,market,commodity_id,commodity_name,wholesale_price,retail_price,date_posted\n" +
-                              "1,Nairobi Market,1,Maize,50.00,55.00," + new Date().toISOString().split('T')[0] + "\n" +
-                              "2,Mombasa Market,2,Rice,80.00,85.00," + new Date().toISOString().split('T')[0];
-            
-            // Create download link
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.setAttribute('href', url);
-            link.setAttribute('download', 'market_prices_template.csv');
-            link.style.visibility = 'hidden';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        });
-    }
-    
-    // Handle bulk upload form submission
-    if (bulkUploadForm) {
-        bulkUploadForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const fileInput = document.getElementById('bulkFile');
-            const dataSource = document.getElementById('dataSource').value;
-            const progressBar = document.getElementById('progressBar');
-            const progressText = document.getElementById('progressText');
-            const uploadResults = document.getElementById('uploadResults');
-            const resultsContent = document.getElementById('resultsContent');
-            
-            if (!fileInput.files.length) {
-                alert('Please select a CSV file to upload');
-                return;
-            }
-            
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            formData.append('data_source', dataSource);
-            
-            // Show progress bar
-            document.getElementById('uploadProgress').style.display = 'block';
-            progressBar.style.width = '0%';
-            progressBar.textContent = '0%';
-            progressText.textContent = 'Processing...';
-            
-            // Hide previous results
-            uploadResults.style.display = 'none';
-            
-            fetch('../data/bulk_upload_marketprices.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                // Update progress bar to 100%
-                progressBar.style.width = '100%';
-                progressBar.textContent = '100%';
-                progressText.textContent = 'Upload complete!';
-                
-                // Show results
-                uploadResults.style.display = 'block';
-                
-                if (data.success) {
-                    resultsContent.innerHTML = `
-                        <p><strong>Success:</strong> ${data.message}</p>
-                        <p>Records processed: ${data.processed}</p>
-                        <p>Records inserted: ${data.inserted}</p>
-                        ${data.errors && data.errors.length ? `
-                            <p><strong>Errors:</strong></p>
-                            <ul>
-                                ${data.errors.map(error => `<li>Row ${error.row}: ${error.message}</li>`).join('')}
-                            </ul>
-                        ` : ''}
-                    `;
-                    
-                    // Reload the page after 3 seconds to show new data
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 3000);
-                } else {
-                    resultsContent.innerHTML = `
-                        <p><strong>Error:</strong> ${data.message}</p>
-                        ${data.errors && data.errors.length ? `
-                            <p><strong>Details:</strong></p>
-                            <ul>
-                                ${data.errors.map(error => `<li>${error}</li>`).join('')}
-                            </ul>
-                        ` : ''}
-                    `;
-                }
-            })
-            .catch(error => {
-                console.error('Error during bulk upload:', error);
-                progressText.textContent = 'Upload failed!';
-                
-                // Show error in results
-                uploadResults.style.display = 'block';
-                resultsContent.innerHTML = `<p><strong>Error:</strong> ${error.message}</p>`;
-            });
-        });
-    }
     
     // Update breadcrumb if the function exists
     if (typeof updateBreadcrumb === 'function') {
         updateBreadcrumb('Base', 'Market Prices');
+    }
+});
+
+// Keyboard support for closing modal
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeImportModal();
     }
 });
 </script>
