@@ -640,6 +640,7 @@ if ($oil_seeds_result) {
             <thead>
                 <tr style="background-color: #d3d3d3 !important; color: black !important;">
                     <th><input type="checkbox" id="selectAll"></th>
+                    <th>ID</th>
                     <th>HS Code</th>
                     <th>Category</th>
                     <th>Commodity</th>
@@ -649,6 +650,7 @@ if ($oil_seeds_result) {
                 </tr>
                 <tr class="filter-row" style="background-color: white !important; color: black !important;">
                     <th></th>
+                    <th><input type="text" class="filter-input" id="filterId" placeholder="Filter ID"></th>
                     <th><input type="text" class="filter-input" id="filterHsCode" placeholder="Filter HS Code"></th>
                     <th><input type="text" class="filter-input" id="filterCategory" placeholder="Filter Category"></th>
                     <th><input type="text" class="filter-input" id="filterCommodity" placeholder="Filter Commodity"></th>
@@ -663,6 +665,7 @@ if ($oil_seeds_result) {
                         <td>
                             <input type="checkbox" class="row-checkbox" value="<?= htmlspecialchars($commodity['id']) ?>">
                         </td>
+                        <td><?= htmlspecialchars($commodity['id']) ?></td>
                         <td><?= htmlspecialchars($commodity['hs_code']) ?></td>
                         <td><?= htmlspecialchars($commodity['category']) ?></td>
                         <td><?= htmlspecialchars($commodity['commodity_name']) ?></td>
@@ -670,19 +673,15 @@ if ($oil_seeds_result) {
                         <td>
                             <?php if (!empty($commodity['image_url'])): ?>
                                 <img src="<?= htmlspecialchars($commodity['image_url']) ?>" 
-                                     alt="<?= htmlspecialchars($commodity['commodity_name']) ?>" 
-                                     class="image-preview" 
-                                     onclick="showImageModal('<?= htmlspecialchars($commodity['image_url']) ?>', '<?= htmlspecialchars($commodity['commodity_name']) ?>')">
+                                    alt="<?= htmlspecialchars($commodity['commodity_name']) ?>" 
+                                    class="image-preview" 
+                                    onclick="showImageModal('<?= htmlspecialchars($commodity['image_url']) ?>', '<?= htmlspecialchars($commodity['commodity_name']) ?>')">
                             <?php else: ?>
                                 <span class="no-image">No Image</span>
                             <?php endif; ?>
                         </td>
                         <td>
-                            <a href="edit_commodity.php?id=<?= htmlspecialchars($commodity['id']) ?>">
-                                <button class="btn btn-sm btn-warning">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                            </a>
+                            <!-- Existing actions here -->
                         </td>
                     </tr>
                 <?php endforeach; ?>
