@@ -249,6 +249,9 @@ if ($result) {
     }
     $result->free();
 }
+
+// Get data for charts (without pagination)
+$chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for better chart data
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -258,6 +261,7 @@ if ($result) {
     <title>RATIN - Market Prices</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         /* Your existing CSS styles */
         body {
@@ -629,6 +633,26 @@ if ($result) {
             color: white;
         }
 
+        /* Map container */
+        #map {
+            height: 500px;
+            width: 100%;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        /* Map popup styling */
+        .map-popup {
+            font-family: Arial, sans-serif;
+        }
+        .map-popup h4 {
+            margin: 0 0 8px 0;
+            color: #8B4513;
+        }
+        .map-popup p {
+            margin: 4px 0;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
@@ -950,8 +974,8 @@ if ($result) {
                     
                     <div class="chart-filters">
                         <div>
-                            <label for="country-filter" class="form-label">Country</label>
-                            <select id="country-filter" class="form-select">
+                            <label for="chart-country-filter" class="form-label">Country</label>
+                            <select id="chart-country-filter" class="form-select">
                                 <option value="all">All Countries</option>
                                 <?php foreach ($countries as $country): ?>
                                     <option value="<?php echo htmlspecialchars($country); ?>"><?php echo htmlspecialchars($country); ?></option>
@@ -959,8 +983,8 @@ if ($result) {
                             </select>
                         </div>
                         <div>
-                            <label for="market-filter" class="form-label">Market</label>
-                            <select id="market-filter" class="form-select">
+                            <label for="chart-market-filter" class="form-label">Market</label>
+                            <select id="chart-market-filter" class="form-select">
                                 <option value="all">All Markets</option>
                                 <?php foreach ($markets as $market): ?>
                                     <option value="<?php echo htmlspecialchars($market); ?>"><?php echo htmlspecialchars($market); ?></option>
@@ -968,8 +992,8 @@ if ($result) {
                             </select>
                         </div>
                         <div>
-                            <label for="commodity-filter" class="form-label">Commodity</label>
-                            <select id="commodity-filter" class="form-select">
+                            <label for="chart-commodity-filter" class="form-label">Commodity</label>
+                            <select id="chart-commodity-filter" class="form-select">
                                 <option value="all">All Commodities</option>
                                 <?php foreach ($commodities as $id => $name): ?>
                                     <option value="<?php echo htmlspecialchars($name); ?>"><?php echo htmlspecialchars($name); ?></option>
@@ -1000,8 +1024,63 @@ if ($result) {
                 </div>
 
                 <div id="map-view" style="display: none; padding: 20px;">
-                    <h4>Map View</h4>
-                    <p>This is where the map would be displayed</p>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                        <div>
+                            <h4>Market Locations</h4>
+                            <p class="text-muted">Geographic distribution of market prices</p>
+                        </div>
+                        <div>
+                            <select id="map-commodity-filter" class="form-select" style="width: 200px; display: inline-block;">
+                                <option value="all">All Commodities</option>
+                                <?php foreach ($commodities as $id => $name): ?>
+                                    <option value="<?php echo htmlspecialchars($name); ?>"><?php echo htmlspecialchars($name); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <button id="export-map-btn" class="btn btn-sm btn-outline-secondary ms-2">
+                                <i class="fas fa-download"></i> Export
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="map"></div>
+                    
+                    <div class="row mt-4">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="card-title">Market Statistics</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="market-stats">
+                                        <p>Click on a market marker to view statistics</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="card-title">Price Legend</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="price-legend">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <div style="width: 20px; height: 20px; background-color: #ff4444; border-radius: 50%; margin-right: 10px;"></div>
+                                            <span>High Prices</span>
+                                        </div>
+                                        <div class="d-flex align-items-center mb-2">
+                                            <div style="width: 20px; height: 20px; background-color: #ffaa00; border-radius: 50%; margin-right: 10px;"></div>
+                                            <span>Medium Prices</span>
+                                        </div>
+                                        <div class="d-flex align-items-center">
+                                            <div style="width: 20px; height: 20px; background-color: #44ff44; border-radius: 50%; margin-right: 10px;"></div>
+                                            <span>Low Prices</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <?php if ($total_records > 0): ?>
@@ -1063,11 +1142,13 @@ if ($result) {
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
 // Initialize charts
 let priceTrendChart;
 let currentChartType = 'line';
+let map;
 
 // Function to initialize or update charts
 function initCharts(data) {
@@ -1102,9 +1183,9 @@ function processChartData(data) {
     }
     
     // Filter data based on selected filters
-    const selectedCountry = document.getElementById('country-filter').value;
-    const selectedMarket = document.getElementById('market-filter').value;
-    const selectedCommodity = document.getElementById('commodity-filter').value;
+    const selectedCountry = document.getElementById('chart-country-filter').value;
+    const selectedMarket = document.getElementById('chart-market-filter').value;
+    const selectedCommodity = document.getElementById('chart-commodity-filter').value;
     
     let filteredData = data;
     
@@ -1256,6 +1337,133 @@ function getTrendChartOptions() {
     };
 }
 
+// Initialize map
+function initMap(data) {
+    // Destroy existing map if it exists
+    if (map) {
+        map.remove();
+    }
+    
+    // Create map centered on East Africa
+    map = L.map('map').setView([1.0, 35.0], 6);
+    
+    // Add tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+    
+    // Filter data based on selected commodity
+    const selectedCommodity = document.getElementById('map-commodity-filter').value;
+    let filteredData = data;
+    
+    if (selectedCommodity && selectedCommodity !== 'all') {
+        filteredData = filteredData.filter(item => item.commodity_name === selectedCommodity);
+    }
+    
+    // Group data by market and calculate average price
+    const marketData = {};
+    filteredData.forEach(item => {
+        if (!marketData[item.market]) {
+            marketData[item.market] = {
+                prices: [],
+                commodities: new Set(),
+                country: item.country_admin_0,
+                data_source: item.data_source,
+                latitude: item.latitude,
+                longitude: item.longitude
+            };
+        }
+        marketData[item.market].prices.push(parseFloat(item.Price));
+        marketData[item.market].commodities.add(item.commodity_name);
+    });
+    
+    // Calculate price ranges for color coding
+    const allPrices = filteredData.map(item => parseFloat(item.Price));
+    const minPrice = Math.min(...allPrices);
+    const maxPrice = Math.max(...allPrices);
+    const priceRange = maxPrice - minPrice;
+    
+    // Add markers for each market
+    Object.keys(marketData).forEach(market => {
+        const data = marketData[market];
+        const avgPrice = data.prices.reduce((a, b) => a + b, 0) / data.prices.length;
+        
+        // Determine marker color based on price
+        let markerColor;
+        const priceRatio = (avgPrice - minPrice) / priceRange;
+        if (priceRatio > 0.7) {
+            markerColor = '#ff4444'; // High price
+        } else if (priceRatio > 0.3) {
+            markerColor = '#ffaa00'; // Medium price
+        } else {
+            markerColor = '#44ff44'; // Low price
+        }
+        
+        // Create custom marker icon
+        const markerIcon = L.divIcon({
+            className: 'custom-marker',
+            html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white;"></div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+        
+        // Create marker
+        const marker = L.marker([data.latitude || getDefaultLatLng(data.country)[0], 
+                               data.longitude || getDefaultLatLng(data.country)[1]], 
+                               {icon: markerIcon})
+            .addTo(map);
+        
+        // Create popup content
+        const popupContent = `
+            <div class="map-popup">
+                <h4>${market}</h4>
+                <p><strong>Country:</strong> ${data.country}</p>
+                <p><strong>Average Price:</strong> $${avgPrice.toFixed(2)}</p>
+                <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
+                <p><strong>Data Source:</strong> ${data.data_source}</p>
+            </div>
+        `;
+        
+        marker.bindPopup(popupContent);
+        
+        // Add click event to update market stats
+        marker.on('click', function() {
+            updateMarketStats(market, data);
+        });
+    });
+}
+
+// Helper function to get default coordinates for countries
+function getDefaultLatLng(country) {
+    const countryCoords = {
+        'Kenya': [1.0, 38.0],
+        'Tanzania': [-6.0, 35.0],
+        'Uganda': [1.0, 32.0],
+        'Rwanda': [-2.0, 30.0],
+        'Ethiopia': [9.0, 40.0]
+    };
+    
+    return countryCoords[country] || [0, 35];
+}
+
+// Update market statistics
+function updateMarketStats(market, data) {
+    const statsDiv = document.getElementById('market-stats');
+    const avgPrice = data.prices.reduce((a, b) => a + b, 0) / data.prices.length;
+    const minPrice = Math.min(...data.prices);
+    const maxPrice = Math.max(...data.prices);
+    
+    statsDiv.innerHTML = `
+        <h6>${market}</h6>
+        <p><strong>Country:</strong> ${data.country}</p>
+        <p><strong>Average Price:</strong> $${avgPrice.toFixed(2)}</p>
+        <p><strong>Price Range:</strong> $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)}</p>
+        <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
+        <p><strong>Data Points:</strong> ${data.prices.length}</p>
+        <p><strong>Data Source:</strong> ${data.data_source}</p>
+    `;
+}
+
 // Helper function to generate random colors
 function getRandomColor() {
     const letters = '0123456789ABCDEF';
@@ -1269,8 +1477,8 @@ function getRandomColor() {
 // Update price summary
 function updatePriceSummary(commodity, date, price) {
     const summaryDiv = document.getElementById('price-summary');
-    const selectedMarket = document.getElementById('market-filter').value;
-    const selectedCountry = document.getElementById('country-filter').value;
+    const selectedMarket = document.getElementById('chart-market-filter').value;
+    const selectedCountry = document.getElementById('chart-country-filter').value;
     
     summaryDiv.innerHTML = `
         <h6>${commodity}</h6>
@@ -1310,8 +1518,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // Initialize charts if chart view is selected
                 if (view === 'chart') {
-                    const chartData = <?php echo json_encode($prices_data); ?>;
+                    const chartData = <?php echo json_encode($chart_data); ?>;
                     initCharts(chartData);
+                }
+                
+                // Initialize map if map view is selected
+                if (view === 'map') {
+                    const mapData = <?php echo json_encode($chart_data); ?>;
+                    initMap(mapData);
                 }
             }
         });
@@ -1336,14 +1550,36 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Filter change event listeners
-    document.getElementById('country-filter')?.addEventListener('change', updateCharts);
-    document.getElementById('market-filter')?.addEventListener('change', updateCharts);
-    document.getElementById('commodity-filter')?.addEventListener('change', updateCharts);
+    // Export map button
+    document.getElementById('export-map-btn')?.addEventListener('click', function() {
+        if (map) {
+            // Create a temporary canvas to capture the map
+            const mapContainer = document.getElementById('map');
+            html2canvas(mapContainer).then(canvas => {
+                const link = document.createElement('a');
+                link.download = 'market-map.png';
+                link.href = canvas.toDataURL();
+                link.click();
+            });
+        }
+    });
+
+    // Filter change event listeners for charts
+    document.getElementById('chart-country-filter')?.addEventListener('change', updateCharts);
+    document.getElementById('chart-market-filter')?.addEventListener('change', updateCharts);
+    document.getElementById('chart-commodity-filter')?.addEventListener('change', updateCharts);
+
+    // Filter change event listeners for map
+    document.getElementById('map-commodity-filter')?.addEventListener('change', updateMap);
 
     function updateCharts() {
-        const chartData = <?php echo json_encode($prices_data); ?>;
+        const chartData = <?php echo json_encode($chart_data); ?>;
         initCharts(chartData);
+    }
+
+    function updateMap() {
+        const mapData = <?php echo json_encode($chart_data); ?>;
+        initMap(mapData);
     }
 
     // Commodity category buttons
