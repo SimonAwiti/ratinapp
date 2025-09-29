@@ -10,9 +10,9 @@ if (!$con) {
 }
 
 /**
- * Fetch miller prices data with pagination
+ * Build SQL query with filters
  */
-function getMillerPricesData($con, $limit = 10, $offset = 0) {
+function buildMillerPricesQuery($filters = []) {
     $sql = "SELECT
                 mp.id,
                 mp.town AS market,
@@ -27,7 +27,7 @@ function getMillerPricesData($con, $limit = 10, $offset = 0) {
                 mp.date_posted,
                 mp.status,
                 ds.data_source_name AS data_source,
-                mp.country AS country_admin_0,  -- Changed from country_admin_0 to country
+                mp.country AS country_admin_0,
                 'kg' AS unit,
                 er.kshusd,
                 er.tshusd,
@@ -43,11 +43,61 @@ function getMillerPricesData($con, $limit = 10, $offset = 0) {
             LEFT JOIN
                 (SELECT * FROM exchange_rates ORDER BY date DESC LIMIT 1) er ON 1=1
             WHERE
-                mp.status IN ('published', 'approved')  
-            ORDER BY
-                mp.date_posted DESC
-            LIMIT $limit OFFSET $offset";
+                mp.status IN ('published', 'approved')";
+    
+    // Apply filters
+    if (!empty($filters['country'])) {
+        $sql .= " AND mp.country = '" . $con->real_escape_string($filters['country']) . "'";
+    }
+    
+    if (!empty($filters['town'])) {
+        $sql .= " AND mp.town = '" . $con->real_escape_string($filters['town']) . "'";
+    }
+    
+    if (!empty($filters['commodity'])) {
+        $sql .= " AND mp.commodity_id = " . (int)$filters['commodity'];
+    }
+    
+    if (!empty($filters['price_type'])) {
+        $sql .= " AND 'wholesale' = '" . $con->real_escape_string($filters['price_type']) . "'";
+    }
+    
+    if (!empty($filters['data_source'])) {
+        $sql .= " AND ds.data_source_name = '" . $con->real_escape_string($filters['data_source']) . "'";
+    }
+    
+    if (!empty($filters['commodity_category'])) {
+        $sql .= " AND c.category = '" . $con->real_escape_string($filters['commodity_category']) . "'";
+    }
+    
+    if (!empty($filters['date_from'])) {
+        $sql .= " AND DATE(mp.date_posted) >= '" . $con->real_escape_string($filters['date_from']) . "'";
+    }
+    
+    if (!empty($filters['date_to'])) {
+        $sql .= " AND DATE(mp.date_posted) <= '" . $con->real_escape_string($filters['date_to']) . "'";
+    }
+    
+    if (!empty($filters['price_min'])) {
+        $sql .= " AND mp.price_usd >= " . (float)$filters['price_min'];
+    }
+    
+    if (!empty($filters['price_max'])) {
+        $sql .= " AND mp.price_usd <= " . (float)$filters['price_max'];
+    }
+    
+    $sql .= " ORDER BY mp.date_posted DESC";
+    
+    return $sql;
+}
 
+/**
+ * Fetch miller prices data with pagination
+ */
+function getMillerPricesData($con, $limit = 10, $offset = 0, $filters = []) {
+    $sql = buildMillerPricesQuery($filters);
+    $sql .= " LIMIT $limit OFFSET $offset";
+    
     $result = $con->query($sql);
     if (!$result) {
         error_log("Error fetching miller prices data: " . $con->error);
@@ -67,8 +117,9 @@ function getMillerPricesData($con, $limit = 10, $offset = 0) {
 /**
  * Get total number of records for pagination
  */
-function getTotalMillerPriceRecords($con) {
-    $sql = "SELECT COUNT(*) as total FROM miller_prices WHERE status IN ('published', 'approved')";
+function getTotalMillerPriceRecords($con, $filters = []) {
+    $sql = buildMillerPricesQuery($filters);
+    $sql = "SELECT COUNT(*) as total FROM ($sql) as count_query";
     $result = $con->query($sql);
     if (!$result) {
         error_log("Error counting miller prices records: " . $con->error);
@@ -133,15 +184,32 @@ function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $c
     return 0;
 }
 
+// Get filter values from request
+$filters = [
+    'country' => isset($_GET['country']) ? $_GET['country'] : '',
+    'town' => isset($_GET['town']) ? $_GET['town'] : '',
+    'commodity' => isset($_GET['commodity']) ? $_GET['commodity'] : '',
+    'price_type' => isset($_GET['price_type']) ? $_GET['price_type'] : '',
+    'data_source' => isset($_GET['data_source']) ? $_GET['data_source'] : '',
+    'commodity_category' => isset($_GET['commodity_category']) ? $_GET['commodity_category'] : '',
+    'date_from' => isset($_GET['date_from']) ? $_GET['date_from'] : '',
+    'date_to' => isset($_GET['date_to']) ? $_GET['date_to'] : '',
+    'price_min' => isset($_GET['price_min']) ? $_GET['price_min'] : '',
+    'price_max' => isset($_GET['price_max']) ? $_GET['price_max'] : ''
+];
+
 // Get total records and setup pagination
-$total_records = getTotalMillerPriceRecords($con);
+$total_records = getTotalMillerPriceRecords($con, $filters);
 $limit = 10;
 $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $offset = ($page - 1) * $limit;
 
 // Fetch data
-$prices_data = getMillerPricesData($con, $limit, $offset);
+$prices_data = getMillerPricesData($con, $limit, $offset, $filters);
 $total_pages = ceil($total_records / $limit);
+
+// Get chart data (without pagination)
+$chart_data = getMillerPricesData($con, 1000, 0, $filters);
 
 // Group data for display
 $grouped_data = [];
@@ -153,6 +221,58 @@ foreach ($prices_data as $price) {
     $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'] . '_' . $price['data_source'];
     $grouped_data[$group_key][] = $price;
 }
+
+// Get filter options for dropdowns
+$countries = [];
+$towns = [];
+$commodities = [];
+$data_sources = [];
+
+$options_query = "SELECT DISTINCT country FROM miller_prices WHERE status IN ('published', 'approved')";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $countries[] = $row['country'];
+    }
+    $result->free();
+}
+
+$options_query = "SELECT DISTINCT town FROM miller_prices WHERE status IN ('published', 'approved')";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $towns[] = $row['town'];
+    }
+    $result->free();
+}
+
+$options_query = "SELECT DISTINCT c.id, c.commodity_name, c.variety 
+                  FROM miller_prices mp
+                  JOIN commodities c ON mp.commodity_id = c.id
+                  WHERE mp.status IN ('published', 'approved')";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $display = $row['commodity_name'];
+        if (!empty($row['variety'])) {
+            $display .= ' (' . $row['variety'] . ')';
+        }
+        $commodities[$row['id']] = $display;
+    }
+    $result->free();
+}
+
+$options_query = "SELECT DISTINCT ds.data_source_name 
+                  FROM miller_prices mp
+                  JOIN data_sources ds ON mp.data_source_id = ds.id
+                  WHERE mp.status IN ('published', 'approved')";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $data_sources[] = $row['data_source_name'];
+    }
+    $result->free();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -162,6 +282,7 @@ foreach ($prices_data as $price) {
     <title>RATIN - Miller Prices</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         :root {
             --primary-color: #8B4513;
@@ -513,6 +634,26 @@ foreach ($prices_data as $price) {
             margin-bottom: 30px;
         }
         
+        /* Map container */
+        #map {
+            height: 500px;
+            width: 100%;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        /* Map popup styling */
+        .map-popup {
+            font-family: Arial, sans-serif;
+        }
+        .map-popup h4 {
+            margin: 0 0 8px 0;
+            color: #8B4513;
+        }
+        .map-popup p {
+            margin: 4px 0;
+        }
+        
         /* Responsive adjustments */
         @media (max-width: 992px) {
             .filter-grid {
@@ -592,78 +733,86 @@ foreach ($prices_data as $price) {
         <!-- Content -->
         <div class="main-content">
             <!-- Filter Section -->
-            <div class="filter-section dashboard-card">
-                <div class="filter-grid">
-                    <div class="filter-group">
-                        <label class="filter-label">Country/District</label>
-                        <select class="filter-input">
-                            <option>Select Country</option>
-                            <option>Kenya</option>
-                            <option>Uganda</option>
-                            <option>Rwanda</option>
-                            <option>Tanzania</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Town</label>
-                        <select class="filter-input">
-                            <option>Select Town</option>
-                            <?php
-                            $towns = array_unique(array_column($prices_data, 'market'));
-                            foreach ($towns as $town): ?>
-                                <option value="<?= htmlspecialchars($town) ?>"><?= htmlspecialchars($town) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Commodity</label>
-                        <select class="filter-input">
-                            <option>Select Commodity</option>
-                            <?php
-                            $commodities = array_unique(array_column($prices_data, 'commodity_display'));
-                            foreach ($commodities as $commodity): ?>
-                                <option value="<?= htmlspecialchars($commodity) ?>"><?= htmlspecialchars($commodity) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Price Type</label>
-                        <select class="filter-input">
-                            <option>All Types</option>
-                            <option>Wholesale</option>
-                            <option>Retail</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Data Source</label>
-                        <select class="filter-input">
-                            <option>All Sources</option>
-                            <option>EAGC RATIN</option>
-                            <option>MoALD Kenya</option>
-                            <option>MoA/Esoko RW</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Date Range</label>
-                        <div style="display: flex; gap: 10px;">
-                            <input type="date" class="filter-input">
-                            <input type="date" class="filter-input">
+            <form id="filter-form" method="GET">
+                <div class="filter-section dashboard-card">
+                    <div class="filter-grid">
+                        <div class="filter-group">
+                            <label class="filter-label">Country/District</label>
+                            <select name="country" class="filter-input">
+                                <option value="">Select Country</option>
+                                <?php foreach ($countries as $country): ?>
+                                    <option value="<?= htmlspecialchars($country) ?>" <?= $filters['country'] == $country ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($country) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Price Range (USD)</label>
-                        <div style="display: flex; gap: 10px;">
-                            <input type="number" class="filter-input" placeholder="Min">
-                            <input type="number" class="filter-input" placeholder="Max">
+                        <div class="filter-group">
+                            <label class="filter-label">Town</label>
+                            <select name="town" class="filter-input">
+                                <option value="">Select Town</option>
+                                <?php foreach ($towns as $town): ?>
+                                    <option value="<?= htmlspecialchars($town) ?>" <?= $filters['town'] == $town ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($town) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
-                    </div>
-                    <div class="filter-group" style="display: flex; align-items: flex-end;">
-                        <button class="btn btn-outline">
-                            <i class="fas fa-refresh"></i> Reset Filters
-                        </button>
+                        <div class="filter-group">
+                            <label class="filter-label">Commodity</label>
+                            <select name="commodity" class="filter-input">
+                                <option value="">Select Commodity</option>
+                                <?php foreach ($commodities as $id => $name): ?>
+                                    <option value="<?= $id ?>" <?= $filters['commodity'] == $id ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($name) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Price Type</label>
+                            <select name="price_type" class="filter-input">
+                                <option value="">All Types</option>
+                                <option value="wholesale" <?= $filters['price_type'] == 'wholesale' ? 'selected' : '' ?>>Wholesale</option>
+                                <option value="retail" <?= $filters['price_type'] == 'retail' ? 'selected' : '' ?>>Retail</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Data Source</label>
+                            <select name="data_source" class="filter-input">
+                                <option value="">All Sources</option>
+                                <?php foreach ($data_sources as $source): ?>
+                                    <option value="<?= htmlspecialchars($source) ?>" <?= $filters['data_source'] == $source ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($source) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Date Range</label>
+                            <div style="display: flex; gap: 10px;">
+                                <input type="date" name="date_from" class="filter-input" value="<?= htmlspecialchars($filters['date_from']) ?>">
+                                <input type="date" name="date_to" class="filter-input" value="<?= htmlspecialchars($filters['date_to']) ?>">
+                            </div>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Price Range (USD)</label>
+                            <div style="display: flex; gap: 10px;">
+                                <input type="number" name="price_min" class="filter-input" placeholder="Min" value="<?= htmlspecialchars($filters['price_min']) ?>">
+                                <input type="number" name="price_max" class="filter-input" placeholder="Max" value="<?= htmlspecialchars($filters['price_max']) ?>">
+                            </div>
+                        </div>
+                        <div class="filter-group" style="display: flex; align-items: flex-end; gap: 8px;">
+                            <button type="submit" class="btn btn-primary" style="flex: 1;">
+                                <i class="fas fa-filter"></i> Apply
+                            </button>
+                            <button type="button" id="reset-filters" class="btn btn-outline" style="flex: 1;">
+                                <i class="fas fa-refresh"></i> Reset
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
+            </form>
 
             <!-- Data Display Card -->
             <div class="dashboard-card">
@@ -739,13 +888,12 @@ foreach ($prices_data as $price) {
                                         <?php
                                         $dayChange = $price['day_change'] ?? calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
                                         $monthChange = $price['month_change'] ?? calculateDoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
-                                        $yearChange = 0; // Placeholder - would need actual calculation
+                                        $yearChange = 0;
                                         
                                         $dayChangeClass = $dayChange >= 0 ? 'change-positive' : 'change-negative';
                                         $monthChangeClass = $monthChange >= 0 ? 'change-positive' : 'change-negative';
                                         $yearChangeClass = $yearChange >= 0 ? 'change-positive' : 'change-negative';
                                         
-                                        // Determine currency and exchange rate based on country
                                         $currency = '';
                                         $exchangeRate = 1;
                                         $localPrice = $price['Price'];
@@ -842,7 +990,7 @@ foreach ($prices_data as $price) {
                     </table>
                 </div>
 
-                <!-- Chart View (Hidden by default) -->
+                <!-- Chart View -->
                 <div id="chart-view" style="display: none; padding: 20px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                         <div>
@@ -864,17 +1012,16 @@ foreach ($prices_data as $price) {
                     <div class="filter-grid" style="margin-bottom: 25px;">
                         <div class="filter-group">
                             <label class="filter-label">Country</label>
-                            <select id="country-filter" class="filter-input">
+                            <select id="chart-country-filter" class="filter-input">
                                 <option value="all">All Countries</option>
-                                <option value="Kenya">Kenya</option>
-                                <option value="Uganda">Uganda</option>
-                                <option value="Rwanda">Rwanda</option>
-                                <option value="Tanzania">Tanzania</option>
+                                <?php foreach ($countries as $country): ?>
+                                    <option value="<?= htmlspecialchars($country) ?>"><?= htmlspecialchars($country) ?></option>
+                                <?php endforeach; ?>
                             </select>
                         </div>
                         <div class="filter-group">
                             <label class="filter-label">Town</label>
-                            <select id="town-filter" class="filter-input">
+                            <select id="chart-town-filter" class="filter-input">
                                 <option value="all">All Towns</option>
                                 <?php foreach ($towns as $town): ?>
                                     <option value="<?= htmlspecialchars($town) ?>"><?= htmlspecialchars($town) ?></option>
@@ -883,12 +1030,19 @@ foreach ($prices_data as $price) {
                         </div>
                         <div class="filter-group">
                             <label class="filter-label">Commodity</label>
-                            <select id="commodity-filter" class="filter-input">
+                            <select id="chart-commodity-filter" class="filter-input">
                                 <option value="all">All Commodities</option>
-                                <?php foreach ($commodities as $commodity): ?>
-                                    <option value="<?= htmlspecialchars($commodity) ?>"><?= htmlspecialchars($commodity) ?></option>
+                                <?php foreach ($commodities as $id => $name): ?>
+                                    <option value="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($name) ?></option>
                                 <?php endforeach; ?>
                             </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Date Range</label>
+                            <div style="display: flex; gap: 10px;">
+                                <input type="date" id="chart-date-from" class="filter-input">
+                                <input type="date" id="chart-date-to" class="filter-input">
+                            </div>
                         </div>
                     </div>
                     
@@ -897,12 +1051,64 @@ foreach ($prices_data as $price) {
                     </div>
                 </div>
 
-                <!-- Map View (Hidden by default) -->
+                <!-- Map View -->
                 <div id="map-view" style="display: none; padding: 20px;">
-                    <h4 style="margin-bottom: 15px;">Miller Prices Map View</h4>
-                    <div style="background-color: #f9f9f9; border-radius: 6px; padding: 30px; text-align: center;">
-                        <i class="fas fa-map-marked-alt" style="font-size: 2em; color: var(--secondary-color); margin-bottom: 15px;"></i>
-                        <p style="color: var(--secondary-color);">Map visualization of miller prices would be displayed here</p>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                        <div>
+                            <h4>Miller Prices Map View</h4>
+                            <p style="color: var(--secondary-color);">Geographic distribution of miller prices</p>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <select id="map-commodity-filter" class="filter-input" style="width: 200px;">
+                                <option value="all">All Commodities</option>
+                                <?php foreach ($commodities as $id => $name): ?>
+                                    <option value="<?= htmlspecialchars($name) ?>"><?= htmlspecialchars($name) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <button class="btn btn-outline">
+                                <i class="fas fa-download"></i> Export
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="map"></div>
+                    
+                    <div class="row mt-4">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="card-title">Market Statistics</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="market-stats">
+                                        <p>Click on a market marker to view statistics</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="card-title">Price Legend</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="price-legend">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <div style="width: 20px; height: 20px; background-color: #ff4444; border-radius: 50%; margin-right: 10px;"></div>
+                                            <span>High Prices</span>
+                                        </div>
+                                        <div class="d-flex align-items-center mb-2">
+                                            <div style="width: 20px; height: 20px; background-color: #ffaa00; border-radius: 50%; margin-right: 10px;"></div>
+                                            <span>Medium Prices</span>
+                                        </div>
+                                        <div class="d-flex align-items-center">
+                                            <div style="width: 20px; height: 20px; background-color: #44ff44; border-radius: 50%; margin-right: 10px;"></div>
+                                            <span>Low Prices</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -915,7 +1121,7 @@ foreach ($prices_data as $price) {
                         <span style="font-weight: 500;"><?= $total_records ?></span> results
                     </div>
                     <div class="pagination-controls">
-                        <a href="?page=<?= $page - 1 ?>" class="page-btn" <?= $page <= 1 ? 'style="visibility: hidden;"' : '' ?>>
+                        <a href="?<?= http_build_query(array_merge($filters, ['page' => $page - 1])) ?>" class="page-btn" <?= $page <= 1 ? 'style="visibility: hidden;"' : '' ?>>
                             Previous
                         </a>
                         
@@ -925,7 +1131,7 @@ foreach ($prices_data as $price) {
                         $endPage = min($total_pages, $startPage + $visiblePages - 1);
                         
                         if ($startPage > 1) {
-                            echo '<a href="?page=1" class="page-btn">1</a>';
+                            echo '<a href="?' . http_build_query(array_merge($filters, ['page' => 1])) . '" class="page-btn">1</a>';
                             if ($startPage > 2) {
                                 echo '<span class="page-btn" style="background: transparent;">...</span>';
                             }
@@ -933,18 +1139,18 @@ foreach ($prices_data as $price) {
                         
                         for ($i = $startPage; $i <= $endPage; $i++) {
                             $activeClass = $i == $page ? 'active' : '';
-                            echo '<a href="?page='.$i.'" class="page-btn '.$activeClass.'">'.$i.'</a>';
+                            echo '<a href="?' . http_build_query(array_merge($filters, ['page' => $i])) . '" class="page-btn '.$activeClass.'">'.$i.'</a>';
                         }
                         
                         if ($endPage < $total_pages) {
                             if ($endPage < $total_pages - 1) {
                                 echo '<span class="page-btn" style="background: transparent;">...</span>';
                             }
-                            echo '<a href="?page='.$total_pages.'" class="page-btn">'.$total_pages.'</a>';
+                            echo '<a href="?' . http_build_query(array_merge($filters, ['page' => $total_pages])) . '" class="page-btn">'.$total_pages.'</a>';
                         }
                         ?>
                         
-                        <a href="?page=<?= $page + 1 ?>" class="page-btn" <?= $page >= $total_pages ? 'style="visibility: hidden;"' : '' ?>>
+                        <a href="?<?= http_build_query(array_merge($filters, ['page' => $page + 1])) ?>" class="page-btn" <?= $page >= $total_pages ? 'style="visibility: hidden;"' : '' ?>>
                             Next
                         </a>
                     </div>
@@ -955,25 +1161,20 @@ foreach ($prices_data as $price) {
     </div>
 </div>
 
-<!-- JavaScript Libraries -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-// Initialize charts
 let priceTrendChart;
 let currentChartType = 'line';
+let map;
 
-// Function to initialize or update charts
 function initCharts(data) {
-    // Process data for charts
     const processedData = processChartData(data);
     
-    // Destroy existing chart if it exists
     if (priceTrendChart) priceTrendChart.destroy();
     
-    // Create Price Trend Chart
     const priceTrendCtx = document.getElementById('price-trend-chart');
     if (!priceTrendCtx) return;
     
@@ -987,9 +1188,7 @@ function initCharts(data) {
     });
 }
 
-// Process data for charts
 function processChartData(data) {
-    // Convert PHP data to proper format if needed
     if (typeof data === 'string') {
         try {
             data = JSON.parse(data);
@@ -999,10 +1198,11 @@ function processChartData(data) {
         }
     }
     
-    // Filter data based on selected filters
-    const selectedCountry = document.getElementById('country-filter').value;
-    const selectedTown = document.getElementById('town-filter').value;
-    const selectedCommodity = document.getElementById('commodity-filter').value;
+    const selectedCountry = document.getElementById('chart-country-filter')?.value;
+    const selectedTown = document.getElementById('chart-town-filter')?.value;
+    const selectedCommodity = document.getElementById('chart-commodity-filter')?.value;
+    const dateFrom = document.getElementById('chart-date-from')?.value;
+    const dateTo = document.getElementById('chart-date-to')?.value;
     
     let filteredData = data;
     
@@ -1018,16 +1218,27 @@ function processChartData(data) {
         filteredData = filteredData.filter(item => item.commodity_display === selectedCommodity);
     }
     
-    // Group data by date (without time) for trend chart
+    if (dateFrom) {
+        filteredData = filteredData.filter(item => {
+            const itemDate = new Date(item.date_posted).toISOString().split('T')[0];
+            return itemDate >= dateFrom;
+        });
+    }
+    
+    if (dateTo) {
+        filteredData = filteredData.filter(item => {
+            const itemDate = new Date(item.date_posted).toISOString().split('T')[0];
+            return itemDate <= dateTo;
+        });
+    }
+    
     const dates = [...new Set(filteredData.map(item => {
         const date = new Date(item.date_posted);
-        return date.toISOString().split('T')[0]; // Get just the date part
+        return date.toISOString().split('T')[0];
     }))].sort();
     
-    // Prepare trend datasets
     const trendDatasets = [];
     
-    // If a specific commodity is selected, show only that
     if (selectedCommodity && selectedCommodity !== 'all') {
         const prices = dates.map(date => {
             const item = filteredData.find(d => 
@@ -1047,10 +1258,7 @@ function processChartData(data) {
             tension: 0.1
         });
     } else {
-        // Group by commodity if no specific one is selected
         const commodities = [...new Set(filteredData.map(item => item.commodity_display))];
-        
-        // Use a consistent color palette
         const colorPalette = [
             '#8B4513', '#1E88E5', '#FFC107', '#004D40', 
             '#D81B60', '#039BE5', '#7CB342', '#5E35B1'
@@ -1083,7 +1291,6 @@ function processChartData(data) {
     };
 }
 
-// Chart options
 function getTrendChartOptions() {
     return {
         responsive: true,
@@ -1092,27 +1299,21 @@ function getTrendChartOptions() {
             title: {
                 display: true,
                 text: 'Miller Price Trends Over Time',
-                font: {
-                    size: 16
-                }
+                font: { size: 16 }
             },
             tooltip: {
                 mode: 'index',
                 intersect: false,
                 callbacks: {
                     label: function(context) {
-                        return `${context.dataset.label}: $${context.parsed.y.toFixed(2)}`;
+                        return `${context.dataset.label}: ${context.parsed.y.toFixed(2)}`;
                     }
                 }
             },
             zoom: {
                 zoom: {
-                    wheel: {
-                        enabled: true
-                    },
-                    pinch: {
-                        enabled: true
-                    },
+                    wheel: { enabled: true },
+                    pinch: { enabled: true },
                     mode: 'xy'
                 },
                 pan: {
@@ -1134,21 +1335,15 @@ function getTrendChartOptions() {
                 title: {
                     display: true,
                     text: 'Date',
-                    font: {
-                        weight: 'bold'
-                    }
+                    font: { weight: 'bold' }
                 },
-                grid: {
-                    display: false
-                }
+                grid: { display: false }
             },
             y: {
                 title: {
                     display: true,
                     text: 'Price (USD)',
-                    font: {
-                        weight: 'bold'
-                    }
+                    font: { weight: 'bold' }
                 },
                 beginAtZero: false
             }
@@ -1160,9 +1355,113 @@ function getTrendChartOptions() {
     };
 }
 
-// Tab switching functionality
+function initMap(data) {
+    if (map) {
+        map.remove();
+    }
+    
+    map = L.map('map').setView([1.0, 35.0], 6);
+    
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    
+    const selectedCommodity = document.getElementById('map-commodity-filter')?.value;
+    let filteredData = data;
+    
+    if (selectedCommodity && selectedCommodity !== 'all') {
+        filteredData = filteredData.filter(item => item.commodity_display === selectedCommodity);
+    }
+    
+    const marketData = {};
+    filteredData.forEach(item => {
+        if (!marketData[item.market]) {
+            marketData[item.market] = {
+                prices: [],
+                commodities: new Set(),
+                country: item.country_admin_0,
+                data_source: item.data_source
+            };
+        }
+        marketData[item.market].prices.push(parseFloat(item.Price));
+        marketData[item.market].commodities.add(item.commodity_display);
+    });
+    
+    const allPrices = filteredData.map(item => parseFloat(item.Price));
+    const minPrice = Math.min(...allPrices);
+    const maxPrice = Math.max(...allPrices);
+    const priceRange = maxPrice - minPrice;
+    
+    Object.keys(marketData).forEach(market => {
+        const data = marketData[market];
+        const avgPrice = data.prices.reduce((a, b) => a + b, 0) / data.prices.length;
+        
+        let markerColor;
+        const priceRatio = (avgPrice - minPrice) / priceRange;
+        if (priceRatio > 0.7) {
+            markerColor = '#ff4444';
+        } else if (priceRatio > 0.3) {
+            markerColor = '#ffaa00';
+        } else {
+            markerColor = '#44ff44';
+        }
+        
+        const markerIcon = L.divIcon({
+            className: 'custom-marker',
+            html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white;"></div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+        
+        const coords = getDefaultLatLng(data.country);
+        const marker = L.marker(coords, {icon: markerIcon}).addTo(map);
+        
+        const popupContent = `
+            <div class="map-popup">
+                <h4>${market}</h4>
+                <p><strong>Country:</strong> ${data.country}</p>
+                <p><strong>Average Price:</strong> ${avgPrice.toFixed(2)}</p>
+                <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
+                <p><strong>Data Source:</strong> ${data.data_source}</p>
+            </div>
+        `;
+        
+        marker.bindPopup(popupContent);
+        
+        marker.on('click', function() {
+            updateMarketStats(market, data, avgPrice);
+        });
+    });
+}
+
+function getDefaultLatLng(country) {
+    const countryCoords = {
+        'Kenya': [1.0, 38.0],
+        'Tanzania': [-6.0, 35.0],
+        'Uganda': [1.0, 32.0],
+        'Rwanda': [-2.0, 30.0],
+        'Ethiopia': [9.0, 40.0]
+    };
+    return countryCoords[country] || [0, 35];
+}
+
+function updateMarketStats(market, data, avgPrice) {
+    const statsDiv = document.getElementById('market-stats');
+    const minPrice = Math.min(...data.prices);
+    const maxPrice = Math.max(...data.prices);
+    
+    statsDiv.innerHTML = `
+        <h6>${market}</h6>
+        <p><strong>Country:</strong> ${data.country}</p>
+        <p><strong>Average Price:</strong> ${avgPrice.toFixed(2)}</p>
+        <p><strong>Price Range:</strong> ${minPrice.toFixed(2)} - ${maxPrice.toFixed(2)}</p>
+        <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
+        <p><strong>Data Points:</strong> ${data.prices.length}</p>
+        <p><strong>Data Source:</strong> ${data.data_source}</p>
+    `;
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-    // Set up tab switching
     const tabs = document.querySelectorAll('.view-tab');
     const views = {
         'table': document.getElementById('table-view'),
@@ -1174,31 +1473,29 @@ document.addEventListener('DOMContentLoaded', function() {
         tab.addEventListener('click', function() {
             const view = this.getAttribute('data-view');
             
-            // Remove active class from all tabs
             tabs.forEach(t => t.classList.remove('active'));
-            
-            // Add active class to clicked tab
             this.classList.add('active');
             
-            // Hide all views
             Object.values(views).forEach(v => {
                 if (v) v.style.display = 'none';
             });
             
-            // Show selected view
             if (views[view]) {
                 views[view].style.display = 'block';
                 
-                // Initialize charts if chart view is selected
                 if (view === 'chart') {
-                    const chartData = <?= json_encode($prices_data) ?>;
+                    const chartData = <?= json_encode($chart_data) ?>;
                     initCharts(chartData);
+                }
+                
+                if (view === 'map') {
+                    const mapData = <?= json_encode($chart_data) ?>;
+                    initMap(mapData);
                 }
             }
         });
     });
 
-    // Chart type selector
     document.getElementById('chart-type-selector')?.addEventListener('change', function() {
         currentChartType = this.value;
         if (priceTrendChart) {
@@ -1207,21 +1504,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Filter change event listeners
-    document.getElementById('country-filter')?.addEventListener('change', updateCharts);
-    document.getElementById('town-filter')?.addEventListener('change', updateCharts);
-    document.getElementById('commodity-filter')?.addEventListener('change', updateCharts);
+    document.getElementById('chart-country-filter')?.addEventListener('change', updateCharts);
+    document.getElementById('chart-town-filter')?.addEventListener('change', updateCharts);
+    document.getElementById('chart-commodity-filter')?.addEventListener('change', updateCharts);
+    document.getElementById('chart-date-from')?.addEventListener('change', updateCharts);
+    document.getElementById('chart-date-to')?.addEventListener('change', updateCharts);
+    document.getElementById('map-commodity-filter')?.addEventListener('change', updateMap);
 
     function updateCharts() {
-        const chartData = <?= json_encode($prices_data) ?>;
+        const chartData = <?= json_encode($chart_data) ?>;
         initCharts(chartData);
     }
-    
-    // Initialize charts if on chart view by default (unlikely but possible)
-    if (document.getElementById('chart-view')?.style.display === 'block') {
-        const chartData = <?= json_encode($prices_data) ?>;
-        initCharts(chartData);
+
+    function updateMap() {
+        const mapData = <?= json_encode($chart_data) ?>;
+        initMap(mapData);
     }
+
+    document.getElementById('reset-filters')?.addEventListener('click', function() {
+        window.location.href = window.location.pathname;
+    });
 });
 </script>
 </body>
