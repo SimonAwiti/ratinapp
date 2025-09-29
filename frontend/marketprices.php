@@ -819,22 +819,7 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
 
                 <div style="padding: 16px 24px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between;">
                     <div style="display: flex; align-items: center; gap: 8px;">
-                        <button type="button" class="commodity-category-btn <?php echo empty($filters['commodity_category']) ? 'active' : ''; ?>" data-category="">
-                            <i class="fa fa-ellipsis-h"></i>
-                            All
-                        </button>
-                        <button type="button" class="commodity-category-btn <?php echo isset($filters['commodity_category']) && $filters['commodity_category'] == 'Cereals' ? 'active' : ''; ?>" data-category="Cereals">
-                            <i class="fa fa-seedling"></i>
-                            Cereals
-                        </button>
-                        <button type="button" class="commodity-category-btn <?php echo isset($filters['commodity_category']) && $filters['commodity_category'] == 'Oilseeds' ? 'active' : ''; ?>" data-category="Oilseeds">
-                            <i class="fa fa-tint"></i>
-                            Oilseeds
-                        </button>
-                        <button type="button" class="commodity-category-btn <?php echo isset($filters['commodity_category']) && $filters['commodity_category'] == 'Pulses' ? 'active' : ''; ?>" data-category="Pulses">
-                            <i class="fa fa-leaf"></i>
-                            Pulses
-                        </button>
+
                     </div>
                     <button id="download-btn" style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
                         Download
