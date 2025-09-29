@@ -881,9 +881,6 @@ function calculateMoMChange($currentPrice, $commodityId, $market, $priceType, $c
                     </a></li>
                 </ul>
             </div>
-            <button>
-                <i class="fa fa-filter" style="margin-right: 6px;"></i> Filters
-            </button>
         </div>
         <div class="toolbar-right">
             <button class="approve" onclick="approveSelected()">
