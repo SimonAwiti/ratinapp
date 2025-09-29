@@ -10,9 +10,9 @@ if (!$con) {
 }
 
 /**
- * Fetch XBT volumes data with pagination
+ * Fetch XBT volumes data with filtering and pagination
  */
-function getXBTVolumesData($con, $limit = 10, $offset = 0) {
+function getXBTVolumesData($con, $limit = 10, $offset = 0, $filters = []) {
     $sql = "SELECT
                 x.id,
                 x.border_name,
@@ -36,14 +36,94 @@ function getXBTVolumesData($con, $limit = 10, $offset = 0) {
             LEFT JOIN
                 data_sources ds ON x.data_source_id = ds.id
             WHERE
-                x.status IN ('published', 'approved')  
-            ORDER BY
-                x.date_posted DESC
-            LIMIT $limit OFFSET $offset";
+                x.status IN ('published', 'approved')";
+    
+    // Apply filters
+    $whereConditions = [];
+    $params = [];
+    $types = '';
+    
+    if (!empty($filters['border_name']) && $filters['border_name'] != 'all') {
+        $whereConditions[] = "x.border_name = ?";
+        $params[] = $filters['border_name'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['commodity']) && $filters['commodity'] != 'all') {
+        $whereConditions[] = "CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) = ?";
+        $params[] = $filters['commodity'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['source_country']) && $filters['source_country'] != 'all') {
+        $whereConditions[] = "x.country = ?";
+        $params[] = $filters['source_country'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['destination_country']) && $filters['destination_country'] != 'all') {
+        $whereConditions[] = "x.destination = ?";
+        $params[] = $filters['destination_country'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['data_source']) && $filters['data_source'] != 'all') {
+        $whereConditions[] = "ds.data_source_name = ?";
+        $params[] = $filters['data_source'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['date_from'])) {
+        $whereConditions[] = "DATE(x.date_posted) >= ?";
+        $params[] = $filters['date_from'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['date_to'])) {
+        $whereConditions[] = "DATE(x.date_posted) <= ?";
+        $params[] = $filters['date_to'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['volume_min'])) {
+        $whereConditions[] = "x.volume >= ?";
+        $params[] = $filters['volume_min'];
+        $types .= 'd';
+    }
+    
+    if (!empty($filters['volume_max'])) {
+        $whereConditions[] = "x.volume <= ?";
+        $params[] = $filters['volume_max'];
+        $types .= 'd';
+    }
+    
+    if (!empty($whereConditions)) {
+        $sql .= " AND " . implode(" AND ", $whereConditions);
+    }
+    
+    $sql .= " ORDER BY x.date_posted DESC LIMIT $limit OFFSET $offset";
 
-    $result = $con->query($sql);
+    // Prepare and execute the query
+    $stmt = $con->prepare($sql);
+    if (!$stmt) {
+        error_log("Error preparing XBT volumes query: " . $con->error);
+        return [];
+    }
+    
+    if (!empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+    
+    if (!$stmt->execute()) {
+        error_log("Error executing XBT volumes query: " . $stmt->error);
+        $stmt->close();
+        return [];
+    }
+    
+    $result = $stmt->get_result();
     if (!$result) {
-        error_log("Error fetching XBT volumes data: " . $con->error);
+        error_log("Error getting XBT volumes result: " . $stmt->error);
+        $stmt->close();
         return [];
     }
 
@@ -53,42 +133,184 @@ function getXBTVolumesData($con, $limit = 10, $offset = 0) {
             $data[] = $row;
         }
     }
+    
     $result->free();
+    $stmt->close();
     return $data;
 }
 
 /**
- * Get total number of records for pagination
+ * Get total number of records for pagination with filters
  */
-function getTotalXBTVolumeRecords($con) {
-    $sql = "SELECT COUNT(*) as total FROM xbt_volumes WHERE status IN ('published', 'approved')";
-    $result = $con->query($sql);
-    if (!$result) {
-        error_log("Error counting XBT volumes records: " . $con->error);
+function getTotalXBTVolumeRecords($con, $filters = []) {
+    $sql = "SELECT COUNT(*) as total 
+            FROM xbt_volumes x
+            LEFT JOIN commodities c ON x.commodity_id = c.id
+            LEFT JOIN data_sources ds ON x.data_source_id = ds.id
+            WHERE x.status IN ('published', 'approved')";
+    
+    // Apply filters
+    $whereConditions = [];
+    $params = [];
+    $types = '';
+    
+    if (!empty($filters['border_name']) && $filters['border_name'] != 'all') {
+        $whereConditions[] = "x.border_name = ?";
+        $params[] = $filters['border_name'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['commodity']) && $filters['commodity'] != 'all') {
+        $whereConditions[] = "CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) = ?";
+        $params[] = $filters['commodity'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['source_country']) && $filters['source_country'] != 'all') {
+        $whereConditions[] = "x.country = ?";
+        $params[] = $filters['source_country'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['destination_country']) && $filters['destination_country'] != 'all') {
+        $whereConditions[] = "x.destination = ?";
+        $params[] = $filters['destination_country'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['data_source']) && $filters['data_source'] != 'all') {
+        $whereConditions[] = "ds.data_source_name = ?";
+        $params[] = $filters['data_source'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['date_from'])) {
+        $whereConditions[] = "DATE(x.date_posted) >= ?";
+        $params[] = $filters['date_from'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['date_to'])) {
+        $whereConditions[] = "DATE(x.date_posted) <= ?";
+        $params[] = $filters['date_to'];
+        $types .= 's';
+    }
+    
+    if (!empty($filters['volume_min'])) {
+        $whereConditions[] = "x.volume >= ?";
+        $params[] = $filters['volume_min'];
+        $types .= 'd';
+    }
+    
+    if (!empty($filters['volume_max'])) {
+        $whereConditions[] = "x.volume <= ?";
+        $params[] = $filters['volume_max'];
+        $types .= 'd';
+    }
+    
+    if (!empty($whereConditions)) {
+        $sql .= " AND " . implode(" AND ", $whereConditions);
+    }
+
+    $stmt = $con->prepare($sql);
+    if (!$stmt) {
+        error_log("Error preparing count query: " . $con->error);
         return 0;
     }
+    
+    if (!empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+    
+    if (!$stmt->execute()) {
+        error_log("Error executing count query: " . $stmt->error);
+        $stmt->close();
+        return 0;
+    }
+    
+    $result = $stmt->get_result();
+    if (!$result) {
+        error_log("Error getting count result: " . $stmt->error);
+        $stmt->close();
+        return 0;
+    }
+    
     $row = $result->fetch_assoc();
-    return (int)$row['total'];
+    $total = (int)$row['total'];
+    
+    $result->free();
+    $stmt->close();
+    return $total;
 }
 
+/**
+ * Get filter options for dropdowns
+ */
+function getFilterOptions($con, $table, $column) {
+    $sql = "SELECT DISTINCT $column FROM $table WHERE $column IS NOT NULL AND $column != '' ORDER BY $column";
+    $result = $con->query($sql);
+    $options = [];
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $options[] = $row[$column];
+        }
+        $result->free();
+    }
+    return $options;
+}
+
+// Get filter options
+$border_options = getFilterOptions($con, 'xbt_volumes', 'border_name');
+$source_country_options = getFilterOptions($con, 'xbt_volumes', 'country');
+$destination_country_options = getFilterOptions($con, 'xbt_volumes', 'destination');
+$data_source_options = getFilterOptions($con, 'data_sources', 'data_source_name');
+
+// Get commodity options
+$commodity_options = [];
+$commodity_sql = "SELECT DISTINCT CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display 
+                  FROM commodities c 
+                  JOIN xbt_volumes x ON c.id = x.commodity_id 
+                  WHERE x.status IN ('published', 'approved')
+                  ORDER BY commodity_display";
+$commodity_result = $con->query($commodity_sql);
+if ($commodity_result && $commodity_result->num_rows > 0) {
+    while ($row = $commodity_result->fetch_assoc()) {
+        $commodity_options[] = $row['commodity_display'];
+    }
+    $commodity_result->free();
+}
+
+// Get filter values from request
+$filters = [
+    'border_name' => $_GET['border_name'] ?? 'all',
+    'commodity' => $_GET['commodity'] ?? 'all',
+    'source_country' => $_GET['source_country'] ?? 'all',
+    'destination_country' => $_GET['destination_country'] ?? 'all',
+    'data_source' => $_GET['data_source'] ?? 'all',
+    'date_from' => $_GET['date_from'] ?? '',
+    'date_to' => $_GET['date_to'] ?? '',
+    'volume_min' => $_GET['volume_min'] ?? '',
+    'volume_max' => $_GET['volume_max'] ?? ''
+];
+
 // Get total records and setup pagination
-$total_records = getTotalXBTVolumeRecords($con);
+$total_records = getTotalXBTVolumeRecords($con, $filters);
 $limit = 10;
 $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $offset = ($page - 1) * $limit;
 
-// Fetch data
-$volumes_data = getXBTVolumesData($con, $limit, $offset);
+// Fetch data with filters
+$volumes_data = getXBTVolumesData($con, $limit, $offset, $filters);
 $total_pages = ceil($total_records / $limit);
 
 // Group data for display
 $grouped_data = [];
 foreach ($volumes_data as $volume) {
-    if (!isset($volume['border_name'], $volume['commodity'], $volume['date_posted'], $volume['data_source'])) {
+    if (!isset($volume['border_name'], $volume['commodity_display'], $volume['date_posted'], $volume['data_source'])) {
         continue;
     }
     $date = date('Y-m-d', strtotime($volume['date_posted']));
-    $group_key = $date . '_' . $volume['border_name'] . '_' . $volume['commodity'] . '_' . $volume['data_source'];
+    $group_key = $date . '_' . $volume['border_name'] . '_' . $volume['commodity_display'] . '_' . $volume['data_source'];
     $grouped_data[$group_key][] = $volume;
 }
 ?>
@@ -100,6 +322,7 @@ foreach ($volumes_data as $volume) {
     <title>RATIN - XBT Volumes</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
     <style>
         :root {
             --primary-color: #8B4513;
@@ -537,82 +760,84 @@ foreach ($volumes_data as $volume) {
         <div class="main-content">
             <!-- Filter Section -->
             <div class="filter-section dashboard-card">
-                <div class="filter-grid">
-                    <div class="filter-group">
-                        <label class="filter-label">Border Point</label>
-                        <select class="filter-input" id="border-filter">
-                            <option value="all">All Borders</option>
-                            <?php
-                            $borders = array_unique(array_column($volumes_data, 'border_name'));
-                            foreach ($borders as $border): ?>
-                                <option value="<?= htmlspecialchars($border) ?>"><?= htmlspecialchars($border) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Commodity</label>
-                        <select class="filter-input" id="commodity-filter">
-                            <option value="all">All Commodities</option>
-                            <?php
-                            $commodities = array_unique(array_column($volumes_data, 'commodity_display'));
-                            foreach ($commodities as $commodity): ?>
-                                <option value="<?= htmlspecialchars($commodity) ?>"><?= htmlspecialchars($commodity) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Source Country</label>
-                        <select class="filter-input" id="source-country-filter">
-                            <option value="all">All Countries</option>
-                            <?php
-                            $countries = array_unique(array_column($volumes_data, 'source_country'));
-                            foreach ($countries as $country): ?>
-                                <option value="<?= htmlspecialchars($country) ?>"><?= htmlspecialchars($country) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Destination Country</label>
-                        <select class="filter-input" id="destination-country-filter">
-                            <option value="all">All Countries</option>
-                            <?php
-                            $destinations = array_unique(array_column($volumes_data, 'destination_country'));
-                            foreach ($destinations as $destination): ?>
-                                <option value="<?= htmlspecialchars($destination) ?>"><?= htmlspecialchars($destination) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Data Source</label>
-                        <select class="filter-input" id="data-source-filter">
-                            <option value="all">All Sources</option>
-                            <?php
-                            $sources = array_unique(array_column($volumes_data, 'data_source'));
-                            foreach ($sources as $source): ?>
-                                <option value="<?= htmlspecialchars($source) ?>"><?= htmlspecialchars($source) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Date Range</label>
-                        <div style="display: flex; gap: 10px;">
-                            <input type="date" class="filter-input" id="date-from">
-                            <input type="date" class="filter-input" id="date-to">
+                <form id="filter-form" method="GET">
+                    <div class="filter-grid">
+                        <div class="filter-group">
+                            <label class="filter-label">Border Point</label>
+                            <select class="filter-input" id="border-filter" name="border_name">
+                                <option value="all">All Borders</option>
+                                <?php foreach ($border_options as $border): ?>
+                                    <option value="<?= htmlspecialchars($border) ?>" <?= $filters['border_name'] == $border ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($border) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Commodity</label>
+                            <select class="filter-input" id="commodity-filter" name="commodity">
+                                <option value="all">All Commodities</option>
+                                <?php foreach ($commodity_options as $commodity): ?>
+                                    <option value="<?= htmlspecialchars($commodity) ?>" <?= $filters['commodity'] == $commodity ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($commodity) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Source Country</label>
+                            <select class="filter-input" id="source-country-filter" name="source_country">
+                                <option value="all">All Countries</option>
+                                <?php foreach ($source_country_options as $country): ?>
+                                    <option value="<?= htmlspecialchars($country) ?>" <?= $filters['source_country'] == $country ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($country) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Destination Country</label>
+                            <select class="filter-input" id="destination-country-filter" name="destination_country">
+                                <option value="all">All Countries</option>
+                                <?php foreach ($destination_country_options as $country): ?>
+                                    <option value="<?= htmlspecialchars($country) ?>" <?= $filters['destination_country'] == $country ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($country) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Data Source</label>
+                            <select class="filter-input" id="data-source-filter" name="data_source">
+                                <option value="all">All Sources</option>
+                                <?php foreach ($data_source_options as $source): ?>
+                                    <option value="<?= htmlspecialchars($source) ?>" <?= $filters['data_source'] == $source ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($source) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Date Range</label>
+                            <div style="display: flex; gap: 10px;">
+                                <input type="date" class="filter-input" id="date-from" name="date_from" value="<?= htmlspecialchars($filters['date_from']) ?>">
+                                <input type="date" class="filter-input" id="date-to" name="date_to" value="<?= htmlspecialchars($filters['date_to']) ?>">
+                            </div>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Volume Range (MT)</label>
+                            <div style="display: flex; gap: 10px;">
+                                <input type="number" class="filter-input" placeholder="Min" id="volume-min" name="volume_min" value="<?= htmlspecialchars($filters['volume_min']) ?>">
+                                <input type="number" class="filter-input" placeholder="Max" id="volume-max" name="volume_max" value="<?= htmlspecialchars($filters['volume_max']) ?>">
+                            </div>
+                        </div>
+                        <div class="filter-group" style="display: flex; align-items: flex-end;">
+                            <button type="button" class="btn btn-outline" id="reset-filters">
+                                <i class="fas fa-refresh"></i> Reset Filters
+                            </button>
                         </div>
                     </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Volume Range (MT)</label>
-                        <div style="display: flex; gap: 10px;">
-                            <input type="number" class="filter-input" placeholder="Min" id="volume-min">
-                            <input type="number" class="filter-input" placeholder="Max" id="volume-max">
-                        </div>
-                    </div>
-                    <div class="filter-group" style="display: flex; align-items: flex-end;">
-                        <button class="btn btn-outline" id="reset-filters">
-                            <i class="fas fa-refresh"></i> Reset Filters
-                        </button>
-                    </div>
-                </div>
+                </form>
             </div>
 
             <!-- Data Display Card -->
@@ -774,13 +999,6 @@ foreach ($volumes_data as $volume) {
                     
                     <div class="map-container" id="xbt-map">
                         <!-- Map will be rendered here -->
-                        <div style="display: flex; justify-content: center; align-items: center; height: 100%;">
-                            <div style="text-align: center;">
-                                <i class="fas fa-map-marked-alt" style="font-size: 3em; color: var(--secondary-color); margin-bottom: 15px;"></i>
-                                <h5 style="color: var(--secondary-color);">Interactive map of cross-border trade volumes</h5>
-                                <p style="color: var(--secondary-color);">Map visualization would be displayed here with actual implementation</p>
-                            </div>
-                        </div>
                     </div>
                     
                     <div style="margin-top: 20px;">
@@ -826,7 +1044,7 @@ foreach ($volumes_data as $volume) {
                         <span style="font-weight: 500;"><?= $total_records ?></span> results
                     </div>
                     <div class="pagination-controls">
-                        <a href="?page=<?= $page - 1 ?>" class="page-btn" <?= $page <= 1 ? 'style="visibility: hidden;"' : '' ?>>
+                        <a href="?<?= http_build_query(array_merge($filters, ['page' => $page - 1])) ?>" class="page-btn" <?= $page <= 1 ? 'style="visibility: hidden;"' : '' ?>>
                             Previous
                         </a>
                         
@@ -836,7 +1054,7 @@ foreach ($volumes_data as $volume) {
                         $endPage = min($total_pages, $startPage + $visiblePages - 1);
                         
                         if ($startPage > 1) {
-                            echo '<a href="?page=1" class="page-btn">1</a>';
+                            echo '<a href="?' . http_build_query(array_merge($filters, ['page' => 1])) . '" class="page-btn">1</a>';
                             if ($startPage > 2) {
                                 echo '<span class="page-btn" style="background: transparent;">...</span>';
                             }
@@ -844,18 +1062,18 @@ foreach ($volumes_data as $volume) {
                         
                         for ($i = $startPage; $i <= $endPage; $i++) {
                             $activeClass = $i == $page ? 'active' : '';
-                            echo '<a href="?page='.$i.'" class="page-btn '.$activeClass.'">'.$i.'</a>';
+                            echo '<a href="?' . http_build_query(array_merge($filters, ['page' => $i])) . '" class="page-btn '.$activeClass.'">'.$i.'</a>';
                         }
                         
                         if ($endPage < $total_pages) {
                             if ($endPage < $total_pages - 1) {
                                 echo '<span class="page-btn" style="background: transparent;">...</span>';
                             }
-                            echo '<a href="?page='.$total_pages.'" class="page-btn">'.$total_pages.'</a>';
+                            echo '<a href="?' . http_build_query(array_merge($filters, ['page' => $total_pages])) . '" class="page-btn">'.$total_pages.'</a>';
                         }
                         ?>
                         
-                        <a href="?page=<?= $page + 1 ?>" class="page-btn" <?= $page >= $total_pages ? 'style="visibility: hidden;"' : '' ?>>
+                        <a href="?<?= http_build_query(array_merge($filters, ['page' => $page + 1])) ?>" class="page-btn" <?= $page >= $total_pages ? 'style="visibility: hidden;"' : '' ?>>
                             Next
                         </a>
                     </div>
@@ -871,7 +1089,6 @@ foreach ($volumes_data as $volume) {
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
 
 <script>
 // Initialize charts and map
@@ -1289,11 +1506,15 @@ document.addEventListener('DOMContentLoaded', function() {
     ];
     
     filterElements.forEach(id => {
-        document.getElementById(id)?.addEventListener('change', updateVisualizations);
+        document.getElementById(id)?.addEventListener('change', function() {
+            // Submit the filter form
+            document.getElementById('filter-form').submit();
+        });
     });
     
     // Reset filters button
     document.getElementById('reset-filters')?.addEventListener('click', function() {
+        // Reset all filter values
         filterElements.forEach(id => {
             const element = document.getElementById(id);
             if (element) {
@@ -1304,23 +1525,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         });
-        updateVisualizations();
+        
+        // Submit the form to apply reset
+        document.getElementById('filter-form').submit();
     });
 
-    function updateVisualizations() {
-        const chartData = <?= json_encode($volumes_data) ?>;
-        
-        // Update charts if chart view is active
-        if (document.getElementById('chart-view').style.display === 'block') {
-            initCharts(chartData);
-        }
-        
-        // Update map if map view is active
-        if (document.getElementById('map-view').style.display === 'block') {
-            initMap(chartData);
-        }
-    }
-    
     // Initialize charts if on chart view by default (unlikely but possible)
     if (document.getElementById('chart-view')?.style.display === 'block') {
         const chartData = <?= json_encode($volumes_data) ?>;
