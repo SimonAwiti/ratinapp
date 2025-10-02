@@ -7,6 +7,193 @@ include '../admin/includes/config.php';
 // Include the shared header with the sidebar and initial HTML
 include '../admin/includes/header.php';
 
+// Handle CSV import
+if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
+    $file = $_FILES['csv_file']['tmp_name'];
+    $handle = fopen($file, "r");
+    
+    // Skip header row
+    fgetcsv($handle);
+    
+    $successCount = 0;
+    $errorCount = 0;
+    $errors = array();
+    
+    // Start transaction
+    $con->begin_transaction();
+    
+    try {
+        $rowNumber = 1; // Track row numbers for better error reporting
+        
+        while (($data = fgetcsv($handle, 1000, ","))) {
+            $rowNumber++;
+            
+            // Skip completely empty rows
+            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
+                continue;
+            }
+            
+            // Validate required fields
+            if (empty(trim($data[0]))) { // Country
+                $errors[] = "Row $rowNumber: Country is required";
+                $errorCount++;
+                continue;
+            }
+            
+            if (empty(trim($data[1]))) { // Currency Code
+                $errors[] = "Row $rowNumber: Currency Code is required";
+                $errorCount++;
+                continue;
+            }
+            
+            if (empty(trim($data[2])) || !is_numeric(trim($data[2]))) { // Exchange Rate
+                $errors[] = "Row $rowNumber: Valid Exchange Rate is required";
+                $errorCount++;
+                continue;
+            }
+            
+            if (empty(trim($data[3]))) { // Effective Date
+                $errors[] = "Row $rowNumber: Effective Date is required";
+                $errorCount++;
+                continue;
+            }
+            
+            // Prepare currency data
+            $country = trim($data[0]);
+            $currency_code = trim($data[1]);
+            $exchange_rate = floatval(trim($data[2]));
+            $effective_date = trim($data[3]);
+            
+            // Validate date format
+            if (!strtotime($effective_date)) {
+                $errors[] = "Row $rowNumber: Invalid date format for Effective Date";
+                $errorCount++;
+                continue;
+            }
+            
+            // Format date properly
+            $effective_date = date('Y-m-d', strtotime($effective_date));
+            
+            // Additional fields for record keeping
+            $date_created = date('Y-m-d H:i:s');
+            $day = date('d');
+            $month = date('m');
+            $year = date('Y');
+            
+            // Check if currency rate already exists for the same country, currency and date
+            $check_query = "SELECT id FROM currencies WHERE country = ? AND currency_code = ? AND effective_date = ?";
+            $check_stmt = $con->prepare($check_query);
+            $check_stmt->bind_param('sss', $country, $currency_code, $effective_date);
+            $check_stmt->execute();
+            $check_result = $check_stmt->get_result();
+            
+            if ($check_result->num_rows > 0) {
+                if (isset($_POST['overwrite_existing'])) {
+                    // Update existing currency rate
+                    $update_query = "UPDATE currencies SET 
+                        exchange_rate = ?,
+                        date_created = ?,
+                        day = ?,
+                        month = ?,
+                        year = ?
+                        WHERE country = ? AND currency_code = ? AND effective_date = ?";
+                    
+                    $update_stmt = $con->prepare($update_query);
+                    if (!$update_stmt) {
+                        $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
+                        $errorCount++;
+                        continue;
+                    }
+                    
+                    $update_stmt->bind_param(
+                        'dsiiisss',
+                        $exchange_rate,
+                        $date_created,
+                        $day,
+                        $month,
+                        $year,
+                        $country,
+                        $currency_code,
+                        $effective_date
+                    );
+                    
+                    if ($update_stmt->execute()) {
+                        $successCount++;
+                    } else {
+                        $errors[] = "Row $rowNumber: Update failed - " . $update_stmt->error;
+                        $errorCount++;
+                    }
+                    $update_stmt->close();
+                } else {
+                    $errors[] = "Row $rowNumber: Currency rate for '$country' ($currency_code) on '$effective_date' already exists (use overwrite option to update)";
+                    $errorCount++;
+                }
+                continue;
+            }
+            
+            // Insert new currency rate
+            $insert_query = "INSERT INTO currencies (
+                country, 
+                currency_code, 
+                exchange_rate, 
+                effective_date,
+                date_created,
+                day,
+                month,
+                year
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+            
+            $insert_stmt = $con->prepare($insert_query);
+            if (!$insert_stmt) {
+                $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
+                $errorCount++;
+                continue;
+            }
+            
+            $insert_stmt->bind_param(
+                'ssdssiii',
+                $country,
+                $currency_code,
+                $exchange_rate,
+                $effective_date,
+                $date_created,
+                $day,
+                $month,
+                $year
+            );
+            
+            if ($insert_stmt->execute()) {
+                $successCount++;
+            } else {
+                $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
+                $errorCount++;
+            }
+            $insert_stmt->close();
+        }
+        
+        // Commit transaction if no critical errors
+        if ($errorCount === 0) {
+            $con->commit();
+            $import_message = "Successfully imported $successCount currency rates.";
+            $import_status = 'success';
+        } else {
+            $con->rollback();
+            $import_message = "Import rolled back due to $errorCount errors. Processed $successCount rows successfully. Errors: " . implode('<br>', $errors);
+            $import_status = 'danger';
+        }
+        
+    } catch (Exception $e) {
+        $con->rollback();
+        $import_message = "Import failed with exception: " . $e->getMessage();
+        $import_status = 'danger';
+    }
+    
+    fclose($handle);
+} elseif (isset($_POST['import_csv'])) {
+    $import_message = "Please select a valid CSV file to import.";
+    $import_status = 'danger';
+}
+
 // Function to fetch currency rates data from the database
 function getCurrencyRatesData($con, $limit = 10, $offset = 0) {
     $sql = "SELECT
@@ -151,10 +338,58 @@ function formatExchangeRate($rate) {
     .exchange-rate {
         font-family: monospace;
     }
+    .btn-group {
+        margin-bottom: 15px;
+        display: flex;
+        gap: 10px;
+    }
+    .btn-import, .btn-export {
+        background-color: white;
+        color: black;
+        border: 1px solid #ddd;
+        padding: 8px 16px;
+    }
+    .btn-import:hover, .btn-export:hover {
+        background-color: #f8f9fa;
+    }
+    .dropdown-menu {
+        min-width: 120px;
+    }
+    .dropdown-item {
+        cursor: pointer;
+    }
+    .import-instructions {
+        background-color: #f8f9fa;
+        border-left: 4px solid rgba(180, 80, 50, 1);
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    .import-instructions h5 {
+        color: rgba(180, 80, 50, 1);
+        margin-top: 0;
+    }
+    .download-template {
+        display: inline-block;
+        margin-top: 10px;
+        color: rgba(180, 80, 50, 1);
+        text-decoration: none;
+    }
+    .download-template:hover {
+        text-decoration: underline;
+    }
+    .alert {
+        margin-bottom: 20px;
+    }
 </style>
 
 <div class="text-wrapper-8"><h3>Currency Rates Management</h3></div>
 <p class="p">Manage Currency Exchange Rate Data</p>
+
+<?php if (isset($import_message)): ?>
+    <div class="alert alert-<?= $import_status ?>">
+        <?= $import_message ?>
+    </div>
+<?php endif; ?>
 
 <div class="container">
     <div class="toolbar">
@@ -165,9 +400,25 @@ function formatExchangeRate($rate) {
             <button class="delete-btn">
                 <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
             </button>
-            <button>
-                <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
+            
+            <div class="dropdown">
+                <button class="btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
+                </button>
+                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
+                    <li><a class="dropdown-item" href="#" onclick="exportSelected('csv')">
+                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export to CSV
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
+                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
+                    </a></li>
+                </ul>
+            </div>
+            
+            <button class="btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
+                <i class="fa fa-upload" style="margin-right: 6px;"></i> Import
             </button>
+            
             <button>
                 <i class="fa fa-filter" style="margin-right: 6px;"></i> Filters
             </button>
@@ -232,6 +483,53 @@ function formatExchangeRate($rate) {
     </div>
 </div>
 
+<!-- Import Modal -->
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importModalLabel">Import Currency Rates</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="import-instructions">
+                    <h5>CSV Format Instructions</h5>
+                    <p>Your CSV file should have the following columns in order:</p>
+                    <ol>
+                        <li><strong>Country</strong> (required)</li>
+                        <li><strong>Currency Code</strong> (required, e.g., "KES", "USD")</li>
+                        <li><strong>Exchange Rate</strong> (required, numeric, e.g., "150.25")</li>
+                        <li><strong>Effective Date</strong> (required, YYYY-MM-DD format)</li>
+                    </ol>
+                    <a href="../data/downloads/currency_rates_template.csv" class="download-template">
+                        <i class="fas fa-download"></i> Download CSV Template
+                    </a>
+                </div>
+                
+                <form method="POST" enctype="multipart/form-data" id="importForm">
+                    <div class="mb-3">
+                        <label for="csv_file" class="form-label">Select CSV File</label>
+                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                    </div>
+                    
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="overwriteExisting" name="overwrite_existing">
+                        <label class="form-check-label" for="overwriteExisting">
+                            Overwrite existing currency rates with matching Country, Currency Code and Effective Date
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="importForm" name="import_csv" class="btn btn-primary">
+                    <i class="fas fa-upload"></i> Import
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     initializeCurrencies();
@@ -240,6 +538,12 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof updateBreadcrumb === 'function') {
         updateBreadcrumb('Base', 'Currency Rates');
     }
+    
+    // Show import modal if there was an error
+    <?php if (isset($import_message) && $import_status === 'danger'): ?>
+        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
+        importModal.show();
+    <?php endif; ?>
 });
 
 function initializeCurrencies() {
@@ -319,6 +623,42 @@ function confirmDelete(ids) {
             alert('Error deleting currency rates: ' + error.message);
         });
     }
+}
+
+function exportSelected(format) {
+    const checkedBoxes = document.querySelectorAll('table tbody input[type="checkbox"][data-id]:checked');
+    if (checkedBoxes.length === 0) {
+        alert('Please select at least one currency rate to export.');
+        return;
+    }
+    
+    const ids = Array.from(checkedBoxes).map(cb => cb.getAttribute('data-id'));
+    
+    // Create a form to submit the export request
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '../data/export_currencies.php';
+    
+    // Add format parameter
+    const formatInput = document.createElement('input');
+    formatInput.type = 'hidden';
+    formatInput.name = 'export_format';
+    formatInput.value = format;
+    form.appendChild(formatInput);
+    
+    // Add selected IDs
+    ids.forEach(id => {
+        const idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'selected_ids[]';
+        idInput.value = id;
+        form.appendChild(idInput);
+    });
+    
+    // Submit the form
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
 }
 </script>
 
