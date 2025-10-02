@@ -1,0 +1,20 @@
+<?php
+// data/generate_currency_template.php
+header('Content-Type: text/csv; charset=utf-8');
+header('Content-Disposition: attachment; filename=currency_rates_template.csv');
+
+$output = fopen('php://output', 'w');
+
+// Add BOM for UTF-8
+fputs($output, $bom = (chr(0xEF) . chr(0xBB) . chr(0xBF)));
+
+// Header row
+fputcsv($output, ['Country', 'Currency Code', 'Exchange Rate', 'Effective Date']);
+
+// Sample data rows
+fputcsv($output, ['Kenya', 'KES', '150.25', '2024-01-15']);
+fputcsv($output, ['Uganda', 'UGX', '3800.50', '2024-01-15']);
+fputcsv($output, ['Tanzania', 'TZS', '2500.75', '2024-01-15']);
+
+fclose($output);
+?>
