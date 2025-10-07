@@ -566,74 +566,219 @@ function calculateMoMChange($currentPrice, $commodityId, $market, $priceType, $c
     $stmt->close();
     return 'N/A';
 }
+
+// --- Fetch counts for summary boxes ---
+$total_prices_query = "SELECT COUNT(*) AS total FROM market_prices";
+$total_prices_result = $con->query($total_prices_query);
+$total_prices = 0;
+if ($total_prices_result) {
+    $row = $total_prices_result->fetch_assoc();
+    $total_prices = $row['total'];
+}
+
+$pending_query = "SELECT COUNT(*) AS total FROM market_prices WHERE status = 'pending'";
+$pending_result = $con->query($pending_query);
+$pending_count = 0;
+if ($pending_result) {
+    $row = $pending_result->fetch_assoc();
+    $pending_count = $row['total'];
+}
+
+$published_query = "SELECT COUNT(*) AS total FROM market_prices WHERE status = 'published'";
+$published_result = $con->query($published_query);
+$published_count = 0;
+if ($published_result) {
+    $row = $published_result->fetch_assoc();
+    $published_count = $row['total'];
+}
+
+$wholesale_query = "SELECT COUNT(*) AS total FROM market_prices WHERE price_type = 'Wholesale'";
+$wholesale_result = $con->query($wholesale_query);
+$wholesale_count = 0;
+if ($wholesale_result) {
+    $row = $wholesale_result->fetch_assoc();
+    $wholesale_count = $row['total'];
+}
 ?>
 
 <style>
-    .container {
-        background: #fff;
+    .table-container {
+        background: white;
         padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        margin: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
     }
-    h2 {
-        margin: 0 0 5px;
+    .filter-row {
+        background-color: white;
     }
-    p.subtitle {
-        color: #777;
-        font-size: 14px;
-        margin: 0 0 20px;
-    }
-    .toolbar {
+    .btn-group {
+        margin-bottom: 15px;
         display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-        flex-wrap: wrap;
+        gap: 10px;
     }
-    .toolbar-left,
-    .toolbar-right {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-    }
-    .toolbar button {
-        padding: 12px 20px;
-        font-size: 16px;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
-        background-color: #eee;
-    }
-    .toolbar .primary {
+    .btn-add-new {
         background-color: rgba(180, 80, 50, 1);
         color: white;
+        padding: 10px 20px;
+        font-size: 16px;
+        border: none;
     }
-    .toolbar .approve {
-      background-color: #218838;
-      color: white;
+    .btn-add-new:hover {
+        background-color: darkred;
     }
-    .toolbar .unpublish {
-      background-color: rgba(180, 80, 50, 1);
-      color: white;
+    .btn-delete, .btn-export, .btn-import {
+        background-color: white;
+        color: black;
+        border: 1px solid #ddd;
+        padding: 8px 16px;
     }
-    table {
+    .btn-delete:hover, .btn-export:hover, .btn-import:hover {
+        background-color: #f8f9fa;
+    }
+    .dropdown-menu {
+        min-width: 120px;
+    }
+    .dropdown-item {
+        cursor: pointer;
+    }
+    .filter-input {
         width: 100%;
-        border-collapse: collapse;
-        font-size: 14px;
+        border: none;
+        background: white;
+        padding: 5px;
+        border-radius: 5px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
-    table th, table td {
-        padding: 12px;
-        border-bottom: 1px solid #eee;
+    .filter-input:focus {
+        outline: none;
+        background: white;
+    }
+    .stats-container {
+        display: flex;
+        gap: 15px;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: nowrap;
+        width: 87%;
+        max-width: 100%;
+        margin: 0 auto 20px auto;
+        margin-left: 0.7%;
+    }
+    .stats-container > div {
+        flex: 1;
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        text-align: center;
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    .stats-icon {
+        width: 40px;
+        height: 40px;
+        margin-bottom: 10px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+    }
+    .total-icon {
+        background-color: #9b59b6;
+        color: white;
+    }
+    .pending-icon {
+        background-color: #f39c12;
+        color: white;
+    }
+    .published-icon {
+        background-color: #27ae60;
+        color: white;
+    }
+    .wholesale-icon {
+        background-color: #e74c3c;
+        color: white;
+    }
+    .stats-section {
         text-align: left;
-        vertical-align: top;
+        margin-left: 11%;
     }
-    table th {
-        background-color: #f1f1f1;
+    .stats-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #2c3e50;
+        margin: 8px 0 5px 0;
     }
-    table tr:nth-child(even) {
-        background-color: #fafafa;
+    .stats-number {
+        font-size: 24px;
+        font-weight: 700;
+        color: #34495e;
     }
+    .modal-content {
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+    .modal-header {
+        background-color: #2c3e50;
+        color: white;
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+    }
+    .modal-header .btn-close {
+        color: white;
+        filter: invert(1);
+    }
+    .form-control {
+        margin-bottom: 15px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 8px;
+    }
+    .form-control:focus {
+        outline: none;
+        border-color: rgba(180, 80, 50, 1);
+        box-shadow: 0 0 5px rgba(180, 80, 50, 0.5);
+    }
+    .btn-primary {
+        background-color: rgba(180, 80, 50, 1);
+        border: none;
+        padding: 10px 20px;
+        font-size: 16px;
+        border-radius: 5px;
+        color: white;
+        cursor: pointer;
+    }
+    .btn-primary:hover {
+        background-color: darkred;
+    }
+    .alert {
+        margin-bottom: 20px;
+    }
+    .import-instructions {
+        background-color: #f8f9fa;
+        border-left: 4px solid rgba(180, 80, 50, 1);
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    .import-instructions h5 {
+        color: rgba(180, 80, 50, 1);
+        margin-top: 0;
+    }
+    .download-template {
+        display: inline-block;
+        margin-top: 10px;
+        color: rgba(180, 80, 50, 1);
+        text-decoration: none;
+    }
+    .download-template:hover {
+        text-decoration: underline;
+    }
+    
+    /* Status styles */
     .status-dot {
         display: inline-block;
         width: 10px;
@@ -653,224 +798,93 @@ function calculateMoMChange($currentPrice, $commodityId, $market, $priceType, $c
     .status-unpublished {
         background-color: grey;
     }
-    .actions {
-        display: flex;
-        gap: 8px;
-    }
-     .pagination {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 20px;
-        font-size: 14px;
-        align-items: center;
-        flex-wrap: wrap;
-    }
-    .pagination .pages {
-        display: flex;
-        gap: 5px;
-    }
-    .pagination .page {
-        padding: 6px 10px;
-        border-radius: 6px;
-        background-color: #eee;
-        cursor: pointer;
-        text-decoration: none;
-        color: #333;
-    }
-    .pagination .current {
-        background-color: #cddc39;
-    }
-    select {
-        padding: 6px;
-        margin-left: 5px;
-    }
     
-    /* Import instructions styles */
-    .import-instructions {
-        background-color: #f8f9fa;
-        border-left: 4px solid rgba(180, 80, 50, 1);
-        padding: 15px;
-        margin-bottom: 20px;
-        max-height: 300px;
-        overflow-y: auto;
+    /* Action buttons */
+    .btn-approve {
+        background-color: #218838;
+        color: white;
+        border: none;
+        padding: 8px 16px;
         border-radius: 5px;
     }
-    .import-instructions h5 {
-        color: rgba(180, 80, 50, 1);
-        margin-top: 0;
-        position: sticky;
-        top: 0;
-        background-color: #f8f9fa;
-        padding-bottom: 10px;
-        border-bottom: 1px solid #dee2e6;
-        margin-bottom: 15px;
-    }
-    .import-instructions h6 {
-        color: rgba(180, 80, 50, 0.8);
-        margin-top: 15px;
-    }
-    .download-template {
-        display: inline-block;
-        margin-top: 10px;
-        color: rgba(180, 80, 50, 1);
-        text-decoration: none;
-    }
-    .download-template:hover {
-        text-decoration: underline;
-    }
-    .btn-import {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-        padding: 8px 16px;
-    }
-    .btn-import:hover {
-        background-color: #f8f9fa;
-    }
-    
-    /* Fixed Modal styles */
-    .modal {
-        display: none;
-        position: fixed;
-        z-index: 1050;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        overflow: auto;
-        background-color: rgba(0,0,0,0.4);
-    }
-    
-    .modal.show {
-        display: block;
-    }
-    
-    .modal-dialog {
-        margin: 5% auto;
-        max-width: 800px;
-    }
-    
-    .modal-content {
-        background-color: #fefefe;
-        padding: 20px;
-        border: 1px solid #888;
-        border-radius: 8px;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        max-height: 90vh;
-        overflow-y: auto;
-    }
-    
-    .modal-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-bottom: 15px;
-        border-bottom: 1px solid #dee2e6;
-    }
-    
-    .modal-title {
-        margin: 0;
-        font-size: 1.25rem;
-    }
-    
-    .close-modal {
-        color: #aaa;
-        font-size: 28px;
-        font-weight: bold;
-        cursor: pointer;
-        background: none;
+    .btn-publish {
+        background-color: rgba(180, 80, 50, 1);
+        color: white;
         border: none;
+        padding: 8px 16px;
+        border-radius: 5px;
     }
-    
-    .close-modal:hover {
-        color: black;
-    }
-    
-    /* Miller Prices Section */
-    .miller-section {
-        margin-top: 40px;
-        border-top: 2px solid #eee;
-        padding-top: 20px;
-    }
-    .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-    }
-    .section-title {
-        font-size: 1.5em;
-        color: rgba(180, 80, 50, 1);
-        margin: 0;
-    }
-    
-    /* Instructions scrollbar styling */
-    .import-instructions::-webkit-scrollbar {
-        width: 6px;
-    }
-    .import-instructions::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 3px;
-    }
-    .import-instructions::-webkit-scrollbar-thumb {
-        background: rgba(180, 80, 50, 0.5);
-        border-radius: 3px;
-    }
-    .import-instructions::-webkit-scrollbar-thumb:hover {
-        background: rgba(180, 80, 50, 0.7);
-    }
-    
-    /* Alert styles */
-    .alert {
-        padding: 12px 20px;
-        margin-bottom: 20px;
-        border: 1px solid transparent;
-        border-radius: 4px;
-    }
-    
-    .alert-success {
-        color: #155724;
-        background-color: #d4edda;
-        border-color: #c3e6cb;
-    }
-    
-    .alert-danger {
-        color: #721c24;
-        background-color: #f8d7da;
-        border-color: #f5c6cb;
-    }
-    
-    .alert-warning {
-        color: #856404;
-        background-color: #fff3cd;
-        border-color: #ffeaa7;
+    .btn-unpublish {
+        background-color: #6c757d;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 5px;
     }
 </style>
 
-<div class="text-wrapper-8"><h3>Market Prices Management</h3></div>
-<p class="p">Manage everything related to Market Prices data</p>
+<div class="stats-section">
+    <div class="text-wrapper-8"><h3>Market Prices Management</h3></div>
+    <p class="p">Manage everything related to Market Prices data</p>
+
+    <div class="stats-container">
+        <div class="overlap-6">
+            <div class="stats-icon total-icon">
+                <i class="fas fa-chart-line"></i>
+            </div>
+            <div class="stats-title">Total Prices</div>
+            <div class="stats-number"><?= $total_prices ?></div>
+        </div>
+        
+        <div class="overlap-6">
+            <div class="stats-icon pending-icon">
+                <i class="fas fa-clock"></i>
+            </div>
+            <div class="stats-title">Pending</div>
+            <div class="stats-number"><?= $pending_count ?></div>
+        </div>
+        
+        <div class="overlap-7">
+            <div class="stats-icon published-icon">
+                <i class="fas fa-check-circle"></i>
+            </div>
+            <div class="stats-title">Published</div>
+            <div class="stats-number"><?= $published_count ?></div>
+        </div>
+        
+        <div class="overlap-7">
+            <div class="stats-icon wholesale-icon">
+                <i class="fas fa-balance-scale"></i>
+            </div>
+            <div class="stats-title">Wholesale</div>
+            <div class="stats-number"><?= $wholesale_count ?></div>
+        </div>
+    </div>
+</div>
 
 <?php if (isset($import_message)): ?>
     <div class="alert alert-<?= $import_status ?>">
-        <?= htmlspecialchars($import_message) ?>
+        <?= $import_message ?>
     </div>
 <?php endif; ?>
 
 <div class="container">
-    <div class="toolbar">
-        <div class="toolbar-left">
-            <a href="../data/add_marketprices.php" class="primary" style="display: inline-block; width: 302px; height: 52px; margin-right: 15px; text-align: center; line-height: 52px; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
-                <i class="fa fa-plus" style="margin-right: 6px;"></i> Add New
+    <div class="table-container">
+        <div class="btn-group">
+            <a href="../data/add_marketprices.php" class="btn btn-add-new">
+                <i class="fas fa-plus" style="margin-right: 5px;"></i>
+                Add New
             </a>
-            <button class="btn-import" onclick="openImportModal()">
-                <i class="fa fa-upload" style="margin-right: 6px;"></i> Import
+
+            <button class="btn btn-delete" onclick="deleteSelected()">
+                <i class="fas fa-trash" style="margin-right: 3px;"></i>
+                Delete
             </button>
-            <button class="delete-btn" onclick="deleteSelected()">
-                <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
-            </button>
+
             <div class="dropdown">
                 <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
+                    <i class="fas fa-download" style="margin-right: 3px;"></i>
+                    Export
                 </button>
                 <ul class="dropdown-menu" aria-labelledby="exportDropdown">
                     <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">
@@ -881,136 +895,184 @@ function calculateMoMChange($currentPrice, $commodityId, $market, $priceType, $c
                     </a></li>
                 </ul>
             </div>
+            
+            <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
+                <i class="fas fa-upload" style="margin-right: 3px;"></i>
+                Import
+            </button>
+            
+            <button class="btn-approve" onclick="approveSelected()">
+                <i class="fas fa-check-circle" style="margin-right: 5px;"></i>
+                Approve
+            </button>
+            
+            <button class="btn-publish" onclick="publishSelected()">
+                <i class="fas fa-upload" style="margin-right: 5px;"></i>
+                Publish
+            </button>
+            
+            <button class="btn-unpublish" onclick="unpublishSelected()">
+                <i class="fas fa-ban" style="margin-right: 5px;"></i>
+                Unpublish
+            </button>
         </div>
-        <div class="toolbar-right">
-            <button class="approve" onclick="approveSelected()">
-                <i class="fa fa-check-circle" style="margin-right: 6px;"></i> Approve
-            </button>
-            <button class="unpublish" onclick="unpublishSelected()">
-                <i class="fa fa-ban" style="margin-right: 6px;"></i> Unpublish
-            </button>
-            <button class="primary" onclick="publishSelected()">
-                <i class="fa fa-upload" style="margin-right: 6px;"></i> Publish
-            </button>
-        </div>
-    </div>
 
-    <?php
-    // IMPORTANT: Data grouping logic - must come BEFORE the table display
-    $grouped_data = [];
-    foreach ($prices_data as $price) {
-        $date = date('Y-m-d', strtotime($price['date_posted']));
-        $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'];
-        $grouped_data[$group_key][] = $price;
-    }
-    ?>
+        <?php
+        // IMPORTANT: Data grouping logic - must come BEFORE the table display
+        $grouped_data = [];
+        foreach ($prices_data as $price) {
+            $date = date('Y-m-d', strtotime($price['date_posted']));
+            $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'];
+            $grouped_data[$group_key][] = $price;
+        }
+        ?>
 
-    <table>
-        <thead>
-            <tr>
-                <th><input type="checkbox" id="select-all"/></th>
-                <th>Market</th>
-                <th>Commodity</th>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Price($)</th>
-                <th>Day Change(%)</th>
-                <th>Month Change(%)</th>
-                <th>Status</th>
-                <th>Source</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php
-            // Updated table row generation - replace your existing tbody loop
-            foreach ($grouped_data as $group_key => $prices_in_group):
-                $first_row = true;
-                $group_price_ids = array_column($prices_in_group, 'id');
-                $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
-
-                foreach($prices_in_group as $price):
-                    // CORRECTED: Pass the actual date_posted from the record
-                    $price_date = $price['date_posted'];
-                    $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
-                    
-                    // Choose between Month-over-Month or Week-over-Week
-                    $month_change = calculateMoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
-                    // OR use Week-over-Week instead:
-                    // $week_change = calculateWoWChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
-                    ?>
-                <tr>
-                    <?php if ($first_row): ?>
-                        <td rowspan="<?php echo count($prices_in_group); ?>">
-                            <input type="checkbox"
-                                data-group-key="<?php echo $group_key; ?>"
-                                data-price-ids="<?php echo $group_price_ids_json; ?>"
-                            />
-                        </td>
-                        <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
-                        <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
-                        <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
-                    <?php endif; ?>
-                    <td><?php echo htmlspecialchars($price['price_type']); ?></td>
-                    <td><?php echo htmlspecialchars($price['Price']); ?></td>
-                    <td><?php echo $day_change; ?></td>
-                    <td><?php echo $month_change; ?></td>
-                    <td><?php echo getStatusDisplay($price['status']); ?></td>
-                    <td><?php echo htmlspecialchars($price['data_source']); ?></td>
-                    <td>
-                        <a href="../data/edit_marketprice.php?id=<?= $price['id'] ?>">
-                            <button class="btn btn-sm btn-warning">
-                                <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
-                            </button>
-                        </a>
-                    </td>
+        <table class="table table-striped table-hover">
+            <thead>
+                <tr style="background-color: #d3d3d3 !important; color: black !important;">
+                    <th><input type="checkbox" id="selectAll"></th>
+                    <th>Market</th>
+                    <th>Commodity</th>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Price($)</th>
+                    <th>Day Change(%)</th>
+                    <th>Month Change(%)</th>
+                    <th>Status</th>
+                    <th>Source</th>
+                    <th>Actions</th>
                 </tr>
+                <tr class="filter-row" style="background-color: white !important; color: black !important;">
+                    <th></th>
+                    <th><input type="text" class="filter-input" id="filterMarket" placeholder="Filter Market"></th>
+                    <th><input type="text" class="filter-input" id="filterCommodity" placeholder="Filter Commodity"></th>
+                    <th><input type="text" class="filter-input" id="filterDate" placeholder="Filter Date"></th>
+                    <th><input type="text" class="filter-input" id="filterType" placeholder="Filter Type"></th>
+                    <th><input type="text" class="filter-input" id="filterPrice" placeholder="Filter Price"></th>
+                    <th></th>
+                    <th></th>
+                    <th><input type="text" class="filter-input" id="filterStatus" placeholder="Filter Status"></th>
+                    <th><input type="text" class="filter-input" id="filterSource" placeholder="Filter Source"></th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="pricesTable">
                 <?php
-                $first_row = false;
+                // Updated table row generation - replace your existing tbody loop
+                foreach ($grouped_data as $group_key => $prices_in_group):
+                    $first_row = true;
+                    $group_price_ids = array_column($prices_in_group, 'id');
+                    $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
+
+                    foreach($prices_in_group as $price):
+                        // CORRECTED: Pass the actual date_posted from the record
+                        $price_date = $price['date_posted'];
+                        $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
+                        
+                        // Choose between Month-over-Month or Week-over-Week
+                        $month_change = calculateMoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
+                        ?>
+                    <tr>
+                        <?php if ($first_row): ?>
+                            <td rowspan="<?php echo count($prices_in_group); ?>">
+                                <input type="checkbox" class="row-checkbox" 
+                                    data-group-key="<?php echo $group_key; ?>"
+                                    data-price-ids="<?php echo $group_price_ids_json; ?>"
+                                />
+                            </td>
+                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
+                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
+                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
+                        <?php endif; ?>
+                        <td><?php echo htmlspecialchars($price['price_type']); ?></td>
+                        <td><?php echo htmlspecialchars($price['Price']); ?></td>
+                        <td><?php echo $day_change; ?></td>
+                        <td><?php echo $month_change; ?></td>
+                        <td><?php echo getStatusDisplay($price['status']); ?></td>
+                        <td><?php echo htmlspecialchars($price['data_source']); ?></td>
+                        <td>
+                            <a href="../data/edit_marketprice.php?id=<?= $price['id'] ?>">
+                                <button class="btn btn-sm btn-warning">
+                                    <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
+                                </button>
+                            </a>
+                        </td>
+                    </tr>
+                    <?php
+                    $first_row = false;
+                    endforeach;
                 endforeach;
-            endforeach;
-            ?>
-        </tbody>
-    </table>
-    
-    <div class="pagination">
-        <div>
-            Show
-            <select>
-                <option>10</option>
-                <option>25</option>
-                <option>50</option>
-            </select>
-            entries
-        </div>
-        <div>Displaying <?php echo ($offset + 1) . ' to ' . min($offset + $limit, $total_records) . ' of ' . $total_records; ?> items</div>
-        <div class="pages">
-            <?php if ($page > 1): ?>
-                <a href="?page=<?php echo $page - 1; ?>" class="page">‹</a>
-            <?php endif; ?>
+                ?>
+            </tbody>
+        </table>
 
-            <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                <a href="?page=<?php echo $i; ?>" class="page <?php echo ($page == $i) ? 'current' : ''; ?>"><?php echo $i; ?></a>
-            <?php endfor; ?>
-
-            <?php if ($page < $total_pages): ?>
-                <a href="?page=<?php echo $page + 1; ?>" class="page">›</a>
-            <?php endif; ?>
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                Displaying <?= $offset + 1 ?> to <?= min($offset + $limit, $total_records) ?> of <?= $total_records ?> items
+            </div>
+            <div>
+                <label for="itemsPerPage">Show:</label>
+                <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
+                    <option value="10" <?= $limit == 10 ? 'selected' : '' ?>>10</option>
+                    <option value="20" <?= $limit == 20 ? 'selected' : '' ?>>20</option>
+                    <option value="50" <?= $limit == 50 ? 'selected' : '' ?>>50</option>
+                    <option value="100" <?= $limit == 100 ? 'selected' : '' ?>>100</option>
+                </select>
+            </div>
+            <nav>
+                <ul class="pagination mb-0">
+                    <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
+                        <a class="page-link" href="<?= $page <= 1 ? '#' : '?page=' . ($page - 1) . '&limit=' . $limit ?>">Prev</a>
+                    </li>
+                    <?php 
+                    // Calculate pagination range
+                    $start_page = max(1, $page - 2);
+                    $end_page = min($total_pages, $page + 2);
+                    
+                    // Show first page if not in range
+                    if ($start_page > 1) {
+                        echo '<li class="page-item"><a class="page-link" href="?page=1&limit=' . $limit . '">1</a></li>';
+                        if ($start_page > 2) {
+                            echo '<li class="page-item disabled"><span class="page-link">...</span></li>';
+                        }
+                    }
+                    
+                    for ($i = $start_page; $i <= $end_page; $i++): 
+                    ?>
+                        <li class="page-item <?= $page == $i ? 'active' : '' ?>">
+                            <a class="page-link" href="?page=<?= $i ?>&limit=<?= $limit ?>"><?= $i ?></a>
+                        </li>
+                    <?php 
+                    endfor; 
+                    
+                    // Show last page if not in range
+                    if ($end_page < $total_pages) {
+                        if ($end_page < $total_pages - 1) {
+                            echo '<li class="page-item disabled"><span class="page-link">...</span></li>';
+                        }
+                        echo '<li class="page-item"><a class="page-link" href="?page=' . $total_pages . '&limit=' . $limit . '">' . $total_pages . '</a></li>';
+                    }
+                    ?>
+                    <li class="page-item <?= $page >= $total_pages ? 'disabled' : '' ?>">
+                        <a class="page-link" href="<?= $page >= $total_pages ? '#' : '?page=' . ($page + 1) . '&limit=' . $limit ?>">Next</a>
+                    </li>
+                </ul>
+            </nav>
         </div>
     </div>
 </div>
 
 <!-- Import Modal -->
-<div class="modal" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="importModalLabel">Import Market Prices</h5>
-                <button type="button" class="close-modal" onclick="closeImportModal()" aria-label="Close">&times;</button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <div class="import-instructions">
-                    <h5>CSV Import Instructions</h5>
+                    <h5>CSV Format Instructions</h5>
                     <p>Your CSV file should have the following columns in order:</p>
                     <ol>
                         <li><strong>Market</strong> (required) - Market name (must exist in markets table)</li>
@@ -1068,7 +1130,7 @@ Kangemi Market,40,Retail,1.52,2025-06-03,published,Yellow</pre>
                 </form>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="submit" form="importForm" name="import_csv" class="btn btn-primary">
                     <i class="fas fa-upload"></i> Import
                 </button>
@@ -1078,6 +1140,85 @@ Kangemi Market,40,Retail,1.52,2025-06-03,published,Yellow</pre>
 </div>
 
 <script>
+document.addEventListener("DOMContentLoaded", function() {
+    // Initialize filter functionality
+    const filterInputs = document.querySelectorAll('.filter-input');
+    filterInputs.forEach(input => {
+        input.addEventListener('keyup', applyFilters);
+    });
+
+    // Initialize select all checkbox
+    document.getElementById('selectAll').addEventListener('change', function() {
+        document.querySelectorAll('.row-checkbox').forEach(checkbox => {
+            checkbox.checked = this.checked;
+        });
+    });
+
+    // Update breadcrumb
+    if (typeof updateBreadcrumb === 'function') {
+        updateBreadcrumb('Base', 'Market Prices');
+    }
+    
+    // Show import modal if there was an error
+    <?php if (isset($import_message) && $import_status === 'danger'): ?>
+        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
+        importModal.show();
+    <?php endif; ?>
+});
+
+function applyFilters() {
+    const filters = {
+        market: document.getElementById('filterMarket').value.toLowerCase(),
+        commodity: document.getElementById('filterCommodity').value.toLowerCase(),
+        date: document.getElementById('filterDate').value.toLowerCase(),
+        type: document.getElementById('filterType').value.toLowerCase(),
+        price: document.getElementById('filterPrice').value.toLowerCase(),
+        status: document.getElementById('filterStatus').value.toLowerCase(),
+        source: document.getElementById('filterSource').value.toLowerCase()
+    };
+
+    const rows = document.querySelectorAll('#pricesTable tr');
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        const matches = 
+            cells[0].textContent.toLowerCase().includes(filters.market) &&
+            cells[1].textContent.toLowerCase().includes(filters.commodity) &&
+            cells[2].textContent.toLowerCase().includes(filters.date) &&
+            cells[3].textContent.toLowerCase().includes(filters.type) &&
+            cells[4].textContent.toLowerCase().includes(filters.price) &&
+            cells[7].textContent.toLowerCase().includes(filters.status) &&
+            cells[8].textContent.toLowerCase().includes(filters.source);
+        
+        row.style.display = matches ? '' : 'none';
+    });
+}
+
+function updateItemsPerPage(value) {
+    const url = new URL(window.location);
+    url.searchParams.set('limit', value);
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
+}
+
+/**
+ * Get all selected price IDs
+ */
+function getSelectedPriceIds() {
+    const selectedIds = [];
+    const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+    
+    checkboxes.forEach(checkbox => {
+        try {
+            const priceIds = JSON.parse(checkbox.getAttribute('data-price-ids'));
+            selectedIds.push(...priceIds);
+        } catch (e) {
+            console.error('Error parsing price IDs:', e);
+        }
+    });
+    
+    return selectedIds;
+}
+
 /**
  * Export selected items to Excel or PDF
  */
@@ -1139,54 +1280,6 @@ function confirmAction(action, ids) {
             console.error('Fetch error during ' + action + ':', error);
             alert('An error occurred while ' + action + ' items: ' + error.message);
         });
-    }
-}
-
-/**
- * Get all selected price IDs
- */
-function getSelectedPriceIds() {
-    const selectedIds = [];
-    const checkboxes = document.querySelectorAll('table tbody input[type="checkbox"]:checked');
-    
-    checkboxes.forEach(checkbox => {
-        try {
-            const priceIds = JSON.parse(checkbox.getAttribute('data-price-ids'));
-            selectedIds.push(...priceIds);
-        } catch (e) {
-            console.error('Error parsing price IDs:', e);
-        }
-    });
-    
-    return selectedIds;
-}
-
-// Modal management functions
-function openImportModal() {
-    const modal = document.getElementById('importModal');
-    if (modal) {
-        modal.style.display = 'block';
-        modal.classList.add('show');
-        // Create backdrop
-        const backdrop = document.createElement('div');
-        backdrop.className = 'modal-backdrop fade show';
-        backdrop.style.zIndex = '1040';
-        document.body.appendChild(backdrop);
-        document.body.style.overflow = 'hidden';
-    }
-}
-
-function closeImportModal() {
-    const modal = document.getElementById('importModal');
-    if (modal) {
-        modal.style.display = 'none';
-        modal.classList.remove('show');
-        // Remove backdrop
-        const backdrop = document.querySelector('.modal-backdrop');
-        if (backdrop) {
-            document.body.removeChild(backdrop);
-        }
-        document.body.style.overflow = '';
     }
 }
 
@@ -1258,60 +1351,6 @@ function deleteSelected() {
     const ids = getSelectedPriceIds();
     confirmAction('delete', ids);
 }
-
-/**
- * Initializes all event listeners for the market prices table.
- */
-function initializeMarketPrices() {
-    console.log("Initializing Market Prices functionality...");
-
-    // Initialize select all checkbox
-    const selectAllCheckbox = document.getElementById('select-all');
-    const groupCheckboxes = document.querySelectorAll('table tbody input[type="checkbox"][data-group-key]');
-
-    if (selectAllCheckbox && groupCheckboxes.length > 0) {
-        selectAllCheckbox.addEventListener('change', function() {
-            groupCheckboxes.forEach(checkbox => {
-                checkbox.checked = this.checked;
-            });
-        });
-
-        // Update select all when individual checkboxes change
-        groupCheckboxes.forEach(checkbox => {
-            checkbox.addEventListener('change', function() {
-                const allChecked = Array.from(groupCheckboxes).every(cb => cb.checked);
-                selectAllCheckbox.checked = allChecked;
-            });
-        });
-    }
-
-    // Close modal when clicking outside
-    const modal = document.getElementById('importModal');
-    if (modal) {
-        modal.addEventListener('click', function(event) {
-            if (event.target === modal) {
-                closeImportModal();
-            }
-        });
-    }
-}
-
-// Initialize when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
-    initializeMarketPrices();
-    
-    // Update breadcrumb if the function exists
-    if (typeof updateBreadcrumb === 'function') {
-        updateBreadcrumb('Base', 'Market Prices');
-    }
-});
-
-// Keyboard support for closing modal
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        closeImportModal();
-    }
-});
 </script>
 
 <?php include '../admin/includes/footer.php'; ?>
