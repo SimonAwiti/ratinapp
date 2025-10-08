@@ -342,7 +342,8 @@ if ($total_commodities_result) {
     $total_commodities = $row['total'];
 }
 
-$cereals_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Cereals')";
+// FIXED: Use LIKE queries to count categories that start with specific patterns
+$cereals_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id IN (SELECT id FROM commodity_categories WHERE name LIKE 'Cereal%')";
 $cereals_result = $con->query($cereals_query);
 $cereals_count = 0;
 if ($cereals_result) {
@@ -350,7 +351,7 @@ if ($cereals_result) {
     $cereals_count = $row['total'];
 }
 
-$pulses_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Pulses')";
+$pulses_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id IN (SELECT id FROM commodity_categories WHERE name LIKE 'Pulse%')";
 $pulses_result = $con->query($pulses_query);
 $pulses_count = 0;
 if ($pulses_result) {
@@ -358,7 +359,7 @@ if ($pulses_result) {
     $pulses_count = $row['total'];
 }
 
-$oil_seeds_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id = (SELECT id FROM commodity_categories WHERE name = 'Oil seeds')";
+$oil_seeds_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id IN (SELECT id FROM commodity_categories WHERE name LIKE 'Oil%')";
 $oil_seeds_result = $con->query($oil_seeds_query);
 $oil_seeds_count = 0;
 if ($oil_seeds_result) {
@@ -681,7 +682,12 @@ if ($oil_seeds_result) {
                             <?php endif; ?>
                         </td>
                         <td>
-                            <!-- Existing actions here -->
+                            <!-- FIXED: Added action buttons to match the column header -->
+                            <div class="btn-group" role="group">
+                                <a href="edit_commodity.php?id=<?= $commodity['id'] ?>" class="btn btn-sm btn-primary">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                            </div>
                         </td>
                     </tr>
                 <?php endforeach; ?>
@@ -813,6 +819,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
 function applyFilters() {
     const filters = {
+        id: document.getElementById('filterId').value.toLowerCase(),
         hsCode: document.getElementById('filterHsCode').value.toLowerCase(),
         category: document.getElementById('filterCategory').value.toLowerCase(),
         commodity: document.getElementById('filterCommodity').value.toLowerCase(),
@@ -822,11 +829,13 @@ function applyFilters() {
     const rows = document.querySelectorAll('#commodityTable tr');
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
+        // FIXED: Corrected cell index mapping to match table structure
         const matches = 
-            cells[1].textContent.toLowerCase().includes(filters.hsCode) &&
-            cells[2].textContent.toLowerCase().includes(filters.category) &&
-            cells[3].textContent.toLowerCase().includes(filters.commodity) &&
-            cells[4].textContent.toLowerCase().includes(filters.variety);
+            cells[1].textContent.toLowerCase().includes(filters.id) &&
+            cells[2].textContent.toLowerCase().includes(filters.hsCode) &&
+            cells[3].textContent.toLowerCase().includes(filters.category) &&
+            cells[4].textContent.toLowerCase().includes(filters.commodity) &&
+            cells[5].textContent.toLowerCase().includes(filters.variety);
         
         row.style.display = matches ? '' : 'none';
     });
@@ -883,7 +892,33 @@ function deleteSelected() {
     }
 }
 
-
+function deleteSingleCommodity(id) {
+    if (confirm('Are you sure you want to delete this commodity?')) {
+        fetch('delete_commodity.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ids: [id] })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error('Network error');
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            alert('Request failed: ' + error.message);
+        });
+    }
+}
 
 function exportSelected(format) {
     const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
