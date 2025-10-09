@@ -556,6 +556,38 @@ if ($oil_seeds_result) {
     .download-template:hover {
         text-decoration: underline;
     }
+/* Compact table rows */
+.table {
+    font-size: 0.875rem;
+}
+
+.table thead th {
+    padding: 0.5rem;
+    vertical-align: middle;
+    line-height: 1.2;
+}
+
+.table tbody td {
+    padding: 0.4rem 0.5rem;
+    vertical-align: middle;
+    line-height: 1.3;
+}
+
+.filter-row input.filter-input {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    height: 28px;
+}
+
+.image-preview {
+    width: 30px;
+    height: 30px;
+}
+
+.btn-sm {
+    padding: 0.2rem 0.4rem;
+    font-size: 0.8rem;
+}
 </style>
 
 <div class="stats-section">
@@ -705,6 +737,7 @@ if ($oil_seeds_result) {
                     <option value="10" <?= $itemsPerPage == 10 ? 'selected' : '' ?>>10</option>
                     <option value="20" <?= $itemsPerPage == 20 ? 'selected' : '' ?>>20</option>
                     <option value="50" <?= $itemsPerPage == 50 ? 'selected' : '' ?>>50</option>
+                    <option value="100" <?= $itemsPerPage == 100 ? 'selected' : '' ?>>100</option>
                 </select>
             </div>
             <nav>
