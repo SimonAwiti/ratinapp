@@ -444,7 +444,6 @@ mysqli_close($con); // Close DB connection for step 1
                                         <option value="">Select unit</option>
                                         <option value="Kg" <?= ($session_unit[$i] ?? '') == 'Kg' ? 'selected' : '' ?>>Kg</option>
                                         <option value="Tons" <?= ($session_unit[$i] ?? '') == 'Tons' ? 'selected' : '' ?>>Tons</option>
-                                        <option value="Other" <?= ($session_unit[$i] ?? '') == 'Other' ? 'selected' : '' ?>>Other</option>
                                     </select>
                                 </div>
                                 <button type="button" class="remove-btn" onclick="removePackagingUnit(this)">×</button>
@@ -462,7 +461,6 @@ mysqli_close($con); // Close DB connection for step 1
                                     <option value="">Select unit</option>
                                     <option value="Kg">Kg</option>
                                     <option value="Tons">Tons</option>
-                                    <option value="Other">Other</option>
                                 </select>
                             </div>
                             <button type="button" class="remove-btn" onclick="removePackagingUnit(this)">×</button>
