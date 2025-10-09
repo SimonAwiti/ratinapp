@@ -8,15 +8,40 @@ if (session_status() == PHP_SESSION_NONE) {
 
 // Check if user is logged in and has admin privileges
 if (!isset($_SESSION['admin_logged_in'])) {
-    // This header.php is included by files in 'base/', so '../admin/index.php' is correct
     header("Location: ../admin/index.php");
     exit;
 }
 
 // Determine the current page for active sidebar link highlighting
-// This assumes your boilerplate files are in the 'base' folder
 $currentPage = basename($_SERVER['PHP_SELF']);
 
+// Auto-detect the base path based on current directory
+$currentDir = dirname($_SERVER['SCRIPT_FILENAME']);
+$dirName = basename($currentDir);
+
+// Set relative paths based on directory
+if ($dirName === 'base') {
+    $basePath = '';
+    $dataPath = '../data/';
+    $adminPath = '../admin/';
+    $imgPath = 'img/';
+} elseif ($dirName === 'data') {
+    $basePath = '../base/';
+    $dataPath = '';
+    $adminPath = '../admin/';
+    $imgPath = '../base/img/';
+} elseif ($dirName === 'admin') {
+    $basePath = '../base/';
+    $dataPath = '../data/';
+    $adminPath = '';
+    $imgPath = '../base/img/';
+} else {
+    // Default fallback
+    $basePath = '../base/';
+    $dataPath = '../data/';
+    $adminPath = '../admin/';
+    $imgPath = '../base/img/';
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -29,8 +54,10 @@ $currentPage = basename($_SERVER['PHP_SELF']);
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <style>
         body {
-            font-family: Arial, sans-serif;
-            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
         }
 
         .wrapper {
@@ -40,233 +67,385 @@ $currentPage = basename($_SERVER['PHP_SELF']);
 
         /* Sidebar Styles */
         .sidebar {
-            width: 250px;
+            width: 240px;
             background-color: #ffffff;
-            border-right: 0px solid #ddd;
-            padding: 15px;
-            box-shadow: 2px 0 5px rgba(0,0,0,0.05); /* Added subtle shadow */
-            position: relative; /* For the logo positioning */
-            z-index: 1000; /* Ensure it stays above other content */
-            overflow-y: auto; /* Enable scrolling for long sidebars */
+            border-right: 1px solid #e5e7eb;
+            padding: 0;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.04);
+            position: fixed;
+            left: 0;
+            top: 0;
+            height: 100vh;
+            z-index: 1000;
+            overflow-y: auto;
+            overflow-x: hidden;
         }
 
-        .sidebar .logo {
-            text-align: center;
-            margin-bottom: 20px;
+        .sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 3px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+
+        /* Logo Section */
+        .sidebar .logo-section {
+            padding: 24px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         .sidebar .ratin-logo {
-            max-width: 150px; /* Adjust as needed */
+            max-width: 40px;
             height: auto;
         }
 
-        .sidebar h6 {
-            color: #6c757d;
-            font-weight: bold;
-            margin-top: 20px;
-            padding-left: 10px;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-            font-size: 0.85em;
-        }
-
-        .sidebar .nav-link {
-            color: #333;
-            padding: 12px 10px; /* Increased padding for better click area */
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-radius: 5px;
-            transition: all 0.2s ease-in-out; /* Smooth transition for hover */
-            font-size: 1.0em;
-        }
-
-        .sidebar .nav-link i {
-            margin-right: 10px; /* Space for icons */
-            width: 20px; /* Fixed width for icons to align text */
-            text-align: center;
-        }
-         .sidebar .nav-link i.fa-chevron-down {
-            margin-right: 0; /* No margin for chevron */
-            width: auto;
-            transition: transform 0.3s ease; /* Smooth rotation */
-        }
-
-        .sidebar .nav-link.collapsed .fa-chevron-down {
-            transform: rotate(0deg);
-        }
-
-        .sidebar .nav-link:not(.collapsed) .fa-chevron-down {
-            transform: rotate(180deg);
-        }
-
-        .sidebar .nav-link:hover, .sidebar .nav-link.active {
-            background-color: #f5d6c6;
+        .sidebar .logo-text {
+            font-size: 18px;
+            font-weight: 700;
             color: #8B4513;
         }
 
+        /* Section Headers */
+        .sidebar .section-header {
+            color: #6b7280;
+            font-weight: 600;
+            margin: 24px 0 8px 0;
+            padding: 0 20px;
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* Navigation Links */
+        .sidebar .nav-link {
+            color: #374151;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-radius: 0;
+            transition: all 0.15s ease;
+            font-size: 14px;
+            font-weight: 400;
+            text-decoration: none;
+            border-left: 3px solid transparent;
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .sidebar .nav-link i {
+            width: 20px;
+            text-align: center;
+            font-size: 16px;
+            color: #6b7280;
+        }
+
+        .sidebar .nav-link:hover {
+            background-color: #fef3e7;
+            border-left-color: #f59e0b;
+            color: #8B4513;
+        }
+
+        .sidebar .nav-link:hover i {
+            color: #8B4513;
+        }
+
+        .sidebar .nav-link.active {
+            background-color: #fef3e7;
+            border-left-color: #8B4513;
+            color: #8B4513;
+            font-weight: 500;
+        }
+
+        .sidebar .nav-link.active i {
+            color: #8B4513;
+        }
+
+        /* Submenu Styles */
         .sidebar .submenu {
-            padding-left: 10px;
-            /* Bootstrap handles display:none/block for collapse, but ensure no conflicting styles */
+            padding-left: 0;
+            background-color: #fafafa;
+        }
+
+        .sidebar .submenu .nav-link {
+            padding-left: 52px;
+            font-size: 13px;
+        }
+
+        .sidebar .submenu .submenu .nav-link {
+            padding-left: 72px;
+            font-size: 13px;
+        }
+
+        /* Collapse Toggle */
+        .sidebar .nav-link[data-bs-toggle="collapse"] {
+            position: relative;
+            cursor: pointer;
+        }
+
+        .sidebar .nav-link[data-bs-toggle="collapse"]::after {
+            content: '\f078';
+            font-family: 'Font Awesome 6 Free';
+            font-weight: 900;
+            position: absolute;
+            right: 20px;
+            transition: transform 0.2s ease;
+            font-size: 12px;
+            color: #9ca3af;
+        }
+
+        .sidebar .nav-link[data-bs-toggle="collapse"]:not(.collapsed)::after {
+            transform: rotate(180deg);
+        }
+
+        /* Badge Styles */
+        .badge-new {
+            background-color: #10b981;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            margin-left: auto;
+        }
+
+        .badge-updated {
+            background-color: #3b82f6;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            margin-left: auto;
+        }
+
+        /* Main Content Area */
+        .main-content {
+            margin-left: 240px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            width: calc(100% - 240px);
         }
 
         /* Header */
         .header-container {
-            flex-grow: 1;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 20px 20px;
+            padding: 16px 32px;
             background-color: #fff;
-            border-bottom: 1px solid #eee; /* Light border at the bottom */
-            box-shadow: 0 2px 5px rgba(0,0,0,0.03); /* Subtle shadow */
-            z-index: 999; /* Below sidebar */
+            border-bottom: 1px solid #e5e7eb;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
             position: sticky;
             top: 0;
+            z-index: 999;
         }
 
         .breadcrumb {
             margin: 0;
-            font-size: 17px;
-            color: #6c757d;
+            font-size: 14px;
+            color: #6b7280;
+            background: transparent;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
 
         .breadcrumb a {
             text-decoration: none;
+            color: #6b7280;
+            transition: color 0.15s;
+        }
+
+        .breadcrumb a:hover {
             color: #8B4513;
-            font-weight: bold;
         }
 
         .breadcrumb-item.active {
-            color: #8B4513;
-            font-weight: bold;
+            color: #374151;
+            font-weight: 500;
         }
 
-        /* Change breadcrumb separator to '>' */
         .breadcrumb-item + .breadcrumb-item::before {
-            content: " > ";
-            color: #6c757d;
+            content: "›";
+            color: #d1d5db;
+            font-size: 18px;
         }
 
-        /* Page Title */
-        .content-container {
-            padding: 20px;
-            flex-grow: 1; /* Allow content to fill remaining space */
-            overflow-y: auto; /* Enable scrolling for content area */
-        }
-
+        /* User Display */
         .user-display {
             display: flex;
             align-items: center;
-            gap: 8px; /* Space between icon and username */
-            font-weight: bold;
-            color: #8B4513;
-        }
-        .user-display i {
-            font-size: 1.2em; /* Adjust icon size as needed */
-            color: #6c757d;
-        }
-        .no-gap-icon {
-            margin-right: 0 !important;
-            width: auto !important;
+            gap: 10px;
+            padding: 8px 16px;
+            background-color: #f9fafb;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #374151;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
 
+        .user-display i {
+            font-size: 18px;
+            color: #8B4513;
+        }
+
+        /* Content Container */
+        .content-container {
+            padding: 32px;
+            flex-grow: 1;
+            overflow-y: auto;
+            background-color: #f5f5f5;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+
+            .sidebar.show {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0;
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
 
 <div class="wrapper">
+    <!-- Sidebar -->
     <div class="sidebar">
-        <div class="logo">
-            <img class="ratin-logo" src="../base/img/Ratin-logo-1.png" alt="RATIN Logo">
-        </div><br>
-        <h6>Management</h6>
+        <!-- Logo Section -->
+        <div class="logo-section">
+            <img class="ratin-logo" src="<?= $imgPath ?>Ratin-logo-1.png" alt="RATIN">
+            <span class="logo-text">RATIN Analytics</span>
+        </div>
 
-        <h6 style="display:flex; align-items:center; text-transform:none;">
-            <a href="../base/landing_page.php" 
-            style="text-decoration:none; color:inherit; display:flex; align-items:center; font-family: Arial, sans-serif; font-size: 2.0.0em;">
-                <i class="fa fa-home" style="color:#8B4513; margin-right:18px; font-size: 1.0em;"></i>
-                Homepage
-            </a>
-        </h6>
-
-        <a href="#baseSubmenu" class="nav-link collapsed" data-bs-toggle="collapse" aria-expanded="false" aria-controls="baseSubmenu">
-            <span><i class="fa fa-table"></i> Base</span>
-            <i class="fa fa-chevron-down"></i>
+        <!-- BASE MANAGEMENT Section -->
+        <div class="section-header">BASE MANAGEMENT</div>
+        
+        <a href="<?= $basePath ?>commodities_boilerplate.php" class="nav-link <?= ($currentPage == 'commodities_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fas fa-wheat-awn"></i>
+            <span>Commodities</span>
         </a>
-        <div class="collapse submenu" id="baseSubmenu">
-            <a href="../base/commodities_boilerplate.php" class="nav-link <?= ($currentPage == 'commodities_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-box-open" style="color:#8B4513;"></i> Commodities
+
+        <a href="<?= $basePath ?>tradepoints_boilerplate.php" class="nav-link <?= ($currentPage == 'tradepoints_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-map-marker-alt"></i>
+            <span>Trade Points</span>
+        </a>
+
+        <a href="<?= $basePath ?>enumerator_boilerplate.php" class="nav-link <?= ($currentPage == 'enumerator_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-users"></i>
+            <span>Enumerators</span>
+        </a>
+
+        <a href="<?= $dataPath ?>currencies_boilerplate.php" class="nav-link <?= ($currentPage == 'currencies_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-credit-card"></i>
+            <span>Currency Rates</span>
+        </a>
+
+        <!-- DATA MANAGEMENT Section -->
+        <div class="section-header">DATA MANAGEMENT</div>
+
+        <a href="#marketPricesSubmenu" class="nav-link collapsed" data-bs-toggle="collapse" aria-expanded="false">
+            <i class="fa fa-store"></i>
+            <span>Market Prices</span>
+        </a>
+        <div class="collapse submenu" id="marketPricesSubmenu">
+            <a href="<?= $dataPath ?>marketprices_boilerplate.php" class="nav-link <?= ($currentPage == 'marketprices_boilerplate.php') ? 'active' : '' ?>">
+                <i class="fa fa-list"></i>
+                <span>Prices</span>
             </a>
-            <a href="../base/tradepoints_boilerplate.php" class="nav-link <?= ($currentPage == 'tradepoints_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-map-marker-alt" style="color:#8B4513;"></i> Trade Points
-            </a>
-            <a href="../base/enumerator_boilerplate.php" class="nav-link <?= ($currentPage == 'enumerator_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-users" style="color:#8B4513;"></i> Enumerators
-            </a>
-            <a href="../data/currencies_boilerplate.php" class="nav-link <?= ($currentPage == 'currencies_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-money-bill-wave"></i> Currency Rates
-            </a>
-            <a href="../base/commodity_sources_boilerplate.php" class="nav-link <?= ($currentPage == 'commodity_sources_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-database" style="color:#8B4513;"></i> Geographic Units
+            <a href="<?= $dataPath ?>datasource_boilerplate.php" class="nav-link <?= ($currentPage == 'datasource_boilerplate.php') ? 'active' : '' ?>">
+                <i class="fa fa-database"></i>
+                <span>Data Sources</span>
             </a>
         </div>
 
-        <a href="#dataSubmenu" class="nav-link collapsed" data-bs-toggle="collapse" aria-expanded="false" aria-controls="dataSubmenu">
-            <span><i class="fa fa-chart-line"></i> Data</span>
-            <i class="fa fa-chevron-down"></i>
+        <a href="<?= $dataPath ?>xbtvol_boilerplate.php" class="nav-link <?= ($currentPage == 'xbtvol_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-exchange-alt"></i>
+            <span>XBT Volumes</span>
+            <span class="badge-new">NEW</span>
         </a>
-        <div class="collapse submenu" id="dataSubmenu">
-            <a href="#marketPricesSubmenu" class="nav-link collapsed" data-bs-toggle="collapse" aria-expanded="false" aria-controls="marketPricesSubmenu">
-                <span><i class="fa fa-store-alt"></i> Market Prices</span>
-                <i class="fa fa-chevron-down"></i>
-            </a>
-            <div class="collapse submenu" id="marketPricesSubmenu">
-                <a href="../data/marketprices_boilerplate.php" class="nav-link <?= ($currentPage == 'marketprices_boilerplate.php') ? 'active' : '' ?>">
-                    <i class="fa fa-list"></i> Prices
-                </a>
-                <a href="../data/datasource_boilerplate.php" class="nav-link <?= ($currentPage == 'datasource_boilerplate.php') ? 'active' : '' ?>">
-                    <i class="fa fa-database"></i> Data Sources
-                </a>
-            </div>
-            <a href="../data/xbtvol_boilerplate.php" class="nav-link <?= ($currentPage == 'xbtvol_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-exchange-alt"></i> XBT Volumes
-            </a>
-            <a href="../data/miller_price_boilerplate.php" class="nav-link <?= ($currentPage == 'miller_price_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-industry"></i> Miller Prices
-            </a>
-            <a href="../data/countries_boilerplate.php" class="nav-link <?= ($currentPage == 'countries_boilerplate.php') ? 'active' : '' ?>">
-                <i class="fa fa-globe-africa"></i> Countries
-            </a>
-        </div>
 
-        <a href="#webSubmenu" class="nav-link collapsed" data-bs-toggle="collapse" aria-expanded="false" aria-controls="webSubmenu">
-            <span><i class="fa fa-globe"></i> Web</span>
-            <i class="fa fa-chevron-down"></i>
+        <a href="<?= $dataPath ?>miller_price_boilerplate.php" class="nav-link <?= ($currentPage == 'miller_price_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-chart-bar"></i>
+            <span>Miller Prices</span>
         </a>
-        <div class="collapse submenu" id="webSubmenu">
-            <a href="https://beta.ratin.net/frontend/" class="nav-link"><i class="fa fa-link"></i> Website</a>
-            <a href="../frontend/marketprices.php" class="nav-link"><i class="fa fa-link"></i> Data display</a>
-            <a href="../news-system/index.php" class="nav-link"><i class="fa fa-link"></i> Website manager</a>
-        </div>
 
-        <a href="#userSubmenu" class="nav-link collapsed" data-bs-toggle="collapse" aria-expanded="false" aria-controls="userSubmenu">
-            <span><i class="fa fa-user-gear"></i> User</span>
-            <i class="fa fa-chevron-down"></i>
+        <a href="<?= $dataPath ?>countries_boilerplate.php" class="nav-link <?= ($currentPage == 'countries_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-globe-africa"></i>
+            <span>Countries</span>
         </a>
-        <div class="collapse submenu" id="userSubmenu">
-            <a href="#" class="nav-link"><i class="fa fa-user"></i> Profile</a>
-            <a href="../admin/create_admin.php" class="nav-link <?= ($currentPage == 'create_admin.php') ? 'active' : '' ?>"><i class="fa fa-user-plus"></i> Create Admin</a>
-            <a href="../admin/logout.php" class="nav-link"><i class="fa fa-sign-out-alt"></i> Logout</a>
-        </div>
+
+        <!-- WEB Section -->
+        <div class="section-header">WEB</div>
+
+        <a href="https://beta.ratin.net/frontend/" class="nav-link" target="_blank">
+            <i class="fa fa-monitor"></i>
+            <span>WebSite</span>
+        </a>
+
+        <a href="../frontend/marketprices.php" class="nav-link">
+            <i class="fa fa-chart-line"></i>
+            <span>Data display</span>
+        </a>
+
+        <a href="../news-system/index.php" class="nav-link">
+            <i class="fa fa-newspaper"></i>
+            <span>Website manager</span>
+        </a>
+
+        <!-- ADMIN Section -->
+        <div class="section-header">ADMIN</div>
+
+        <a href="<?= $adminPath ?>profile.php" class="nav-link <?= ($currentPage == 'profile.php') ? 'active' : '' ?>">
+            <i class="fa fa-user"></i>
+            <span>Profile</span>
+        </a>
+
+        <a href="<?= $adminPath ?>settings.php" class="nav-link <?= ($currentPage == 'settings.php') ? 'active' : '' ?>">
+            <i class="fa fa-cog"></i>
+            <span>Settings</span>
+        </a>
+
+        <a href="<?= $adminPath ?>logout.php" class="nav-link">
+            <i class="fa fa-sign-out-alt"></i>
+            <span>Logout</span>
+        </a>
     </div>
 
-    <div class="flex-grow-1">
+    <!-- Main Content Area -->
+    <div class="main-content">
+        <!-- Header -->
         <div class="header-container">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb" id="breadcrumb">
                     <li class="breadcrumb-item">
-                        <a href="landing_page.php">
+                        <a href="<?= $basePath ?>landing_page.php">
                             <i class="fa fa-home"></i>
                         </a>
                     </li>
@@ -276,9 +455,12 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             </nav>
             <?php if (isset($_SESSION['admin_username'])): ?>
                 <div class="user-display">
-                    <i class="fa fa-user-circle"></i> <span><?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
+                    <i class="fa fa-user-circle"></i>
+                    <span><?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
                 </div>
             <?php endif; ?>
         </div>
 
+        <!-- Content Container -->
         <div class="content-container" id="mainContent">
+            <!-- Page content will be inserted here by individual pages -->
