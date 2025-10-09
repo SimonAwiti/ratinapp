@@ -508,7 +508,6 @@ mysqli_close($con); // Close DB connection for step 1
                         <option value="">Select unit</option>
                         <option value="Kg">Kg</option>
                         <option value="Tons">Tons</option>
-                        <option value="Other">Other</option>
                     </select>
                 </div>
                 <button type="button" class="remove-btn" onclick="removePackagingUnit(this)">×</button>
