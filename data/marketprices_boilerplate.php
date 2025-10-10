@@ -435,6 +435,8 @@ function getPricesData($con, $limit = 10, $offset = 0) {
                 p.market,
                 p.commodity,
                 c.commodity_name,
+                c.variety,
+                CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
                 p.price_type,
                 p.Price,
                 p.date_posted,
@@ -476,8 +478,8 @@ function getTotalPriceRecords($con){
 // Get total number of records
 $total_records = getTotalPriceRecords($con);
 
-// Set pagination parameters
-$limit = 10;
+// Set pagination parameters - FIXED: Get limit from URL parameter
+$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 10;
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
 
@@ -622,6 +624,7 @@ if ($wholesale_result) {
         padding: 10px 20px;
         font-size: 16px;
         border: none;
+        border-radius: 5px;
     }
     .btn-add-new:hover {
         background-color: darkred;
@@ -631,6 +634,7 @@ if ($wholesale_result) {
         color: black;
         border: 1px solid #ddd;
         padding: 8px 16px;
+        border-radius: 5px;
     }
     .btn-delete:hover, .btn-export:hover, .btn-import:hover {
         background-color: #f8f9fa;
@@ -643,15 +647,16 @@ if ($wholesale_result) {
     }
     .filter-input {
         width: 100%;
-        border: none;
+        border: 1px solid #e5e7eb;
         background: white;
-        padding: 5px;
-        border-radius: 5px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        padding: 6px 8px;
+        border-radius: 4px;
+        font-size: 13px;
     }
     .filter-input:focus {
         outline: none;
-        background: white;
+        border-color: rgba(180, 80, 50, 1);
+        box-shadow: 0 0 0 2px rgba(180, 80, 50, 0.1);
     }
     .stats-container {
         display: flex;
@@ -691,15 +696,15 @@ if ($wholesale_result) {
         background-color: #9b59b6;
         color: white;
     }
-    .pending-icon {
+    .cereals-icon {
         background-color: #f39c12;
         color: white;
     }
-    .published-icon {
+    .pulses-icon {
         background-color: #27ae60;
         color: white;
     }
-    .wholesale-icon {
+    .oil-seeds-icon {
         background-color: #e74c3c;
         color: white;
     }
@@ -755,6 +760,18 @@ if ($wholesale_result) {
     .btn-primary:hover {
         background-color: darkred;
     }
+    .image-preview {
+        width: 40px;
+        height: 40px;
+        border-radius: 5px;
+        object-fit: cover;
+        cursor: pointer;
+    }
+    .no-image {
+        color: #6c757d;
+        font-style: italic;
+        font-size: 0.9em;
+    }
     .alert {
         margin-bottom: 20px;
     }
@@ -777,49 +794,101 @@ if ($wholesale_result) {
     .download-template:hover {
         text-decoration: underline;
     }
-    
-    /* Status styles */
-    .status-dot {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        margin-right: 6px;
+
+    /* Updated Table Styles for Borderless Design */
+    .table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        margin-bottom: 1rem;
+        background-color: transparent;
     }
-    .status-pending {
-        background-color: orange;
-    }
-    .status-published {
-        background-color: blue;
-    }
-    .status-approved {
-        background-color: green;
-    }
-    .status-unpublished {
-        background-color: grey;
-    }
-    
-    /* Action buttons */
-    .btn-approve {
-        background-color: #218838;
-        color: white;
+
+    .table th,
+    .table td {
+        padding: 12px 8px;
+        vertical-align: middle;
         border: none;
-        padding: 8px 16px;
-        border-radius: 5px;
+        text-align: left;
+        font-size: 14px;
+        border-bottom: 1px solid #f0f0f0;
     }
-    .btn-publish {
+
+    .table thead th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        color: #374151;
+        border-bottom: 2px solid #e5e7eb;
+        padding: 12px 8px;
+    }
+
+    .table tbody tr {
+        transition: background-color 0.15s ease;
+    }
+
+    .table tbody tr:hover {
+        background-color: #f9fafb;
+    }
+
+    .table-striped tbody tr:nth-of-type(odd) {
+        background-color: #fafafa;
+    }
+
+    .table-striped tbody tr:nth-of-type(odd):hover {
+        background-color: #f3f4f6;
+    }
+
+    /* Remove all borders from the table */
+    .table-bordered {
+        border: none !important;
+    }
+
+    .table-bordered th,
+    .table-bordered td {
+        border: none !important;
+    }
+
+    /* Filter row styling */
+    .filter-row th {
+        background-color: white;
+        padding: 8px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    /* Checkbox styling */
+    .table input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+
+    /* Action buttons styling */
+    .btn-group .btn-sm {
+        padding: 4px 8px;
+        font-size: 12px;
+    }
+
+    /* Pagination styling */
+    .pagination {
+        margin-top: 20px;
+    }
+
+    .page-link {
+        border: 1px solid #d1d5db;
+        color: #6b7280;
+        padding: 6px 12px;
+    }
+
+    .page-item.active .page-link {
         background-color: rgba(180, 80, 50, 1);
+        border-color: rgba(180, 80, 50, 1);
         color: white;
-        border: none;
-        padding: 8px 16px;
-        border-radius: 5px;
     }
-    .btn-unpublish {
-        background-color: #6c757d;
-        color: white;
-        border: none;
-        padding: 8px 16px;
-        border-radius: 5px;
+
+    .form-select {
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        padding: 4px 8px;
     }
 </style>
 
@@ -927,7 +996,7 @@ if ($wholesale_result) {
         }
         ?>
 
-        <table class="table table-striped table-hover">
+        <table class="table table-striped table-hover table-bordered">
             <thead>
                 <tr style="background-color: #d3d3d3 !important; color: black !important;">
                     <th><input type="checkbox" id="selectAll"></th>
@@ -981,7 +1050,7 @@ if ($wholesale_result) {
                                 />
                             </td>
                             <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
-                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
+                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_display']); ?></td>
                             <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
                         <?php endif; ?>
                         <td><?php echo htmlspecialchars($price['price_type']); ?></td>
@@ -1145,6 +1214,12 @@ document.addEventListener("DOMContentLoaded", function() {
     const filterInputs = document.querySelectorAll('.filter-input');
     filterInputs.forEach(input => {
         input.addEventListener('keyup', applyFilters);
+        // Add clear filter functionality
+        input.addEventListener('input', function() {
+            if (this.value === '') {
+                applyFilters();
+            }
+        });
     });
 
     // Initialize select all checkbox
@@ -1178,19 +1253,76 @@ function applyFilters() {
     };
 
     const rows = document.querySelectorAll('#pricesTable tr');
+    let visibleCount = 0;
+    let currentGroup = null;
+    let groupMatches = false;
+    
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        const matches = 
-            cells[0].textContent.toLowerCase().includes(filters.market) &&
-            cells[1].textContent.toLowerCase().includes(filters.commodity) &&
-            cells[2].textContent.toLowerCase().includes(filters.date) &&
-            cells[3].textContent.toLowerCase().includes(filters.type) &&
-            cells[4].textContent.toLowerCase().includes(filters.price) &&
-            cells[7].textContent.toLowerCase().includes(filters.status) &&
-            cells[8].textContent.toLowerCase().includes(filters.source);
         
-        row.style.display = matches ? '' : 'none';
+        // Check if this is a row with rowspan (first row of a group)
+        const hasRowspan = cells[0] && cells[0].hasAttribute('rowspan');
+        
+        if (hasRowspan) {
+            // This is the first row of a new group
+            // Check group-level filters (market, commodity, date)
+            const market = cells[1] ? cells[1].textContent.toLowerCase() : '';
+            const commodity = cells[2] ? cells[2].textContent.toLowerCase() : '';
+            const date = cells[3] ? cells[3].textContent.toLowerCase() : '';
+            
+            // Check row-level filters (type, price, status, source)
+            const type = cells[4] ? cells[4].textContent.toLowerCase() : '';
+            const price = cells[5] ? cells[5].textContent.toLowerCase() : '';
+            const status = cells[8] ? cells[8].textContent.toLowerCase() : '';
+            const source = cells[9] ? cells[9].textContent.toLowerCase() : '';
+            
+            groupMatches = 
+                market.includes(filters.market) &&
+                commodity.includes(filters.commodity) &&
+                date.includes(filters.date) &&
+                type.includes(filters.type) &&
+                price.includes(filters.price) &&
+                status.includes(filters.status) &&
+                source.includes(filters.source);
+            
+            row.style.display = groupMatches ? '' : 'none';
+            if (groupMatches) visibleCount++;
+            
+        } else {
+            // This is a continuation row of the current group
+            // Check row-level filters only (type, price, status, source)
+            const type = cells[0] ? cells[0].textContent.toLowerCase() : '';
+            const price = cells[1] ? cells[1].textContent.toLowerCase() : '';
+            const status = cells[4] ? cells[4].textContent.toLowerCase() : '';
+            const source = cells[5] ? cells[5].textContent.toLowerCase() : '';
+            
+            const rowMatches = 
+                groupMatches && // Must be part of a matching group
+                type.includes(filters.type) &&
+                price.includes(filters.price) &&
+                status.includes(filters.status) &&
+                source.includes(filters.source);
+            
+            row.style.display = rowMatches ? '' : 'none';
+            if (rowMatches) visibleCount++;
+        }
     });
+    
+    // Update display count
+    const displayElement = document.querySelector('.d-flex.justify-content-between.align-items-center div:first-child');
+    if (displayElement) {
+        const totalText = displayElement.textContent.match(/of (\d+) items/);
+        if (totalText) {
+            displayElement.textContent = `Displaying ${visibleCount > 0 ? '1' : '0'} to ${visibleCount} of ${totalText[1]} items`;
+        }
+    }
+}
+
+function clearAllFilters() {
+    document.querySelectorAll('.filter-input').forEach(input => {
+        input.value = '';
+    });
+    applyFilters();
 }
 
 function updateItemsPerPage(value) {
