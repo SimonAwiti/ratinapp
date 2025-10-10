@@ -87,26 +87,104 @@ foreach ($input['submissions'] as $index => $submission) {
         continue;
     }
 
-    $supplied_volume = isset($submission['supplied_volume']) ? (int)$submission['supplied_volume'] : NULL;
+    $supplied_volume = isset($submission['supplied_volume']) && $submission['supplied_volume'] !== '' ? (int)$submission['supplied_volume'] : NULL;
+    
     // 'status' in payload maps to 'supply_status' in DB
-    $supply_status_from_payload = isset($submission['status']) ? mysqli_real_escape_string($con, $submission['status']) : 'unknown';
+    $supply_status_from_payload = 'unknown'; // Default value
+    if (isset($submission['status']) && !empty(trim($submission['status']))) {
+        $supply_status_from_payload = mysqli_real_escape_string($con, trim($submission['status']));
+    }
+    
     // 'status' in DB is always 'pending' for new submissions
     $admin_status = 'pending';
 
-    $comments = isset($submission['comments']) ? mysqli_real_escape_string($con, $submission['comments']) : NULL;
-    $subject = isset($submission['subject']) ? mysqli_real_escape_string($con, $submission['subject']) : "Market Prices";
+    // Handle comments - can be NULL or string, never "0"
+    $comments = NULL;
+    if (isset($submission['comments']) && trim($submission['comments']) !== '') {
+        $comments = mysqli_real_escape_string($con, trim($submission['comments']));
+    }
+    
+    // Handle subject - default to "Market Prices"
+    $subject = "Market Prices";
+    if (isset($submission['subject']) && !empty(trim($submission['subject']))) {
+        $subject = mysqli_real_escape_string($con, trim($submission['subject']));
+    }
+    
+    error_log("DEBUG: Before data_source processing - subject='{$subject}', supply_status='{$supply_status_from_payload}'");
 
-    // --- LOGIC FOR data_source (reporting sources) ---
+    // --- LOGIC FOR data_source (reporting sources) --- CORRECTED
     $data_reporting_source_names = [];
-    if (isset($submission['data_reporting_sources']) && is_array($submission['data_reporting_sources'])) {
-        foreach ($submission['data_reporting_sources'] as $source_item) {
-            if (isset($source_item['name'])) {
-                $data_reporting_source_names[] = mysqli_real_escape_string($con, $source_item['name']);
+    
+    // Debug logging
+    error_log("DEBUG: Processing submission index {$index}");
+    error_log("DEBUG: Raw submission data: " . json_encode($submission));
+    
+    if (isset($submission['data_reporting_sources'])) {
+        error_log("DEBUG: data_reporting_sources exists");
+        error_log("DEBUG: data_reporting_sources type: " . gettype($submission['data_reporting_sources']));
+        error_log("DEBUG: data_reporting_sources content: " . json_encode($submission['data_reporting_sources']));
+        
+        if (is_array($submission['data_reporting_sources'])) {
+            error_log("DEBUG: data_reporting_sources is an array with " . count($submission['data_reporting_sources']) . " items");
+            
+            foreach ($submission['data_reporting_sources'] as $idx => $source_item) {
+                error_log("DEBUG: Processing source item {$idx}: " . json_encode($source_item));
+                
+                if (isset($source_item['name'])) {
+                    $raw_name = $source_item['name'];
+                    error_log("DEBUG: Found name field: '{$raw_name}'");
+                    
+                    if (!empty(trim($raw_name))) {
+                        $cleaned_name = trim($raw_name);
+                        error_log("DEBUG: Cleaned name: '{$cleaned_name}'");
+                        
+                        // Skip if name is literally "0"
+                        if ($cleaned_name !== '0') {
+                            $escaped_name = mysqli_real_escape_string($con, $cleaned_name);
+                            $data_reporting_source_names[] = $escaped_name;
+                            error_log("DEBUG: Added to array: '{$escaped_name}'");
+                        } else {
+                            error_log("DEBUG: Skipped '0' value");
+                        }
+                    } else {
+                        error_log("DEBUG: Name field is empty after trim");
+                    }
+                } else {
+                    error_log("DEBUG: Source item has no 'name' field");
+                }
             }
+        } else {
+            error_log("DEBUG: data_reporting_sources is NOT an array");
+        }
+    } else {
+        error_log("DEBUG: data_reporting_sources does NOT exist in submission");
+    }
+
+    error_log("DEBUG: Final data_reporting_source_names array: " . json_encode($data_reporting_source_names));
+
+    // Store comma-separated names for 'data_source' column
+    // DEFAULT to 'RATIN' if no valid sources provided
+    if (!empty($data_reporting_source_names)) {
+        $data_source_db_value = implode(', ', $data_reporting_source_names);
+        error_log("DEBUG: Using names from array: '{$data_source_db_value}'");
+    } else {
+        // Fallback: check if there's a data_source directly in submission
+        if (isset($submission['data_source']) && !empty(trim($submission['data_source'])) && trim($submission['data_source']) !== '0') {
+            $data_source_db_value = mysqli_real_escape_string($con, trim($submission['data_source']));
+            error_log("DEBUG: Using direct data_source: '{$data_source_db_value}'");
+        } else {
+            $data_source_db_value = 'RATIN';
+            error_log("DEBUG: Using default RATIN");
         }
     }
-    // Store comma-separated names for 'data_source' column
-    $data_source_db_value = implode(', ', $data_reporting_source_names);
+
+    // Final validation: ensure it's never "0" or empty - default to RATIN
+    if (empty($data_source_db_value) || $data_source_db_value === '0') {
+        error_log("DEBUG: Data source was empty or '0', forcing to RATIN");
+        $data_source_db_value = 'RATIN';
+    }
+    
+    error_log("DEBUG: FINAL data_source_db_value to be inserted: '{$data_source_db_value}'");
 
     // --- LOGIC FOR commodity_sources_data (NEW JSON COLUMN) ---
     $commodity_sources_payload = isset($submission['commodity_sources']) && is_array($submission['commodity_sources'])
@@ -215,11 +293,37 @@ foreach ($input['submissions'] as $index => $submission) {
     // Add wholesale price if available
     if ($wholesale_price_local > 0) {
         $sql = $sql_insert_base . $sql_values_template;
+        
+        error_log("DEBUG: Wholesale - About to insert with data_source='{$data_source_db_value}', subject='{$subject}', supply_status='{$supply_status_from_payload}'");
+        
         $params = array_merge($params, [
-            $category_name, $commodity_id, $country_admin_0, $tradepoint_id, $market_name, $weight_value, $measuring_unit,
-            'Wholesale', $wholesale_price_usd, $subject, $day, $month, $year, $date_posted, $admin_status, $variety,
-            $data_source_db_value, $supplied_volume, $comments, $supply_status_from_payload, $commodity_sources_json_db_value
+            $category_name, 
+            $commodity_id, 
+            $country_admin_0, 
+            $tradepoint_id, 
+            $market_name, 
+            $weight_value, 
+            $measuring_unit,
+            'Wholesale', 
+            $wholesale_price_usd, 
+            $subject, 
+            $day, 
+            $month, 
+            $year, 
+            $date_posted, 
+            $admin_status, 
+            $variety,
+            $data_source_db_value, 
+            $supplied_volume, 
+            $comments, 
+            $supply_status_from_payload, 
+            $commodity_sources_json_db_value
         ]);
+        
+        error_log("DEBUG: Wholesale params[16] (data_source): '" . $params[16] . "'");
+        error_log("DEBUG: Wholesale params[9] (subject): '" . $params[9] . "'");
+        error_log("DEBUG: Wholesale params[19] (supply_status): '" . $params[19] . "'");
+        
         // s (category) i (commodity_id) s (country_admin_0) i (market_id) s (market) d (weight) s (unit) s (price_type) d (Price)
         // s (subject) i (day) i (month) i (year) s (date_posted) s (status) s (variety) s (data_source) i (supplied_volume)
         // s (comments) s (supply_status) s (commodity_sources_data)
@@ -234,16 +338,48 @@ foreach ($input['submissions'] as $index => $submission) {
         } else {
             $sql = $sql_insert_base . $sql_values_template;
         }
+        
+        error_log("DEBUG: Retail - About to insert with data_source='{$data_source_db_value}', subject='{$subject}', supply_status='{$supply_status_from_payload}'");
+        
         $params = array_merge($params, [
-            $category_name, $commodity_id, $country_admin_0, $tradepoint_id, $market_name, $weight_value, $measuring_unit,
-            'Retail', $retail_price_usd, $subject, $day, $month, $year, $date_posted, $admin_status, $variety,
-            $data_source_db_value, $supplied_volume, $comments, $supply_status_from_payload, $commodity_sources_json_db_value
+            $category_name, 
+            $commodity_id, 
+            $country_admin_0, 
+            $tradepoint_id, 
+            $market_name, 
+            $weight_value, 
+            $measuring_unit,
+            'Retail', 
+            $retail_price_usd, 
+            $subject, 
+            $day, 
+            $month, 
+            $year, 
+            $date_posted, 
+            $admin_status, 
+            $variety,
+            $data_source_db_value, 
+            $supplied_volume, 
+            $comments, 
+            $supply_status_from_payload, 
+            $commodity_sources_json_db_value
         ]);
+        
+        $param_offset = $wholesale_price_local > 0 ? 21 : 0;
+        error_log("DEBUG: Retail params[" . ($param_offset + 16) . "] (data_source): '" . $params[$param_offset + 16] . "'");
+        error_log("DEBUG: Retail params[" . ($param_offset + 9) . "] (subject): '" . $params[$param_offset + 9] . "'");
+        error_log("DEBUG: Retail params[" . ($param_offset + 19) . "] (supply_status): '" . $params[$param_offset + 19] . "'");
+        
         $types .= "sisssdssdiiissssissis";
     }
 
     // Only proceed if at least one price type (wholesale or retail) is available for insertion
     if (!empty($params)) {
+        error_log("DEBUG: Final SQL: " . $sql);
+        error_log("DEBUG: Final types: " . $types);
+        error_log("DEBUG: Total params count: " . count($params));
+        error_log("DEBUG: All params: " . json_encode($params));
+        
         $stmt_insert = $con->prepare($sql);
 
         if ($stmt_insert) {
@@ -256,6 +392,7 @@ foreach ($input['submissions'] as $index => $submission) {
                 $all_success = false;
             } else {
                 $inserted_ids[] = $con->insert_id;
+                error_log("DEBUG: Successfully inserted with ID: " . $con->insert_id);
             }
 
             $stmt_insert->close();
