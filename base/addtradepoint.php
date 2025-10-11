@@ -646,14 +646,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="longitude" class="required">Longitude</label>
-                            <input type="number" step="any" id="longitude" name="longitude" placeholder="e.g., 36.8219">
-                            <div class="error-message" id="longitude_error">Longitude is required</div>
-                        </div>
-                        <div class="form-group">
                             <label for="latitude" class="required">Latitude</label>
                             <input type="number" step="any" id="latitude" name="latitude" placeholder="e.g., -1.2921">
                             <div class="error-message" id="latitude_error">Latitude is required</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="longitude" class="required">Longitude</label>
+                            <input type="number" step="any" id="longitude" name="longitude" placeholder="e.g., 36.8219">
+                            <div class="error-message" id="longitude_error">Longitude is required</div>
                         </div>
                     </div>
 
