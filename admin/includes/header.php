@@ -346,6 +346,14 @@ if ($dirName === 'base') {
 
         <!-- BASE MANAGEMENT Section -->
         <div class="section-header">BASE MANAGEMENT</div>
+        <a href="<?= $dataPath ?>countries_boilerplate.php" class="nav-link <?= ($currentPage == 'countries_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-globe-africa"></i>
+            <span>Countries Covered</span>
+        </a>
+        <a href="<?= $dataPath ?>commodity_sources_boilerplate.php" class="nav-link <?= ($currentPage == 'countries_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-globe-africa"></i>
+            <span>Geographic Units</span>
+        </a>
         
         <a href="<?= $basePath ?>commodities_boilerplate.php" class="nav-link <?= ($currentPage == 'commodities_boilerplate.php') ? 'active' : '' ?>">
             <i class="fas fa-wheat-awn"></i>
@@ -360,11 +368,6 @@ if ($dirName === 'base') {
         <a href="<?= $basePath ?>enumerator_boilerplate.php" class="nav-link <?= ($currentPage == 'enumerator_boilerplate.php') ? 'active' : '' ?>">
             <i class="fa fa-users"></i>
             <span>Enumerators</span>
-        </a>
-
-        <a href="<?= $dataPath ?>currencies_boilerplate.php" class="nav-link <?= ($currentPage == 'currencies_boilerplate.php') ? 'active' : '' ?>">
-            <i class="fa fa-credit-card"></i>
-            <span>Currency Rates</span>
         </a>
 
         <!-- DATA MANAGEMENT Section -->
@@ -395,10 +398,9 @@ if ($dirName === 'base') {
             <i class="fa fa-chart-bar"></i>
             <span>Miller Prices</span>
         </a>
-
-        <a href="<?= $dataPath ?>countries_boilerplate.php" class="nav-link <?= ($currentPage == 'countries_boilerplate.php') ? 'active' : '' ?>">
-            <i class="fa fa-globe-africa"></i>
-            <span>Countries</span>
+        <a href="<?= $dataPath ?>currencies_boilerplate.php" class="nav-link <?= ($currentPage == 'currencies_boilerplate.php') ? 'active' : '' ?>">
+            <i class="fa fa-credit-card"></i>
+            <span>Currency Rates</span>
         </a>
 
         <!-- WEB Section -->
