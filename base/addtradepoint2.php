@@ -59,10 +59,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $_SESSION['radius'] = $_POST['radius'];
         $_SESSION['currency'] = $autofill_currency;
 
-        // Handle multiple image upload for markets
+        // Handle multiple image upload for markets (OPTIONAL)
         $image_paths = array();
         
-        if (isset($_FILES['marketImages'])) {
+        if (isset($_FILES['marketImages']) && !empty($_FILES['marketImages']['name'][0])) {
             foreach ($_FILES['marketImages']['tmp_name'] as $key => $tmp_name) {
                 if ($_FILES['marketImages']['error'][$key] === UPLOAD_ERR_OK) {
                     $image_name = basename($_FILES['marketImages']['name'][$key]);
@@ -75,7 +75,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             }
         }
 
-        // Convert array of image paths to JSON string
+        // Convert array of image paths to JSON string (empty array if no images)
         $_SESSION['image_urls'] = json_encode($image_paths);
         header("Location: addtradepoint3.php");
         exit;
@@ -955,12 +955,12 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['miller_name'])) {
                     
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="longitude" class="required">Longitude</label>
-                            <input type="number" step="any" id="longitude" name="longitude" placeholder="e.g., 36.8219" required>
-                        </div>
-                        <div class="form-group">
                             <label for="latitude" class="required">Latitude</label>
                             <input type="number" step="any" id="latitude" name="latitude" placeholder="e.g., -1.2921" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="longitude" class="required">Longitude</label>
+                            <input type="number" step="any" id="longitude" name="longitude" placeholder="e.g., 36.8219" required>
                         </div>
                     </div>
 
@@ -977,8 +977,9 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['miller_name'])) {
                     </div>
 
                     <div class="form-group-full">
-                        <label for="marketImages" class="required">Upload Market Images</label>
-                        <input type="file" id="marketImages" name="marketImages[]" multiple accept="image/*" required>
+                        <label for="marketImages">Upload Market Images (Optional)</label>
+                        <input type="file" id="marketImages" name="marketImages[]" multiple accept="image/*">
+                        <small class="text-muted">You can upload images now or skip this step</small>
                         <div class="progress-bar-container">
                             <div class="progress-bar" id="progressBar"></div>
                         </div>
@@ -1200,7 +1201,7 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['miller_name'])) {
             });
         }
 
-        // Form validation
+        // Form validation - UPDATED FOR OPTIONAL MARKET IMAGES
         document.getElementById('tradepoint-form').addEventListener('submit', function(e) {
             let isValid = true;
             let firstErrorField = null;
@@ -1209,36 +1210,30 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['miller_name'])) {
                 const requiredFields = [
                     {id: 'longitude', name: 'Longitude'},
                     {id: 'latitude', name: 'Latitude'},
-                    {id: 'radius', name: 'Market Radius'},
-                    {id: 'marketImages', name: 'Market Images', type: 'file'}
+                    {id: 'radius', name: 'Market Radius'}
+                    // Removed marketImages from required fields
                 ];
                 
                 requiredFields.forEach(field => {
                     const element = document.getElementById(field.id);
-                    if (field.type === 'file') {
-                        if (!element.files || element.files.length === 0) {
-                            if (!firstErrorField) firstErrorField = element;
-                            isValid = false;
-                        }
-                    } else {
-                        if (!element.value.trim()) {
-                            if (!firstErrorField) firstErrorField = element;
-                            isValid = false;
-                        }
+                    if (!element.value.trim()) {
+                        if (!firstErrorField) firstErrorField = element;
+                        isValid = false;
                     }
                 });
-            } else {
-                // For Border Points and Millers, just check if files are uploaded
+            } else if (tradepointType === 'Border Points') {
+                // For Border Points, files are still required
                 const fileInput = document.getElementById(fileInputId);
                 if (!fileInput.files || fileInput.files.length === 0) {
                     isValid = false;
                     firstErrorField = fileInput;
                 }
             }
+            // Millers have their own validation in the PHP
 
             if (!isValid) {
                 e.preventDefault();
-                alert('Please fill in all required fields and upload the required images.');
+                alert('Please fill in all required fields.');
                 if (firstErrorField) {
                     firstErrorField.focus();
                     firstErrorField.scrollIntoView({ behavior: 'smooth', block: 'center' });
