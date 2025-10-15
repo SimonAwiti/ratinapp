@@ -350,7 +350,7 @@ if ($dirName === 'base') {
             <i class="fa fa-globe-africa"></i>
             <span>Countries Covered</span>
         </a>
-        <a href="<?= $dataPath ?>commodity_sources_boilerplate.php" class="nav-link <?= ($currentPage == 'countries_boilerplate.php') ? 'active' : '' ?>">
+        <a href="<?= $basePath ?>commodity_sources_boilerplate.php" class="nav-link <?= ($currentPage == 'countries_boilerplate.php') ? 'active' : '' ?>">
             <i class="fa fa-globe-africa"></i>
             <span>Geographic Units</span>
         </a>
