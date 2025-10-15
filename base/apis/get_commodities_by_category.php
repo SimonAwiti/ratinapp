@@ -35,6 +35,19 @@ try {
     // Fetch data
     $commodities = $result->fetch_all(MYSQLI_ASSOC);
 
+    // Process commodities to concatenate commodity_name with variety
+    foreach ($commodities as &$commodity) {
+        $commodityName = $commodity['commodity_name'];
+        $variety = $commodity['variety'];
+        
+        // Only add variety if it's not empty
+        if (!empty($variety)) {
+            $commodity['commodity_name'] = $commodityName . ' (' . $variety . ')';
+        }
+        // If variety is empty, keep the original commodity_name
+    }
+    unset($commodity); // Unset reference
+
     $response['success'] = true;
     $response['data'] = $commodities;
 
