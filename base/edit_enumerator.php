@@ -209,6 +209,8 @@ $con->close();
     <meta charset="UTF-8">
     <title>Edit Enumerator: <?= htmlspecialchars($enumerator_data['name']) ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <!-- Include Select2 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -388,6 +390,28 @@ $con->close();
             background-color: rgba(160, 60, 30, 1);
         }
         
+        /* Select2 Custom Styling */
+        .select2-container--default .select2-selection--single {
+            height: 42px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .select2-container--default .select2-selection--single .select2-selection__rendered {
+            line-height: 42px;
+            padding-left: 10px;
+        }
+        .select2-container--default .select2-selection--single .select2-selection__arrow {
+            height: 40px;
+        }
+        .select2-container--default .select2-results__option--highlighted[aria-selected] {
+            background-color: rgba(180, 80, 50, 0.8);
+            color: white;
+        }
+        .select2-container--default .select2-results__option[aria-selected=true] {
+            background-color: rgba(180, 80, 50, 1);
+            color: white;
+        }
+        
         /* Responsive design */
         @media (max-width: 768px) {
             .container {
@@ -516,7 +540,7 @@ $con->close();
 
         <div class="form-group-full">
             <label for="tradepoint-select">Assign Tradepoint(s):</label>
-            <select id="tradepoint-select" class="form-control"> <option value="">-- Select Tradepoint --</option>
+            <select id="tradepoint-select" class="form-control" multiple="multiple" style="width: 100%;">
                 <?php foreach ($all_tradepoints_for_select as $tp): ?>
                     <option
                         value="<?= $tp['id'] ?>"
@@ -539,7 +563,20 @@ $con->close();
     </form>
 </div>
 
+<!-- Include jQuery and Select2 JS -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
 <script>
+    // Initialize Select2
+    $(document).ready(function() {
+        $('#tradepoint-select').select2({
+            placeholder: "Search and select tradepoints...",
+            allowClear: true,
+            width: 'resolve'
+        });
+    });
+
     const select = document.getElementById('tradepoint-select');
     const selectedContainer = document.getElementById('selected-tradepoints');
     const hiddenInputs = document.getElementById('hidden-inputs');
@@ -586,42 +623,46 @@ $con->close();
     // Call initialization function on page load
     document.addEventListener('DOMContentLoaded', initializeTradepoints);
 
+    // Update the event listener for Select2
+    $('#tradepoint-select').on('change', function() {
+        const selectedOptions = $(this).select2('data');
+        
+        selectedOptions.forEach(function(selectedOption) {
+            const selectedId = selectedOption.id;
+            
+            if (selectedId && !selectedTradepoints.has(selectedId)) {
+                const selectedType = selectedOption.element.getAttribute('data-type');
+                const selectedName = selectedOption.element.getAttribute('data-name');
+                const longitude = selectedOption.element.getAttribute('data-longitude');
+                const latitude = selectedOption.element.getAttribute('data-latitude');
+                const radius = selectedOption.element.getAttribute('data-radius');
 
-    select.addEventListener('change', () => {
-        const selectedOption = select.options[select.selectedIndex];
-        const selectedId = selectedOption.value;
+                // Store the full details
+                selectedTradepoints.set(selectedId, {
+                    id: selectedId,
+                    type: selectedType,
+                    name: selectedName,
+                    longitude: longitude,
+                    latitude: latitude,
+                    radius: radius
+                });
 
-        if (selectedId && !selectedTradepoints.has(selectedId)) {
-            const selectedType = selectedOption.getAttribute('data-type');
-            const selectedName = selectedOption.getAttribute('data-name'); // Get the actual name from data attribute
-            const longitude = selectedOption.getAttribute('data-longitude');
-            const latitude = selectedOption.getAttribute('data-latitude');
-            const radius = selectedOption.getAttribute('data-radius');
+                // Create tag with the actual name
+                createTag(selectedId, selectedName + ' (' + selectedType + ')');
 
-            // Store the full details
-            selectedTradepoints.set(selectedId, {
-                id: selectedId,
-                type: selectedType,
-                name: selectedName, // Store actual name
-                longitude: longitude,
-                latitude: latitude,
-                radius: radius
-            });
+                // Create hidden inputs for all tradepoint details
+                createHiddenInputs(selectedId);
+            }
+        });
 
-            // Create tag with the actual name
-            createTag(selectedId, selectedName + ' (' + selectedType + ')');
-
-            // Create hidden inputs for all tradepoint details
-            createHiddenInputs(selectedId);
-        }
-
-        select.value = ""; // Reset select
+        // Clear the selection after adding
+        $(this).val(null).trigger('change');
     });
 
     function createTag(id, displayText) {
-        const tag = document.createElement('span'); // Changed from div to span for inline display
-        tag.className = 'tag'; // Re-using existing tag class for display
-        tag.innerHTML = displayText + ' <span class="remove-tag">×</span>'; // Added remove-tag for consistency
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.innerHTML = displayText + ' <span class="remove-tag">×</span>';
 
         tag.querySelector('.remove-tag').onclick = () => {
             selectedContainer.removeChild(tag);
@@ -635,8 +676,6 @@ $con->close();
     function createHiddenInputs(selectedId) {
         const tradepoint = selectedTradepoints.get(selectedId);
 
-        // All hidden inputs for a given tradepoint should be grouped or named uniquely
-        // We'll use a prefix to identify them later for removal
         const prefix = 'tradepoints_' + selectedId;
 
         const hiddenInputId = document.createElement('input');
@@ -676,7 +715,6 @@ $con->close();
     }
 
     function removeHiddenInputs(selectedId) {
-        // Select all inputs with the specific data-tp-id attribute
         const inputsToRemove = hiddenInputs.querySelectorAll('[data-tp-id="tradepoints_' + selectedId + '"]');
         inputsToRemove.forEach(input => hiddenInputs.removeChild(input));
     }
