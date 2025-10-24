@@ -42,44 +42,14 @@ function geocodeMarket($market, $country) {
     }
 }
 
-// Function to get coordinates for all markets (with caching for this request)
-function getAllMarketCoordinates($markets, $countries_data) {
-    $coordinates = [];
-    
-    foreach ($markets as $market) {
-        // Find the country for this market
-        $country = '';
-        foreach ($countries_data as $data_country => $data_markets) {
-            if (in_array($market, $data_markets)) {
-                $country = $data_country;
-                break;
-            }
-        }
-        
-        if (empty($country)) {
-            // If we can't find the country, use the first available country
-            $country = array_keys($countries_data)[0] ?? 'Kenya';
-        }
-        
-        // Geocode the market
-        $coords = geocodeMarket($market, $country);
-        $coordinates[$market] = $coords;
-        
-        // Add a small delay to be respectful to the Nominatim API
-        usleep(100000); // 100ms delay
-    }
-    
-    return $coordinates;
-}
-
-// Function to convert currency to USD using date-matched exchange rates
-function convertToUSD($amount, $country, $date, $con) {
-    if (!is_numeric($amount)) {
-        error_log("Invalid amount provided to convertToUSD: " . var_export($amount, true));
+// Function to convert USD to local currency using date-matched exchange rates
+function convertToLocal($usdAmount, $country, $date, $con) {
+    if (!is_numeric($usdAmount)) {
+        error_log("Invalid amount provided to convertToLocal: " . var_export($usdAmount, true));
         return 0;
     }
 
-    $exchangeRate = 1; // Default to 1 (assuming 1:1 for USD or if no rate is found)
+    $exchangeRate = 1; // Default to 1 (assuming 1:1 if no rate is found)
 
     // Check if $con is a valid mysqli object before preparing statement
     if ($con instanceof mysqli && !$con->connect_error) {
@@ -130,19 +100,19 @@ function convertToUSD($amount, $country, $date, $con) {
             error_log("Error preparing currency query for " . $country . ": " . $con->error);
         }
     } else {
-        error_log("Database connection not valid in convertToUSD function. Skipping currency rate fetch.");
+        error_log("Database connection not valid in convertToLocal function. Skipping currency rate fetch.");
     }
 
-    // Ensure exchangeRate is not zero to prevent division by zero errors.
+    // Ensure exchangeRate is not zero to prevent multiplication by zero errors.
     if ($exchangeRate == 0) {
-        error_log("Exchange rate for " . $country . " is zero or invalid. Returning 0 for conversion to prevent division by zero.");
+        error_log("Exchange rate for " . $country . " is zero or invalid. Returning 0 for conversion to prevent multiplication by zero.");
         return 0;
     }
 
-    return round($amount / $exchangeRate, 2);
+    return round($usdAmount * $exchangeRate, 2);
 }
 
-// Function to get exchange rate for display (date-matched)
+// Function to get exchange rate for display (date-matched) - SAME AS BEFORE
 function getExchangeRate($country, $date, $con) {
     $exchangeRate = 1; // Default to 1
 
@@ -214,6 +184,7 @@ function buildPricesQuery($filters = []) {
                 p.market,
                 p.commodity,
                 c.commodity_name,
+                c.variety,
                 p.price_type,
                 p.Price,
                 p.date_posted,
@@ -323,10 +294,17 @@ $filters = [
 // Get total number of records with filters
 $total_records = getTotalPriceRecords($con, $filters);
 
-// Set pagination parameters
-$limit = 10;
+// Get pagination parameters from request
+$limit_options = [10, 25, 50, 100];
+$limit = isset($_GET['limit']) && in_array((int)$_GET['limit'], $limit_options) ? (int)$_GET['limit'] : 10;
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
+
+// Fetch prices data with filters
+$prices_data = getPricesData($con, $limit, $offset, $filters);
+
+// Calculate total pages
+$total_pages = ceil($total_records / $limit);
 
 // Fetch prices data with filters
 $prices_data = getPricesData($con, $limit, $offset, $filters);
@@ -419,11 +397,30 @@ if ($result) {
     $result->free();
 }
 
-$options_query = "SELECT id, commodity_name FROM commodities";
+// Get commodities with varieties
+$commodities = [];
+$commodities_with_varieties = []; // For map and chart filters
+
+$options_query = "SELECT id, commodity_name, variety FROM commodities WHERE variety IS NOT NULL AND variety != ''";
+$result = $con->query($options_query);
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $commodity_display = $row['commodity_name'] . ($row['variety'] ? " ({$row['variety']})" : '');
+        $commodities[$row['id']] = $commodity_display;
+        $commodities_with_varieties[] = $commodity_display;
+    }
+    $result->free();
+}
+
+// Also get commodities without varieties
+$options_query = "SELECT id, commodity_name FROM commodities WHERE variety IS NULL OR variety = ''";
 $result = $con->query($options_query);
 if ($result) {
     while ($row = $result->fetch_assoc()) {
         $commodities[$row['id']] = $row['commodity_name'];
+        if (!in_array($row['commodity_name'], $commodities_with_varieties)) {
+            $commodities_with_varieties[] = $row['commodity_name'];
+        }
     }
     $result->free();
 }
@@ -446,8 +443,26 @@ if ($result) {
     $result->free();
 }
 
-// Get data for charts (without pagination)
+// Get data for charts and maps (without pagination)
 $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for better chart data
+
+// Prepare market coordinates for map
+$marketCoordinates = [];
+foreach ($markets as $market) {
+    // Find the country for this market from the actual data
+    $marketCountry = '';
+    foreach ($prices_data as $price) {
+        if ($price['market'] === $market) {
+            $marketCountry = $price['country_admin_0'];
+            break;
+        }
+    }
+    if (empty($marketCountry)) {
+        $marketCountry = 'Kenya'; // Default fallback
+    }
+    $coords = geocodeMarket($market, $marketCountry);
+    $marketCoordinates[$market] = $coords;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -824,6 +839,13 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
             margin-bottom: 20px;
         }
 
+        .map-filters {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
         .commodity-category-btn.active {
             background-color: #8B4513;
             color: white;
@@ -849,6 +871,26 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
             margin: 4px 0;
         }
 
+        /* Map legend styling */
+        .info {
+            padding: 6px 8px;
+            font: 14px/16px Arial, Helvetica, sans-serif;
+            background: white;
+            background: rgba(255,255,255,0.8);
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+        }
+
+        .info h6 {
+            margin: 0 0 5px;
+            color: #777;
+        }
+
+        .legend {
+            line-height: 18px;
+            color: #555;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
@@ -861,7 +903,7 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
             .filter-section > div {
                 grid-template-columns: 1fr !important;
             }
-            .chart-filters {
+            .chart-filters, .map-filters {
                 grid-template-columns: 1fr;
             }
         }
@@ -1064,44 +1106,50 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
                                         $currency = getCurrencyCode($price['country_admin_0']);
                                         $exchangeRate = getExchangeRate($price['country_admin_0'], $price['date_posted'], $con);
                                         
-                                        // The price in database is in local currency, convert to USD
-                                        $localPrice = $price['Price'];
-                                        $usdPrice = convertToUSD($localPrice, $price['country_admin_0'], $price['date_posted'], $con);
-                            ?>
-                            <tr>
-                                <?php if ($first_row): ?>
-                                    <td rowspan="<?php echo count($prices_in_group); ?>">
-                                        <input type="checkbox" 
-                                            data-group-key="<?php echo $group_key; ?>"
-                                            data-price-ids="<?php echo $group_price_ids_json; ?>"
-                                            class="checkbox" />
-                                    </td>
-                                    <td rowspan="<?php echo count($prices_in_group); ?>" style="font-weight: 500;"><?php echo htmlspecialchars($price['market']); ?></td>
-                                    <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['country_admin_0']); ?></td>
-                                    <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_name']); ?></td>
-                                    <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('d/m/Y', strtotime($price['date_posted'])); ?></td>
-                                <?php endif; ?>
-                                <td><?php echo htmlspecialchars($price['price_type']); ?></td>
-                                <td><?php echo htmlspecialchars($price['unit']); ?></td>
-                                <td style="font-weight: 600;"><?php echo number_format($localPrice, 2); ?> <?php echo $currency; ?></td>
-                                <td style="font-weight: 600;">$<?php echo number_format($usdPrice, 2); ?></td>
-                                <td><?php echo number_format($exchangeRate, 2); ?> <?php echo $currency; ?>/USD</td>
-                                <td class="<?php echo $dayChangeClass; ?>"><?php echo $dayChange >= 0 ? '+' : ''; ?><?php echo $dayChange; ?>%</td>
-                                <td class="<?php echo $monthChangeClass; ?>"><?php echo $monthChange >= 0 ? '+' : ''; ?><?php echo $monthChange; ?>%</td>
-                                <td class="<?php echo $yearChangeClass; ?>"><?php echo $yearChange >= 0 ? '+' : ''; ?><?php echo $yearChange; ?>%</td>
-                                <?php if ($first_row): ?>
-                                    <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['data_source']); ?></td>
-                                <?php endif; ?>
-                            </tr>
-                            <?php
-                                    $first_row = false;
-                                endforeach;
-                                endforeach;
-                            } else {
-                                echo '<tr><td colspan="14" style="text-align: center; padding: 20px;">No market prices data found</td></tr>';
-                            }
-                            ?>
-                        </tbody>
+                                        // The price in database is in USD, convert to local currency
+                                        $usdPrice = $price['Price'];
+                                        $localPrice = convertToLocal($usdPrice, $price['country_admin_0'], $price['date_posted'], $con);
+                                        
+                                        // Get commodity display name with variety
+                                        $commodity_display = $price['commodity_name'];
+                                        if (!empty($price['variety'])) {
+                                            $commodity_display .= " ({$price['variety']})";
+                                        }
+                                    ?>
+                                    <tr>
+                                        <?php if ($first_row): ?>
+                                            <td rowspan="<?php echo count($prices_in_group); ?>">
+                                                <input type="checkbox" 
+                                                    data-group-key="<?php echo $group_key; ?>"
+                                                    data-price-ids="<?php echo $group_price_ids_json; ?>"
+                                                    class="checkbox" />
+                                            </td>
+                                            <td rowspan="<?php echo count($prices_in_group); ?>" style="font-weight: 500;"><?php echo htmlspecialchars($price['market']); ?></td>
+                                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['country_admin_0']); ?></td>
+                                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($commodity_display); ?></td>
+                                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('d/m/Y', strtotime($price['date_posted'])); ?></td>
+                                        <?php endif; ?>
+                                        <td><?php echo htmlspecialchars($price['price_type']); ?></td>
+                                        <td><?php echo htmlspecialchars($price['unit']); ?></td>
+                                        <td style="font-weight: 600;"><?php echo number_format($localPrice, 2); ?> <?php echo $currency; ?></td>
+                                        <td style="font-weight: 600;">$<?php echo number_format($usdPrice, 2); ?></td>
+                                        <td><?php echo number_format($exchangeRate, 2); ?> <?php echo $currency; ?>/USD</td>
+                                        <td class="<?php echo $dayChangeClass; ?>"><?php echo $dayChange >= 0 ? '+' : ''; ?><?php echo $dayChange; ?>%</td>
+                                        <td class="<?php echo $monthChangeClass; ?>"><?php echo $monthChange >= 0 ? '+' : ''; ?><?php echo $monthChange; ?>%</td>
+                                        <td class="<?php echo $yearChangeClass; ?>"><?php echo $yearChange >= 0 ? '+' : ''; ?><?php echo $yearChange; ?>%</td>
+                                        <?php if ($first_row): ?>
+                                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['data_source']); ?></td>
+                                        <?php endif; ?>
+                                    </tr>
+                                    <?php
+                                            $first_row = false;
+                                        endforeach;
+                                    endforeach;
+                                } else {
+                                    echo '<tr><td colspan="14" style="text-align: center; padding: 20px;">No market prices data found</td></tr>';
+                                }
+                                ?>
+                            </tbody>
                     </table>
                 </div>
 
@@ -1146,8 +1194,8 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
                             <label for="chart-commodity-filter" class="form-label">Commodity</label>
                             <select id="chart-commodity-filter" class="form-select">
                                 <option value="all">All Commodities</option>
-                                <?php foreach ($commodities as $id => $name): ?>
-                                    <option value="<?php echo htmlspecialchars($name); ?>"><?php echo htmlspecialchars($name); ?></option>
+                                <?php foreach ($commodities_with_varieties as $commodity_display): ?>
+                                    <option value="<?php echo htmlspecialchars($commodity_display); ?>"><?php echo htmlspecialchars($commodity_display); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -1181,15 +1229,38 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
                             <p class="text-muted">Geographic distribution of market prices</p>
                         </div>
                         <div>
-                            <select id="map-commodity-filter" class="form-select" style="width: 200px; display: inline-block;">
-                                <option value="all">All Commodities</option>
-                                <?php foreach ($commodities as $id => $name): ?>
-                                    <option value="<?php echo htmlspecialchars($name); ?>"><?php echo htmlspecialchars($name); ?></option>
-                                <?php endforeach; ?>
-                            </select>
                             <button id="export-map-btn" class="btn btn-sm btn-outline-secondary ms-2">
                                 <i class="fas fa-download"></i> Export
                             </button>
+                        </div>
+                    </div>
+                    
+                    <div class="map-filters">
+                        <div>
+                            <label for="map-commodity-filter" class="form-label">Commodity</label>
+                            <select id="map-commodity-filter" class="form-select">
+                                <option value="all">All Commodities</option>
+                                <?php foreach ($commodities_with_varieties as $commodity_display): ?>
+                                    <option value="<?php echo htmlspecialchars($commodity_display); ?>"><?php echo htmlspecialchars($commodity_display); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="map-country-filter" class="form-label">Country</label>
+                            <select id="map-country-filter" class="form-select">
+                                <option value="all">All Countries</option>
+                                <?php foreach ($countries as $country): ?>
+                                    <option value="<?php echo htmlspecialchars($country); ?>"><?php echo htmlspecialchars($country); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="map-date-from" class="form-label">Date From</label>
+                            <input type="date" id="map-date-from" class="form-control" value="<?php echo isset($filters['date_from']) ? $filters['date_from'] : ''; ?>">
+                        </div>
+                        <div>
+                            <label for="map-date-to" class="form-label">Date To</label>
+                            <input type="date" id="map-date-to" class="form-control" value="<?php echo isset($filters['date_to']) ? $filters['date_to'] : ''; ?>">
                         </div>
                     </div>
                     
@@ -1240,10 +1311,20 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
                         <span class="text-sm text-gray-700">
                             Showing <span class="font-medium"><?php echo $offset + 1; ?></span> to <span class="font-medium"><?php echo min($offset + $limit, $total_records); ?></span> of <span class="font-medium"><?php echo $total_records; ?></span> results
                         </span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm text-gray-700">Rows per page:</span>
+                            <select id="rows-per-page" style="padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px;">
+                                <?php foreach ($limit_options as $option): ?>
+                                    <option value="<?php echo $option; ?>" <?php echo $limit == $option ? 'selected' : ''; ?>>
+                                        <?php echo $option; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
                     </div>
                     <div class="flex items-center gap-2">
                         <button
-                            onclick="window.location.href='?<?php echo http_build_query(array_merge($filters, ['page' => $page - 1])); ?>'"
+                            onclick="window.location.href='?<?php echo http_build_query(array_merge($filters, ['page' => $page - 1, 'limit' => $limit])); ?>'"
                             <?php echo $page <= 1 ? 'disabled' : ''; ?>
                             style="<?php echo $page <= 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''; ?>"
                         >
@@ -1256,7 +1337,7 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
                         $endPage = min($total_pages, $startPage + $visiblePages - 1);
                         
                         if ($startPage > 1) {
-                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => 1])) . '\'" class="page">1</button>';
+                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => 1, 'limit' => $limit])) . '\'" class="page">1</button>';
                             if ($startPage > 2) {
                                 echo '<span class="px-3 py-1 text-sm text-gray-700">...</span>';
                             }
@@ -1264,19 +1345,19 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
                         
                         for ($i = $startPage; $i <= $endPage; $i++) {
                             $activeClass = $i == $page ? 'current' : '';
-                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => $i])) . '\'" class="page '.$activeClass.'">'.$i.'</button>';
+                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => $i, 'limit' => $limit])) . '\'" class="page '.$activeClass.'">'.$i.'</button>';
                         }
                         
                         if ($endPage < $total_pages) {
                             if ($endPage < $total_pages - 1) {
                                 echo '<span class="px-3 py-1 text-sm text-gray-700">...</span>';
                             }
-                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => $total_pages])) . '\'" class="page">'.$total_pages.'</button>';
+                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => $total_pages, 'limit' => $limit])) . '\'" class="page">'.$total_pages.'</button>';
                         }
                         ?>
                         
                         <button
-                            onclick="window.location.href='?<?php echo http_build_query(array_merge($filters, ['page' => $page + 1])); ?>'"
+                            onclick="window.location.href='?<?php echo http_build_query(array_merge($filters, ['page' => $page + 1, 'limit' => $limit])); ?>'"
                             <?php echo $page >= $total_pages ? 'disabled' : ''; ?>
                             style="<?php echo $page >= $total_pages ? 'opacity: 0.5; cursor: not-allowed;' : ''; ?>"
                         >
@@ -1294,12 +1375,14 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
 <script>
 // Initialize charts
 let priceTrendChart;
 let currentChartType = 'line';
 let map;
+window.mapMarkers = [];
 
 // Function to initialize or update charts
 function initCharts(data) {
@@ -1349,7 +1432,11 @@ function processChartData(data) {
     }
     
     if (selectedCommodity && selectedCommodity !== 'all') {
-        filteredData = filteredData.filter(item => item.commodity_name === selectedCommodity);
+        filteredData = filteredData.filter(item => {
+            // Handle both commodity name and variety
+            const fullCommodityName = item.commodity_name + (item.variety ? ` (${item.variety})` : '');
+            return fullCommodityName === selectedCommodity || item.commodity_name === selectedCommodity;
+        });
     }
     
     // Group data by date (without time) for trend chart
@@ -1364,10 +1451,11 @@ function processChartData(data) {
     // If a specific commodity is selected, show only that
     if (selectedCommodity && selectedCommodity !== 'all') {
         const prices = dates.map(date => {
-            const item = filteredData.find(d => 
-                d.commodity_name === selectedCommodity && 
-                new Date(d.date_posted).toISOString().split('T')[0] === date
-            );
+            const item = filteredData.find(d => {
+                const fullCommodityName = d.commodity_name + (d.variety ? ` (${d.variety})` : '');
+                return (fullCommodityName === selectedCommodity || d.commodity_name === selectedCommodity) && 
+                       new Date(d.date_posted).toISOString().split('T')[0] === date;
+            });
             return item ? parseFloat(item.Price) : null;
         });
         
@@ -1382,14 +1470,17 @@ function processChartData(data) {
         });
     } else {
         // Group by commodity if no specific one is selected
-        const commodities = [...new Set(filteredData.map(item => item.commodity_name))];
+        const commodities = [...new Set(filteredData.map(item => {
+            return item.commodity_name + (item.variety ? ` (${item.variety})` : '');
+        }))];
         
         commodities.forEach(commodity => {
             const prices = dates.map(date => {
-                const item = filteredData.find(d => 
-                    d.commodity_name === commodity && 
-                    new Date(d.date_posted).toISOString().split('T')[0] === date
-                );
+                const item = filteredData.find(d => {
+                    const fullCommodityName = d.commodity_name + (d.variety ? ` (${d.variety})` : '');
+                    return fullCommodityName === commodity && 
+                           new Date(d.date_posted).toISOString().split('T')[0] === date;
+                });
                 return item ? parseFloat(item.Price) : null;
             });
             
@@ -1503,12 +1594,37 @@ function initMap(data) {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
     
-    // Filter data based on selected commodity
+    // Filter data based on selected filters
     const selectedCommodity = document.getElementById('map-commodity-filter').value;
+    const selectedCountry = document.getElementById('map-country-filter').value;
+    const dateFrom = document.getElementById('map-date-from').value;
+    const dateTo = document.getElementById('map-date-to').value;
+    
     let filteredData = data;
     
+    // Apply commodity filter if not "all"
     if (selectedCommodity && selectedCommodity !== 'all') {
-        filteredData = filteredData.filter(item => item.commodity_name === selectedCommodity);
+        filteredData = filteredData.filter(item => {
+            // Handle both commodity name and variety
+            const fullCommodityName = item.commodity_name + (item.variety ? ` (${item.variety})` : '');
+            return fullCommodityName === selectedCommodity || item.commodity_name === selectedCommodity;
+        });
+    }
+    
+    // Apply country filter if not "all"
+    if (selectedCountry && selectedCountry !== 'all') {
+        filteredData = filteredData.filter(item => item.country_admin_0 === selectedCountry);
+    }
+    
+    // Apply date filters
+    if (dateFrom) {
+        filteredData = filteredData.filter(item => new Date(item.date_posted) >= new Date(dateFrom));
+    }
+    
+    if (dateTo) {
+        const toDate = new Date(dateTo);
+        toDate.setHours(23, 59, 59, 999); // End of the day
+        filteredData = filteredData.filter(item => new Date(item.date_posted) <= toDate);
     }
     
     // Group data by market and calculate average price
@@ -1523,47 +1639,29 @@ function initMap(data) {
             };
         }
         marketData[item.market].prices.push(parseFloat(item.Price));
-        marketData[item.market].commodities.add(item.commodity_name);
+        const commodityDisplay = item.commodity_name + (item.variety ? ` (${item.variety})` : '');
+        marketData[item.market].commodities.add(commodityDisplay);
     });
     
     // Calculate price ranges for color coding
     const allPrices = filteredData.map(item => parseFloat(item.Price));
-    const minPrice = Math.min(...allPrices);
-    const maxPrice = Math.max(...allPrices);
+    const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : 0;
+    const maxPrice = allPrices.length > 0 ? Math.max(...allPrices) : 0;
     const priceRange = maxPrice - minPrice;
     
     // Get coordinates from PHP (already geocoded)
-    const marketCoordinates = <?php
-        // Prepare market-country mapping for geocoding
-        $marketCountryMap = [];
-        foreach ($markets as $market) {
-            // Find the country for this market from the actual data
-            $marketCountry = '';
-            foreach ($prices_data as $price) {
-                if ($price['market'] === $market) {
-                    $marketCountry = $price['country_admin_0'];
-                    break;
-                }
-            }
-            if (empty($marketCountry)) {
-                $marketCountry = 'Kenya'; // Default fallback
-            }
-            $marketCountryMap[$market] = $marketCountry;
-        }
-        
-        // Geocode all markets
-        $coordinates = [];
-        foreach ($marketCountryMap as $market => $country) {
-            $coords = geocodeMarket($market, $country);
-            $coordinates[$market] = $coords;
-        }
-        echo json_encode($coordinates);
-    ?>;
+    const marketCoordinates = <?php echo json_encode($marketCoordinates); ?>;
+    
+    // Clear existing markers if any
+    if (window.mapMarkers) {
+        window.mapMarkers.forEach(marker => map.removeLayer(marker));
+    }
+    window.mapMarkers = [];
     
     // Add markers for each market
     Object.keys(marketData).forEach(market => {
         const data = marketData[market];
-        const avgPrice = data.prices.reduce((a, b) => a + b, 0) / data.prices.length;
+        const avgPrice = data.prices.length > 0 ? data.prices.reduce((a, b) => a + b, 0) / data.prices.length : 0;
         
         // Determine marker color based on price
         let markerColor;
@@ -1598,6 +1696,7 @@ function initMap(data) {
         
         // Create marker
         const marker = L.marker([lat, lng], {icon: markerIcon}).addTo(map);
+        window.mapMarkers.push(marker);
         
         // Create popup content with coordinate information
         const popupContent = `
@@ -1624,6 +1723,11 @@ function initMap(data) {
     
     // Add a legend for the price colors
     addPriceLegend(minPrice, maxPrice);
+    
+    // Update market stats with initial message if no data
+    if (Object.keys(marketData).length === 0) {
+        document.getElementById('market-stats').innerHTML = '<p>No data available for selected filters</p>';
+    }
 }
 
 // Enhanced helper function with better city coordinates
@@ -1751,37 +1855,6 @@ function updateMarketStats(market, data, lat, lng) {
     `;
 }
 
-// Helper function to get default coordinates for countries
-function getDefaultLatLng(country) {
-    const countryCoords = {
-        'Kenya': [1.0, 38.0],
-        'Tanzania': [-6.0, 35.0],
-        'Uganda': [1.0, 32.0],
-        'Rwanda': [-2.0, 30.0],
-        'Ethiopia': [9.0, 40.0]
-    };
-    
-    return countryCoords[country] || [0, 35];
-}
-
-// Update market statistics
-function updateMarketStats(market, data) {
-    const statsDiv = document.getElementById('market-stats');
-    const avgPrice = data.prices.reduce((a, b) => a + b, 0) / data.prices.length;
-    const minPrice = Math.min(...data.prices);
-    const maxPrice = Math.max(...data.prices);
-    
-    statsDiv.innerHTML = `
-        <h6>${market}</h6>
-        <p><strong>Country:</strong> ${data.country}</p>
-        <p><strong>Average Price:</strong> $${avgPrice.toFixed(2)}</p>
-        <p><strong>Price Range:</strong> $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)}</p>
-        <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
-        <p><strong>Data Points:</strong> ${data.prices.length}</p>
-        <p><strong>Data Source:</strong> ${data.data_source}</p>
-    `;
-}
-
 // Helper function to generate random colors
 function getRandomColor() {
     const letters = '0123456789ABCDEF';
@@ -1871,9 +1944,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Export map button
     document.getElementById('export-map-btn')?.addEventListener('click', function() {
         if (map) {
-            // Create a temporary canvas to capture the map
-            const mapContainer = document.getElementById('map');
-            html2canvas(mapContainer).then(canvas => {
+            html2canvas(document.querySelector('#map')).then(canvas => {
                 const link = document.createElement('a');
                 link.download = 'market-map.png';
                 link.href = canvas.toDataURL();
@@ -1889,6 +1960,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Filter change event listeners for map
     document.getElementById('map-commodity-filter')?.addEventListener('change', updateMap);
+    document.getElementById('map-country-filter')?.addEventListener('change', updateMap);
+    document.getElementById('map-date-from')?.addEventListener('change', updateMap);
+    document.getElementById('map-date-to')?.addEventListener('change', updateMap);
 
     function updateCharts() {
         const chartData = <?php echo json_encode($chart_data); ?>;
@@ -1899,31 +1973,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const mapData = <?php echo json_encode($chart_data); ?>;
         initMap(mapData);
     }
-
-    // Commodity category buttons
-    const categoryButtons = document.querySelectorAll('.commodity-category-btn');
-    categoryButtons.forEach(button => {
-        button.addEventListener('click', function() {
-            const category = this.getAttribute('data-category');
-            
-            // Update active state
-            categoryButtons.forEach(btn => btn.classList.remove('active'));
-            this.classList.add('active');
-            
-            // Add hidden input for category filter
-            let categoryInput = document.querySelector('input[name="commodity_category"]');
-            if (!categoryInput) {
-                categoryInput = document.createElement('input');
-                categoryInput.type = 'hidden';
-                categoryInput.name = 'commodity_category';
-                document.getElementById('filter-form').appendChild(categoryInput);
-            }
-            categoryInput.value = category;
-            
-            // Submit the form
-            document.getElementById('filter-form').submit();
-        });
-    });
 
     // Reset filters button
     document.getElementById('reset-filters')?.addEventListener('click', function() {
@@ -1940,6 +1989,16 @@ document.addEventListener('DOMContentLoaded', function() {
         form.submit();
     });
 
+
+  // Rows per page selector
+    document.getElementById('rows-per-page')?.addEventListener('change', function() {
+        const limit = this.value;
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set('limit', limit);
+        currentUrl.searchParams.set('page', 1); // Reset to first page when changing limit
+        window.location.href = currentUrl.toString();
+    });  
+    
     // Download button functionality
     document.getElementById('download-btn')?.addEventListener('click', function() {
         // Create a form to submit download request
