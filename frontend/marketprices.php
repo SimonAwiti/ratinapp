@@ -4,6 +4,74 @@
 // Include your database configuration file
 include '../admin/includes/config.php';
 
+// Function to geocode market name to coordinates using OpenStreetMap Nominatim API
+function geocodeMarket($market, $country) {
+    // Prepare the query - combine market and country for better results
+    $query = urlencode("$market, $country");
+    $url = "https://nominatim.openstreetmap.org/search?format=json&q=$query&limit=1";
+    
+    // Create context with proper headers
+    $context = stream_context_create([
+        'http' => [
+            'header' => "User-Agent: RATIN Market Prices App/1.0\r\n",
+            'timeout' => 10 // 10 second timeout
+        ]
+    ]);
+    
+    try {
+        $response = @file_get_contents($url, false, $context);
+        if ($response === FALSE) {
+            error_log("Geocoding API request failed for: $market, $country");
+            return null;
+        }
+        
+        $data = json_decode($response, true);
+        
+        if (!empty($data) && isset($data[0]['lat']) && isset($data[0]['lon'])) {
+            return [
+                'latitude' => (float)$data[0]['lat'],
+                'longitude' => (float)$data[0]['lon']
+            ];
+        } else {
+            error_log("No coordinates found for: $market, $country");
+            return null;
+        }
+    } catch (Exception $e) {
+        error_log("Geocoding error for $market, $country: " . $e->getMessage());
+        return null;
+    }
+}
+
+// Function to get coordinates for all markets (with caching for this request)
+function getAllMarketCoordinates($markets, $countries_data) {
+    $coordinates = [];
+    
+    foreach ($markets as $market) {
+        // Find the country for this market
+        $country = '';
+        foreach ($countries_data as $data_country => $data_markets) {
+            if (in_array($market, $data_markets)) {
+                $country = $data_country;
+                break;
+            }
+        }
+        
+        if (empty($country)) {
+            // If we can't find the country, use the first available country
+            $country = array_keys($countries_data)[0] ?? 'Kenya';
+        }
+        
+        // Geocode the market
+        $coords = geocodeMarket($market, $country);
+        $coordinates[$market] = $coords;
+        
+        // Add a small delay to be respectful to the Nominatim API
+        usleep(100000); // 100ms delay
+    }
+    
+    return $coordinates;
+}
+
 // Function to convert currency to USD using date-matched exchange rates
 function convertToUSD($amount, $country, $date, $con) {
     if (!is_numeric($amount)) {
@@ -1420,7 +1488,7 @@ function getTrendChartOptions() {
     };
 }
 
-// Initialize map
+// Initialize map with geocoded coordinates
 function initMap(data) {
     // Destroy existing map if it exists
     if (map) {
@@ -1451,9 +1519,7 @@ function initMap(data) {
                 prices: [],
                 commodities: new Set(),
                 country: item.country_admin_0,
-                data_source: item.data_source,
-                latitude: item.latitude,
-                longitude: item.longitude
+                data_source: item.data_source
             };
         }
         marketData[item.market].prices.push(parseFloat(item.Price));
@@ -1466,6 +1532,34 @@ function initMap(data) {
     const maxPrice = Math.max(...allPrices);
     const priceRange = maxPrice - minPrice;
     
+    // Get coordinates from PHP (already geocoded)
+    const marketCoordinates = <?php
+        // Prepare market-country mapping for geocoding
+        $marketCountryMap = [];
+        foreach ($markets as $market) {
+            // Find the country for this market from the actual data
+            $marketCountry = '';
+            foreach ($prices_data as $price) {
+                if ($price['market'] === $market) {
+                    $marketCountry = $price['country_admin_0'];
+                    break;
+                }
+            }
+            if (empty($marketCountry)) {
+                $marketCountry = 'Kenya'; // Default fallback
+            }
+            $marketCountryMap[$market] = $marketCountry;
+        }
+        
+        // Geocode all markets
+        $coordinates = [];
+        foreach ($marketCountryMap as $market => $country) {
+            $coords = geocodeMarket($market, $country);
+            $coordinates[$market] = $coords;
+        }
+        echo json_encode($coordinates);
+    ?>;
+    
     // Add markers for each market
     Object.keys(marketData).forEach(market => {
         const data = marketData[market];
@@ -1473,7 +1567,7 @@ function initMap(data) {
         
         // Determine marker color based on price
         let markerColor;
-        const priceRatio = (avgPrice - minPrice) / priceRange;
+        const priceRatio = priceRange > 0 ? (avgPrice - minPrice) / priceRange : 0.5;
         if (priceRatio > 0.7) {
             markerColor = '#ff4444'; // High price
         } else if (priceRatio > 0.3) {
@@ -1482,21 +1576,30 @@ function initMap(data) {
             markerColor = '#44ff44'; // Low price
         }
         
-        // Create custom marker icon
+        // Get coordinates for this market
+        let lat, lng;
+        if (marketCoordinates[market] && marketCoordinates[market].latitude && marketCoordinates[market].longitude) {
+            lat = marketCoordinates[market].latitude;
+            lng = marketCoordinates[market].longitude;
+        } else {
+            // Fallback to enhanced country coordinates
+            const fallbackCoords = getEnhancedDefaultLatLng(data.country, market);
+            lat = fallbackCoords[0];
+            lng = fallbackCoords[1];
+        }
+        
+        // Create custom marker icon with better styling
         const markerIcon = L.divIcon({
             className: 'custom-marker',
-            html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white;"></div>`,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12]
+            html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
+            iconSize: [26, 26],
+            iconAnchor: [13, 13]
         });
         
         // Create marker
-        const marker = L.marker([data.latitude || getDefaultLatLng(data.country)[0], 
-                               data.longitude || getDefaultLatLng(data.country)[1]], 
-                               {icon: markerIcon})
-            .addTo(map);
+        const marker = L.marker([lat, lng], {icon: markerIcon}).addTo(map);
         
-        // Create popup content
+        // Create popup content with coordinate information
         const popupContent = `
             <div class="map-popup">
                 <h4>${market}</h4>
@@ -1504,6 +1607,10 @@ function initMap(data) {
                 <p><strong>Average Price:</strong> $${avgPrice.toFixed(2)}</p>
                 <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
                 <p><strong>Data Source:</strong> ${data.data_source}</p>
+                <p><strong>Coordinates:</strong> ${lat.toFixed(4)}, ${lng.toFixed(4)}</p>
+                <p style="font-size: 11px; color: #666; margin-top: 8px;">
+                    <i class="fas fa-info-circle"></i> Coordinates from OpenStreetMap
+                </p>
             </div>
         `;
         
@@ -1511,9 +1618,137 @@ function initMap(data) {
         
         // Add click event to update market stats
         marker.on('click', function() {
-            updateMarketStats(market, data);
+            updateMarketStats(market, data, lat, lng);
         });
     });
+    
+    // Add a legend for the price colors
+    addPriceLegend(minPrice, maxPrice);
+}
+
+// Enhanced helper function with better city coordinates
+function getEnhancedDefaultLatLng(country, market = '') {
+    const enhancedCountryCoords = {
+        'Kenya': {
+            'Nairobi': [-1.286389, 36.817223],
+            'Mombasa': [-4.0435, 39.6682],
+            'Kisumu': [-0.1022, 34.7617],
+            'Nakuru': [-0.3031, 36.0800],
+            'Eldoret': [0.5143, 35.2698],
+            'Thika': [-1.0333, 37.0833],
+            'default': [-1.286389, 36.817223]
+        },
+        'Tanzania': {
+            'Dar es Salaam': [-6.8235, 39.2695],
+            'Mwanza': [-2.5164, 32.9176],
+            'Arusha': [-3.3869, 36.6820],
+            'Dodoma': [-6.1630, 35.7516],
+            'Mbeya': [-8.9000, 33.4500],
+            'default': [-6.3690, 34.8888]
+        },
+        'Uganda': {
+            'Kampala': [0.3476, 32.5825],
+            'Jinja': [0.4244, 33.2041],
+            'Mbale': [1.0644, 34.1794],
+            'Gulu': [2.7746, 32.2980],
+            'Lira': [2.2350, 32.9097],
+            'default': [1.3733, 32.2903]
+        },
+        'Rwanda': {
+            'Kigali': [-1.9441, 30.0619],
+            'Butare': [-2.5967, 29.7439],
+            'Gisenyi': [-1.7028, 29.2569],
+            'default': [-1.9403, 29.8739]
+        },
+        'Ethiopia': {
+            'Addis Ababa': [9.0227, 38.7468],
+            'Dire Dawa': [9.5892, 41.8662],
+            'Mekele': [13.4963, 39.4752],
+            'Bahir Dar': [11.5742, 37.3614],
+            'Awasa': [7.0500, 38.4667],
+            'default': [9.1450, 40.4897]
+        }
+    };
+    
+    // If we have specific city coordinates, use them
+    const countryData = enhancedCountryCoords[country];
+    if (countryData) {
+        // Try to match market name with known cities
+        if (market && countryData[market]) {
+            return countryData[market];
+        }
+        
+        // Try partial matching for market names containing city names
+        if (market) {
+            for (const [city, coords] of Object.entries(countryData)) {
+                if (city !== 'default' && market.toLowerCase().includes(city.toLowerCase())) {
+                    return coords;
+                }
+            }
+        }
+        
+        return countryData['default'];
+    }
+    
+    return [0, 35]; // Default fallback
+}
+
+// Add price legend to the map
+function addPriceLegend(minPrice, maxPrice) {
+    const legend = L.control({ position: 'bottomright' });
+    
+    legend.onAdd = function(map) {
+        const div = L.DomUtil.create('div', 'info legend');
+        div.style.backgroundColor = 'white';
+        div.style.padding = '10px';
+        div.style.borderRadius = '5px';
+        div.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+        
+        const priceRange = maxPrice - minPrice;
+        const grades = [
+            { color: '#44ff44', range: 'Low' },
+            { color: '#ffaa00', range: 'Medium' },
+            { color: '#ff4444', range: 'High' }
+        ];
+        
+        let legendHTML = '<h6 style="margin: 0 0 8px 0;">Price Levels</h6>';
+        grades.forEach(grade => {
+            legendHTML += `
+                <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                    <div style="width: 15px; height: 15px; background-color: ${grade.color}; border-radius: 50%; border: 2px solid white; margin-right: 8px;"></div>
+                    <span>${grade.range} Prices</span>
+                </div>
+            `;
+        });
+        
+        legendHTML += `<div style="margin-top: 8px; font-size: 11px; color: #666;">
+            Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)}
+        </div>`;
+        
+        div.innerHTML = legendHTML;
+        return div;
+    };
+    
+    legend.addTo(map);
+}
+
+// Update market statistics to include coordinates
+function updateMarketStats(market, data, lat, lng) {
+    const statsDiv = document.getElementById('market-stats');
+    const avgPrice = data.prices.reduce((a, b) => a + b, 0) / data.prices.length;
+    const minPrice = Math.min(...data.prices);
+    const maxPrice = Math.max(...data.prices);
+    
+    statsDiv.innerHTML = `
+        <h6>${market}</h6>
+        <p><strong>Country:</strong> ${data.country}</p>
+        <p><strong>Coordinates:</strong> ${lat.toFixed(4)}, ${lng.toFixed(4)}</p>
+        <p><strong>Average Price:</strong> $${avgPrice.toFixed(2)}</p>
+        <p><strong>Price Range:</strong> $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)}</p>
+        <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
+        <p><strong>Data Points:</strong> ${data.prices.length}</p>
+        <p><strong>Data Source:</strong> ${data.data_source}</p>
+    `;
 }
 
 // Helper function to get default coordinates for countries
