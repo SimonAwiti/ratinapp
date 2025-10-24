@@ -4,6 +4,141 @@
 // Include your database configuration file
 include '../admin/includes/config.php';
 
+// Function to convert currency to USD using date-matched exchange rates
+function convertToUSD($amount, $country, $date, $con) {
+    if (!is_numeric($amount)) {
+        error_log("Invalid amount provided to convertToUSD: " . var_export($amount, true));
+        return 0;
+    }
+
+    $exchangeRate = 1; // Default to 1 (assuming 1:1 for USD or if no rate is found)
+
+    // Check if $con is a valid mysqli object before preparing statement
+    if ($con instanceof mysqli && !$con->connect_error) {
+        // First try to find exact date match
+        $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? AND effective_date = ? ORDER BY date_created DESC LIMIT 1");
+        if ($stmt) {
+            $dateOnly = date('Y-m-d', strtotime($date));
+            $stmt->bind_param("ss", $country, $dateOnly);
+            $stmt->execute();
+            $result = $stmt->get_result();
+
+            if ($result && $result->num_rows > 0) {
+                $row = $result->fetch_assoc();
+                $exchangeRate = (float)$row['exchange_rate'];
+            } else {
+                // If no exact date match, find the most recent rate before the price date
+                $stmt->close();
+                $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? AND effective_date <= ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
+                if ($stmt) {
+                    $stmt->bind_param("ss", $country, $dateOnly);
+                    $stmt->execute();
+                    $result = $stmt->get_result();
+                    
+                    if ($result && $result->num_rows > 0) {
+                        $row = $result->fetch_assoc();
+                        $exchangeRate = (float)$row['exchange_rate'];
+                    } else {
+                        // Fallback to latest available rate
+                        $stmt->close();
+                        $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
+                        if ($stmt) {
+                            $stmt->bind_param("s", $country);
+                            $stmt->execute();
+                            $result = $stmt->get_result();
+                            
+                            if ($result && $result->num_rows > 0) {
+                                $row = $result->fetch_assoc();
+                                $exchangeRate = (float)$row['exchange_rate'];
+                            } else {
+                                error_log("No exchange rate found in DB for " . $country . ". Using default rate: " . $exchangeRate);
+                            }
+                        }
+                    }
+                }
+            }
+            if ($stmt) $stmt->close();
+        } else {
+            error_log("Error preparing currency query for " . $country . ": " . $con->error);
+        }
+    } else {
+        error_log("Database connection not valid in convertToUSD function. Skipping currency rate fetch.");
+    }
+
+    // Ensure exchangeRate is not zero to prevent division by zero errors.
+    if ($exchangeRate == 0) {
+        error_log("Exchange rate for " . $country . " is zero or invalid. Returning 0 for conversion to prevent division by zero.");
+        return 0;
+    }
+
+    return round($amount / $exchangeRate, 2);
+}
+
+// Function to get exchange rate for display (date-matched)
+function getExchangeRate($country, $date, $con) {
+    $exchangeRate = 1; // Default to 1
+
+    if ($con instanceof mysqli && !$con->connect_error) {
+        // First try to find exact date match
+        $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? AND effective_date = ? ORDER BY date_created DESC LIMIT 1");
+        if ($stmt) {
+            $dateOnly = date('Y-m-d', strtotime($date));
+            $stmt->bind_param("ss", $country, $dateOnly);
+            $stmt->execute();
+            $result = $stmt->get_result();
+
+            if ($result && $result->num_rows > 0) {
+                $row = $result->fetch_assoc();
+                $exchangeRate = (float)$row['exchange_rate'];
+            } else {
+                // If no exact date match, find the most recent rate before the price date
+                $stmt->close();
+                $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? AND effective_date <= ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
+                if ($stmt) {
+                    $stmt->bind_param("ss", $country, $dateOnly);
+                    $stmt->execute();
+                    $result = $stmt->get_result();
+                    
+                    if ($result && $result->num_rows > 0) {
+                        $row = $result->fetch_assoc();
+                        $exchangeRate = (float)$row['exchange_rate'];
+                    } else {
+                        // Fallback to latest available rate
+                        $stmt->close();
+                        $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
+                        if ($stmt) {
+                            $stmt->bind_param("s", $country);
+                            $stmt->execute();
+                            $result = $stmt->get_result();
+                            
+                            if ($result && $result->num_rows > 0) {
+                                $row = $result->fetch_assoc();
+                                $exchangeRate = (float)$row['exchange_rate'];
+                            }
+                        }
+                    }
+                }
+            }
+            if ($stmt) $stmt->close();
+        }
+    }
+
+    return $exchangeRate;
+}
+
+// Function to get currency code for a country
+function getCurrencyCode($country) {
+    $currencies = [
+        'Kenya' => 'KES',
+        'Tanzania' => 'TSH',
+        'Uganda' => 'UGX',
+        'Rwanda' => 'RWF',
+        'Ethiopia' => 'ETB'
+    ];
+    
+    return $currencies[$country] ?? 'USD';
+}
+
 // Function to build the SQL query with filters
 function buildPricesQuery($filters = []) {
     $sql = "SELECT
@@ -17,18 +152,11 @@ function buildPricesQuery($filters = []) {
                 p.status,
                 p.data_source,
                 p.country_admin_0,
-                p.unit,
-                er.kshusd,
-                er.tshusd,
-                er.ugxusd,
-                er.rwfusd,
-                er.birrusd
+                p.unit
             FROM
                 market_prices p
             LEFT JOIN
                 commodities c ON p.commodity = c.id
-            LEFT JOIN
-                (SELECT * FROM exchange_rates ORDER BY date DESC LIMIT 1) er ON 1=1
             WHERE
                 p.status IN ('published', 'approved')";
     
@@ -864,51 +992,21 @@ $chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for bet
                                         $monthChangeClass = $monthChange >= 0 ? 'change-positive' : 'change-negative';
                                         $yearChangeClass = $yearChange >= 0 ? 'change-positive' : 'change-negative';
                                         
-                                        // Determine currency and exchange rate based on country
-                                        $currency = '';
-                                        $exchangeRate = 1;
-                                        $localPrice = $price['Price'];
-                                        $usdPrice = $price['Price'];
+                                        // CORRECTED: Get currency code and date-matched exchange rate
+                                        $currency = getCurrencyCode($price['country_admin_0']);
+                                        $exchangeRate = getExchangeRate($price['country_admin_0'], $price['date_posted'], $con);
                                         
-                                        switch(strtolower($price['country_admin_0'])) {
-                                            case 'kenya':
-                                                $currency = 'KES';
-                                                $exchangeRate = $price['kshusd'] ?? 1;
-                                                $localPrice = $price['Price'] * $exchangeRate;
-                                                break;
-                                            case 'tanzania':
-                                                $currency = 'TSH';
-                                                $exchangeRate = $price['tshusd'] ?? 1;
-                                                $localPrice = $price['Price'] * $exchangeRate;
-                                                break;
-                                            case 'uganda':
-                                                $currency = 'UGX';
-                                                $exchangeRate = $price['ugxusd'] ?? 1;
-                                                $localPrice = $price['Price'] * $exchangeRate;
-                                                break;
-                                            case 'rwanda':
-                                                $currency = 'RWF';
-                                                $exchangeRate = $price['rwfusd'] ?? 1;
-                                                $localPrice = $price['Price'] * $exchangeRate;
-                                                break;
-                                            case 'ethiopia':
-                                                $currency = 'ETB';
-                                                $exchangeRate = $price['birrusd'] ?? 1;
-                                                $localPrice = $price['Price'] * $exchangeRate;
-                                                break;
-                                            default:
-                                                $currency = 'USD';
-                                                $exchangeRate = 1;
-                                                $localPrice = $price['Price'];
-                                        }
+                                        // The price in database is in local currency, convert to USD
+                                        $localPrice = $price['Price'];
+                                        $usdPrice = convertToUSD($localPrice, $price['country_admin_0'], $price['date_posted'], $con);
                             ?>
                             <tr>
                                 <?php if ($first_row): ?>
                                     <td rowspan="<?php echo count($prices_in_group); ?>">
                                         <input type="checkbox" 
-                                               data-group-key="<?php echo $group_key; ?>"
-                                               data-price-ids="<?php echo $group_price_ids_json; ?>"
-                                               class="checkbox" />
+                                            data-group-key="<?php echo $group_key; ?>"
+                                            data-price-ids="<?php echo $group_price_ids_json; ?>"
+                                            class="checkbox" />
                                     </td>
                                     <td rowspan="<?php echo count($prices_in_group); ?>" style="font-weight: 500;"><?php echo htmlspecialchars($price['market']); ?></td>
                                     <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['country_admin_0']); ?></td>
@@ -1260,7 +1358,7 @@ function getTrendChartOptions() {
                 intersect: false,
                 callbacks: {
                     label: function(context) {
-                        return `${context.dataset.label}: $${context.parsed.y.toFixed(2)}`;
+                        return `${context.dataset.label}: ${context.parsed.y.toFixed(2)}`;
                     }
                 }
             },
