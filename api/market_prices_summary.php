@@ -1,5 +1,5 @@
 <?php
-// api/market_prices_filtered.php
+// api/market_prices_enhanced.php
 
 // Include your database configuration
 include '../admin/includes/config.php';
@@ -15,19 +15,22 @@ $countryFilter = isset($_GET['country']) ? $_GET['country'] : '';
 $commodityFilter = isset($_GET['commodity']) ? $_GET['commodity'] : '';
 $categoryFilter = isset($_GET['category']) ? $_GET['category'] : '';
 
-// Function to get commodity groups with prices and filters
+// Function to get commodity groups with proper categories and calculations
 function getCommodityGroups($con, $countryFilter = '', $commodityFilter = '', $categoryFilter = '') {
-    // Build the base query
+    // Build the base query with proper joins
     $query = "
         SELECT 
+            c.id as commodity_id,
             c.commodity_name,
             c.variety,
+            cat.name as category_name,
             mp.country_admin_0 as country,
             mp.price_type,
             mp.Price,
             mp.date_posted
         FROM market_prices mp
         JOIN commodities c ON mp.commodity = c.id
+        JOIN commodity_categories cat ON c.category_id = cat.id
         WHERE mp.status IN ('published', 'approved')
         AND mp.date_posted IN (
             SELECT MAX(date_posted)
@@ -56,11 +59,17 @@ function getCommodityGroups($con, $countryFilter = '', $commodityFilter = '', $c
         $types .= 's';
     }
     
+    if (!empty($categoryFilter)) {
+        $conditions[] = "cat.name = ?";
+        $params[] = $categoryFilter;
+        $types .= 's';
+    }
+    
     if (!empty($conditions)) {
         $query .= " AND " . implode(" AND ", $conditions);
     }
     
-    $query .= " ORDER BY c.commodity_name, mp.country_admin_0, mp.price_type";
+    $query .= " ORDER BY cat.name, c.commodity_name, mp.country_admin_0, mp.price_type";
     
     // Prepare and execute the query
     $stmt = $con->prepare($query);
@@ -82,28 +91,46 @@ function getCommodityGroups($con, $countryFilter = '', $commodityFilter = '', $c
     }
     $stmt->close();
 
+    // Get all data for EA average calculations
+    $allDataQuery = "
+        SELECT 
+            c.id as commodity_id,
+            c.commodity_name,
+            c.variety,
+            cat.name as category_name,
+            mp.country_admin_0 as country,
+            mp.price_type,
+            mp.Price,
+            mp.date_posted
+        FROM market_prices mp
+        JOIN commodities c ON mp.commodity = c.id
+        JOIN commodity_categories cat ON c.category_id = cat.id
+        WHERE mp.status IN ('published', 'approved')
+        ORDER BY mp.date_posted DESC
+    ";
+    
+    $allDataResult = $con->query($allDataQuery);
+    $allPricesData = [];
+    while ($row = $allDataResult->fetch_assoc()) {
+        $allPricesData[] = $row;
+    }
+
     // Group data by commodity category and name
     $commodityGroups = [];
     
     foreach ($pricesData as $price) {
+        $commodityId = $price['commodity_id'];
         $commodityName = $price['commodity_name'];
         $variety = $price['variety'];
         $country = $price['country'];
         $priceType = strtolower($price['price_type']);
         $priceValue = floatval($price['Price']);
+        $category = $price['category_name'];
         
         // Create display name
         $displayName = $commodityName;
         if (!empty($variety)) {
             $displayName .= " (" . $variety . ")";
-        }
-        
-        // Determine category
-        $category = getCommodityCategory($commodityName);
-        
-        // Apply category filter if specified
-        if (!empty($categoryFilter) && $category !== $categoryFilter) {
-            continue;
         }
         
         // Find or create category group
@@ -120,14 +147,22 @@ function getCommodityGroups($con, $countryFilter = '', $commodityFilter = '', $c
         foreach ($commodityGroups[$category]['items'] as &$item) {
             if ($item['country'] === $country && $item['commodity'] === $displayName) {
                 $item['prices'][$priceType]['countryPrice'] = $priceValue;
-                $item['prices'][$priceType]['eaPrice'] = $priceValue; // Same for now
-                $item['prices'][$priceType]['change'] = 0; // Zero for now
+                // Calculate EA price and change
+                $eaPrice = calculateEAPrice($commodityId, $priceType, $allPricesData, $country);
+                $change = calculatePriceChange($con, $commodityId, $country, $priceType);
+                
+                $item['prices'][$priceType]['eaPrice'] = $eaPrice;
+                $item['prices'][$priceType]['change'] = $change;
                 $found = true;
                 break;
             }
         }
         
         if (!$found) {
+            // Calculate EA price and change for new item
+            $eaPrice = calculateEAPrice($commodityId, $priceType, $allPricesData, $country);
+            $change = calculatePriceChange($con, $commodityId, $country, $priceType);
+            
             $commodityGroups[$category]['items'][] = [
                 'country' => $country,
                 'commodity' => $displayName,
@@ -140,36 +175,8 @@ function getCommodityGroups($con, $countryFilter = '', $commodityFilter = '', $c
             // Set the price for the newly created item
             $lastIndex = count($commodityGroups[$category]['items']) - 1;
             $commodityGroups[$category]['items'][$lastIndex]['prices'][$priceType]['countryPrice'] = $priceValue;
-            $commodityGroups[$category]['items'][$lastIndex]['prices'][$priceType]['eaPrice'] = $priceValue;
-        }
-    }
-
-    // Calculate actual EA averages
-    foreach ($commodityGroups as &$category) {
-        foreach ($category['items'] as &$item) {
-            $commodityName = $item['commodity'];
-            $currentCountry = $item['country'];
-            
-            // Calculate EA average for this commodity (across all countries except current)
-            foreach (['wholesale', 'retail'] as $priceType) {
-                if ($item['prices'][$priceType]['countryPrice'] > 0) {
-                    $total = 0;
-                    $count = 0;
-                    
-                    foreach ($category['items'] as $otherItem) {
-                        if ($otherItem['commodity'] === $commodityName && $otherItem['country'] !== $currentCountry) {
-                            if ($otherItem['prices'][$priceType]['countryPrice'] > 0) {
-                                $total += $otherItem['prices'][$priceType]['countryPrice'];
-                                $count++;
-                            }
-                        }
-                    }
-                    
-                    if ($count > 0) {
-                        $item['prices'][$priceType]['eaPrice'] = round($total / $count, 2);
-                    }
-                }
-            }
+            $commodityGroups[$category]['items'][$lastIndex]['prices'][$priceType]['eaPrice'] = $eaPrice;
+            $commodityGroups[$category]['items'][$lastIndex]['prices'][$priceType]['change'] = $change;
         }
     }
 
@@ -177,7 +184,111 @@ function getCommodityGroups($con, $countryFilter = '', $commodityFilter = '', $c
     return array_values($commodityGroups);
 }
 
-// Function to get available filters (for dropdowns)
+// Function to calculate East Africa average price for a commodity
+function calculateEAPrice($commodityId, $priceType, $allPricesData, $excludeCountry = '') {
+    $prices = [];
+    $eaCountries = ['Kenya', 'Uganda', 'Tanzania', 'Rwanda', 'Ethiopia'];
+    
+    // Get latest prices for each country
+    $countryLatestPrices = [];
+    foreach ($allPricesData as $price) {
+        if ($price['commodity_id'] == $commodityId && 
+            strtolower($price['price_type']) == $priceType &&
+            in_array($price['country'], $eaCountries) &&
+            $price['country'] !== $excludeCountry) {
+            
+            $country = $price['country'];
+            $priceDate = $price['date_posted'];
+            $priceValue = floatval($price['Price']);
+            
+            // Only keep the latest price for each country
+            if (!isset($countryLatestPrices[$country]) || $priceDate > $countryLatestPrices[$country]['date']) {
+                $countryLatestPrices[$country] = [
+                    'price' => $priceValue,
+                    'date' => $priceDate
+                ];
+            }
+        }
+    }
+    
+    // Calculate average from latest prices
+    $total = 0;
+    $count = 0;
+    foreach ($countryLatestPrices as $countryData) {
+        if ($countryData['price'] > 0) {
+            $total += $countryData['price'];
+            $count++;
+        }
+    }
+    
+    return $count > 0 ? round($total / $count, 2) : 0;
+}
+
+// Function to calculate price change percentage
+function calculatePriceChange($con, $commodityId, $country, $priceType) {
+    // Get current and previous prices
+    $changeQuery = "
+        SELECT 
+            current.Price as current_price,
+            previous.Price as previous_price
+        FROM (
+            SELECT Price, date_posted
+            FROM market_prices 
+            WHERE commodity = ?
+            AND country_admin_0 = ?
+            AND price_type = ?
+            AND status IN ('published', 'approved')
+            ORDER BY date_posted DESC 
+            LIMIT 1
+        ) as current
+        LEFT JOIN (
+            SELECT Price, date_posted
+            FROM market_prices 
+            WHERE commodity = ?
+            AND country_admin_0 = ?
+            AND price_type = ?
+            AND status IN ('published', 'approved')
+            AND date_posted < (
+                SELECT MAX(date_posted)
+                FROM market_prices 
+                WHERE commodity = ?
+                AND country_admin_0 = ?
+                AND price_type = ?
+                AND status IN ('published', 'approved')
+            )
+            ORDER BY date_posted DESC 
+            LIMIT 1
+        ) as previous ON 1=1
+    ";
+    
+    $stmt = $con->prepare($changeQuery);
+    if (!$stmt) return 0;
+    
+    $priceTypeUpper = ucfirst($priceType);
+    $stmt->bind_param('isssisisi', 
+        $commodityId, $country, $priceTypeUpper,
+        $commodityId, $country, $priceTypeUpper,
+        $commodityId, $country, $priceTypeUpper
+    );
+    
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    $change = 0;
+    if ($row = $result->fetch_assoc()) {
+        $currentPrice = floatval($row['current_price']);
+        $previousPrice = floatval($row['previous_price']);
+        
+        if ($previousPrice > 0 && $currentPrice > 0) {
+            $change = (($currentPrice - $previousPrice) / $previousPrice) * 100;
+        }
+    }
+    $stmt->close();
+    
+    return round($change, 2);
+}
+
+// Function to get available filters from database
 function getAvailableFilters($con) {
     $filters = [
         'countries' => [],
@@ -185,11 +296,11 @@ function getAvailableFilters($con) {
         'categories' => []
     ];
     
-    // Get available countries
-    $countriesQuery = "SELECT DISTINCT country_admin_0 FROM market_prices WHERE status IN ('published', 'approved') ORDER BY country_admin_0";
+    // Get available countries from countries table
+    $countriesQuery = "SELECT country_name FROM countries WHERE status = 'active' ORDER BY country_name";
     $result = $con->query($countriesQuery);
     while ($row = $result->fetch_assoc()) {
-        $filters['countries'][] = $row['country_admin_0'];
+        $filters['countries'][] = $row['country_name'];
     }
     
     // Get available commodities
@@ -199,38 +310,23 @@ function getAvailableFilters($con) {
         $filters['commodities'][] = $row['commodity_name'];
     }
     
-    // Get available categories
-    $filters['categories'] = ['Maize', 'Cereals', 'Pulses', 'Oil Seeds', 'Other'];
+    // Get available categories from commodity_categories table
+    $categoriesQuery = "SELECT name FROM commodity_categories ORDER BY name";
+    $result = $con->query($categoriesQuery);
+    while ($row = $result->fetch_assoc()) {
+        $filters['categories'][] = $row['name'];
+    }
     
     return $filters;
 }
 
-function getCommodityCategory($commodityName) {
-    $categories = [
-        'Maize' => 'Maize',
-        'Wheat' => 'Cereals',
-        'Rice' => 'Cereals',
-        'Sorghum' => 'Cereals',
-        'Millet' => 'Cereals',
-        'Beans' => 'Pulses',
-        'Cowpeas' => 'Pulses',
-        'Green Gram' => 'Pulses',
-        'Pigeon Peas' => 'Pulses',
-        'Soybeans' => 'Oil Seeds',
-        'Groundnuts' => 'Oil Seeds',
-        'Sunflower' => 'Oil Seeds'
-    ];
-    
-    return $categories[$commodityName] ?? 'Other';
-}
-
+// Function to get category icon
 function getCategoryIcon($category) {
     $icons = [
-        'Maize' => '/assets/icons/maize.svg',
         'Cereals' => '/assets/icons/cereals.svg',
         'Pulses' => '/assets/icons/pulses.svg',
-        'Oil Seeds' => '/assets/icons/oil-seeds.svg',
-        'Other' => '/assets/icons/default.svg'
+        'Oil seeds' => '/assets/icons/oil-seeds.svg',
+        'Maize' => '/assets/icons/maize.svg'
     ];
     
     return $icons[$category] ?? '/assets/icons/default.svg';
@@ -271,7 +367,12 @@ try {
                 'totalGroups' => count($commodityGroups),
                 'totalCommodities' => array_reduce($commodityGroups, function($carry, $group) {
                     return $carry + count($group['items']);
-                }, 0)
+                }, 0),
+                'calculation_info' => [
+                    'countryPrice' => 'Average of the particular commodity in the country',
+                    'eaPrice' => 'Average of the particular commodity across East Africa countries',
+                    'change' => 'Percentage difference between current and previous period averages'
+                ]
             ]
         ]);
     }
