@@ -118,6 +118,7 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         
         input[type="text"],
         input[type="url"],
+        input[type="file"],
         select,
         textarea {
             width: 100%;
@@ -239,6 +240,22 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             border: 1px solid #ddd;
         }
         
+        /* Document Preview */
+        .document-preview {
+            max-width: 200px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            margin-top: 10px;
+            border: 1px solid #ddd;
+        }
+        
+        .document-preview i {
+            font-size: 24px;
+            color: #dc3545;
+            margin-right: 8px;
+        }
+        
         /* Loading and Empty States */
         .loading {
             text-align: center;
@@ -326,6 +343,9 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             <button class="btn btn-primary" onclick="showCreateInsightModal()">
                 <i class="fas fa-lightbulb"></i> Create Insight
             </button>
+            <button class="btn btn-primary" onclick="showCreateGrainWatchModal()">
+                <i class="fas fa-binoculars"></i> Create GrainWatch
+            </button>
             <button class="btn btn-primary" onclick="window.location.href='https://beta.ratin.net/ratinapp/admin'">
                 Admin Portal
             </button>
@@ -354,6 +374,11 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="insights-tab" data-bs-toggle="tab" data-bs-target="#insights" type="button" role="tab">
                     <i class="fas fa-lightbulb"></i> Insights
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="grainwatch-tab" data-bs-toggle="tab" data-bs-target="#grainwatch" type="button" role="tab">
+                    <i class="fas fa-binoculars"></i> GrainWatch
                 </button>
             </li>
         </ul>
@@ -433,6 +458,27 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 
                 <div id="insightsTableContainer">
                     <!-- Insights table will be loaded here -->
+                </div>
+            </div>
+
+            <!-- GrainWatch Tab -->
+            <div class="tab-pane fade" id="grainwatch" role="tabpanel">
+                <div class="filter-section">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>Search GrainWatch</label>
+                            <input type="text" id="grainwatchSearchInput" class="form-control" placeholder="Search grainwatch entries...">
+                        </div>
+                        <div class="filter-group">
+                            <button class="btn btn-primary" onclick="applyGrainWatchFilters()">
+                                <i class="fas fa-filter"></i> Filter
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="grainwatchTableContainer">
+                    <!-- GrainWatch table will be loaded here -->
                 </div>
             </div>
         </div>
@@ -556,6 +602,52 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         </div>
     </div>
 
+    <!-- Create/Edit GrainWatch Modal -->
+    <div class="modal fade" id="grainwatchModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="grainwatchModalTitle">Create New GrainWatch</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="grainwatchForm" enctype="multipart/form-data">
+                        <input type="hidden" id="grainwatchId" name="id">
+                        
+                        <!-- Basic Information -->
+                        <div class="form-section">
+                            <h5><i class="fas fa-info-circle"></i> GrainWatch Information</h5>
+                            
+                            <div class="form-group">
+                                <label for="grainwatchHeading" class="required">Heading</label>
+                                <input type="text" id="grainwatchHeading" name="heading" required maxlength="255" placeholder="Enter grainwatch heading...">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="grainwatchDescription" class="required">Description</label>
+                                <textarea id="grainwatchDescription" name="description" required rows="4" placeholder="Enter grainwatch description..."></textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="grainwatchDocument" class="required">Document (PDF)</label>
+                                <input type="file" id="grainwatchDocument" name="document" accept=".pdf" onchange="previewDocument()">
+                                <small class="text-muted">Only PDF files are allowed. Maximum file size: 10MB</small>
+                                <div id="documentPreview" class="document-preview" style="display: none;">
+                                    <i class="fas fa-file-pdf"></i>
+                                    <span id="documentName"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveGrainWatch()">Save GrainWatch</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Delete Confirmation Modal -->
     <div class="modal fade" id="deleteModal" tabindex="-1">
         <div class="modal-dialog">
@@ -588,10 +680,12 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         // Global variables
         let articles = [];
         let insights = [];
+        let grainwatch = [];
         let quill;
         let insightQuill;
         let currentArticleId = null;
         let currentInsightId = null;
+        let currentGrainWatchId = null;
         let currentDeleteType = null;
         const API_BASE = 'api/'; // Adjust this path as needed
 
@@ -609,6 +703,8 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                     loadDraftArticles();
                 } else if (e.target.id === 'insights-tab') {
                     loadInsights();
+                } else if (e.target.id === 'grainwatch-tab') {
+                    loadGrainWatch();
                 }
             });
         });
@@ -678,6 +774,26 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             }
         }
 
+        // File upload helper function
+        async function uploadFile(formData) {
+            try {
+                const response = await fetch(API_BASE + 'upload.php', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('File upload failed:', error);
+                showToast('Failed to upload file. Please try again.', 'danger');
+                throw error;
+            }
+        }
+
         // Load articles from API
         async function loadArticles() {
             showLoading('articlesTableContainer');
@@ -735,6 +851,23 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                     <div class="alert alert-danger">
                         <i class="fas fa-exclamation-triangle"></i>
                         Failed to load insights. Please check your connection and try again.
+                    </div>
+                `;
+            }
+        }
+
+        // Load grainwatch from API
+        async function loadGrainWatch() {
+            showLoading('grainwatchTableContainer');
+            
+            try {
+                grainwatch = await apiRequest('grainwatch.php');
+                renderGrainWatchTable(grainwatch, 'grainwatchTableContainer');
+            } catch (error) {
+                document.getElementById('grainwatchTableContainer').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        Failed to load grainwatch entries. Please check your connection and try again.
                     </div>
                 `;
             }
@@ -888,6 +1021,72 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             container.innerHTML = tableHTML;
         }
 
+        // Render grainwatch table
+        function renderGrainWatchTable(grainwatchData, containerId) {
+            const container = document.getElementById(containerId);
+            
+            if (!grainwatchData || grainwatchData.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-binoculars"></i>
+                        <h4>No grainwatch entries found</h4>
+                        <p>Start by creating your first grainwatch entry.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const tableHTML = `
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th width="30%">Heading</th>
+                                <th width="35%">Description</th>
+                                <th width="15%">Document</th>
+                                <th width="10%">Posted</th>
+                                <th width="10%">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${grainwatchData.map(gw => `
+                                <tr>
+                                    <td>
+                                        <strong>${escapeHtml(gw.heading)}</strong>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted">
+                                            ${escapeHtml(gw.description).substring(0, 100)}${escapeHtml(gw.description).length > 100 ? '...' : ''}
+                                        </small>
+                                    </td>
+                                    <td>
+                                        ${gw.document_path ? `
+                                            <a href="${gw.document_path}" target="_blank" class="btn btn-outline-primary btn-sm">
+                                                <i class="fas fa-file-pdf"></i> View PDF
+                                            </a>
+                                        ` : '<span class="text-muted">No document</span>'}
+                                    </td>
+                                    <td>${formatDate(gw.created_at)}</td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <button class="btn btn-info btn-sm" onclick="editGrainWatch(${gw.id})" title="Edit">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="btn btn-danger btn-sm" onclick="deleteGrainWatch(${gw.id})" title="Delete">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            
+            container.innerHTML = tableHTML;
+        }
+
         // Utility functions
         function escapeHtml(text) {
             if (!text) return '';
@@ -941,6 +1140,17 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             modal.show();
         }
 
+        // Show create grainwatch modal
+        function showCreateGrainWatchModal() {
+            document.getElementById('grainwatchModalTitle').textContent = 'Create New GrainWatch';
+            document.getElementById('grainwatchForm').reset();
+            document.getElementById('grainwatchId').value = '';
+            document.getElementById('documentPreview').style.display = 'none';
+            
+            const modal = new bootstrap.Modal(document.getElementById('grainwatchModal'));
+            modal.show();
+        }
+
         // Edit article
         async function editArticle(articleId) {
             try {
@@ -987,6 +1197,31 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             }
         }
 
+        // Edit grainwatch
+        async function editGrainWatch(grainwatchId) {
+            try {
+                const gw = await apiRequest(`grainwatch.php/${grainwatchId}`);
+                
+                document.getElementById('grainwatchModalTitle').textContent = 'Edit GrainWatch';
+                document.getElementById('grainwatchId').value = gw.id;
+                document.getElementById('grainwatchHeading').value = gw.heading;
+                document.getElementById('grainwatchDescription').value = gw.description;
+                
+                if (gw.document_path) {
+                    document.getElementById('documentName').textContent = gw.document_path.split('/').pop();
+                    document.getElementById('documentPreview').style.display = 'flex';
+                } else {
+                    document.getElementById('documentPreview').style.display = 'none';
+                }
+                
+                const modal = new bootstrap.Modal(document.getElementById('grainwatchModal'));
+                modal.show();
+                
+            } catch (error) {
+                showToast('Failed to load grainwatch for editing.', 'danger');
+            }
+        }
+
         // Preview image
         function previewImage() {
             const imageUrl = document.getElementById('image').value;
@@ -999,6 +1234,35 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                     this.style.display = 'none';
                     showToast('Invalid image URL', 'warning');
                 };
+            } else {
+                preview.style.display = 'none';
+            }
+        }
+
+        // Preview document
+        function previewDocument() {
+            const fileInput = document.getElementById('grainwatchDocument');
+            const preview = document.getElementById('documentPreview');
+            const documentName = document.getElementById('documentName');
+            
+            if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                if (file.type !== 'application/pdf') {
+                    showToast('Please select a PDF file.', 'warning');
+                    fileInput.value = '';
+                    preview.style.display = 'none';
+                    return;
+                }
+                
+                if (file.size > 10 * 1024 * 1024) { // 10MB limit
+                    showToast('File size must be less than 10MB.', 'warning');
+                    fileInput.value = '';
+                    preview.style.display = 'none';
+                    return;
+                }
+                
+                documentName.textContent = file.name;
+                preview.style.display = 'flex';
             } else {
                 preview.style.display = 'none';
             }
@@ -1099,6 +1363,71 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             }
         }
 
+        // Save grainwatch
+        async function saveGrainWatch() {
+            const form = document.getElementById('grainwatchForm');
+            const formData = new FormData(form);
+            const grainwatchId = formData.get('id');
+            
+            const heading = formData.get('heading');
+            const description = formData.get('description');
+            const documentFile = document.getElementById('grainwatchDocument').files[0];
+
+            // Validate required fields
+            if (!heading || !description) {
+                showToast('Please fill in all required fields.', 'warning');
+                return;
+            }
+
+            try {
+                let documentPath = null;
+
+                // Upload document if provided
+                if (documentFile) {
+                    const uploadFormData = new FormData();
+                    uploadFormData.append('document', documentFile);
+                    
+                    const uploadResult = await uploadFile(uploadFormData);
+                    if (uploadResult.success) {
+                        documentPath = uploadResult.filePath;
+                    } else {
+                        throw new Error('Failed to upload document');
+                    }
+                }
+
+                const grainwatchData = {
+                    heading: heading,
+                    description: description,
+                    document_path: documentPath
+                };
+
+                if (grainwatchId) {
+                    // Update existing grainwatch
+                    await apiRequest(`grainwatch.php/${grainwatchId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify(grainwatchData)
+                    });
+                    showToast('GrainWatch updated successfully!', 'success');
+                } else {
+                    // Create new grainwatch
+                    await apiRequest('grainwatch.php', {
+                        method: 'POST',
+                        body: JSON.stringify(grainwatchData)
+                    });
+                    showToast('GrainWatch created successfully!', 'success');
+                }
+
+                // Close modal and refresh table
+                const modal = bootstrap.Modal.getInstance(document.getElementById('grainwatchModal'));
+                modal.hide();
+                
+                loadGrainWatch();
+                
+            } catch (error) {
+                showToast('Failed to save grainwatch. Please try again.', 'danger');
+            }
+        }
+
         // Publish article
         async function publishArticle(articleId) {
             try {
@@ -1176,6 +1505,26 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             }
         }
 
+        // Delete grainwatch
+        function deleteGrainWatch(grainwatchId) {
+            currentGrainWatchId = grainwatchId;
+            currentDeleteType = 'grainwatch';
+            const gw = grainwatch.find(g => g.id == grainwatchId);
+            if (gw) {
+                document.getElementById('deleteModalTitle').textContent = 'Delete GrainWatch';
+                document.getElementById('deleteModalText').textContent = 'Are you sure you want to delete this grainwatch entry? This action cannot be undone.';
+                document.getElementById('deleteItemInfo').innerHTML = `
+                    <div class="alert alert-danger">
+                        <strong>Heading:</strong> ${escapeHtml(gw.heading)}<br>
+                        <strong>Created:</strong> ${formatDate(gw.created_at)}
+                    </div>
+                `;
+                
+                const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+                modal.show();
+            }
+        }
+
         // Confirm delete
         async function confirmDelete() {
             try {
@@ -1191,6 +1540,12 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                     });
                     loadInsights();
                     showToast('Insight deleted successfully!', 'success');
+                } else if (currentDeleteType === 'grainwatch' && currentGrainWatchId) {
+                    await apiRequest(`grainwatch.php/${currentGrainWatchId}`, {
+                        method: 'DELETE'
+                    });
+                    loadGrainWatch();
+                    showToast('GrainWatch deleted successfully!', 'success');
                 }
                 
                 const modal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
@@ -1202,6 +1557,7 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             
             currentArticleId = null;
             currentInsightId = null;
+            currentGrainWatchId = null;
             currentDeleteType = null;
         }
 
@@ -1253,6 +1609,28 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             }
         }
 
+        // Apply filters for grainwatch
+        async function applyGrainWatchFilters() {
+            const searchTerm = document.getElementById('grainwatchSearchInput').value.trim();
+
+            showLoading('grainwatchTableContainer');
+
+            try {
+                const params = new URLSearchParams();
+                if (searchTerm) params.append('search', searchTerm);
+
+                const queryString = params.toString();
+                const endpoint = queryString ? `grainwatch.php?${queryString}` : 'grainwatch.php';
+                
+                const filteredGrainWatch = await apiRequest(endpoint);
+                renderGrainWatchTable(filteredGrainWatch, 'grainwatchTableContainer');
+            } catch (error) {
+                document.getElementById('grainwatchTableContainer').innerHTML = `
+                    <div class="alert alert-danger">Failed to filter grainwatch entries.</div>
+                `;
+            }
+        }
+
         // Show toast notification
         function showToast(message, type) {
             const toast = document.createElement('div');
@@ -1286,6 +1664,11 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         document.getElementById('insightSearchInput').addEventListener('input', function() {
             clearTimeout(this.searchTimeout);
             this.searchTimeout = setTimeout(applyInsightFilters, 300);
+        });
+
+        document.getElementById('grainwatchSearchInput').addEventListener('input', function() {
+            clearTimeout(this.searchTimeout);
+            this.searchTimeout = setTimeout(applyGrainWatchFilters, 300);
         });
     </script>
 </body>
