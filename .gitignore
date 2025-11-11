@@ -3,3 +3,4 @@ ratin.sql
 admin/includes/config.php
 base/uploads/*
 news-system/config*
+news-system/api/uploads*
