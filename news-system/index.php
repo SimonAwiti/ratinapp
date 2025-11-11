@@ -644,19 +644,30 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                                 </select>
                             </div>
 
-                            <div class="form-group">
-                                <label for="grainwatchDescription" class="required">Description</label>
-                                <textarea id="grainwatchDescription" name="description" required rows="4" placeholder="Enter grainwatch description..."></textarea>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label for="grainwatchImage">Cover Image URL</label>
+                                        <input type="url" id="grainwatchImage" name="image" onchange="previewGrainWatchImage()" placeholder="Enter image URL for cover...">
+                                        <img id="grainwatchImagePreview" class="image-preview" style="display: none;">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label for="grainwatchDocument">Document (PDF)</label>
+                                        <input type="file" id="grainwatchDocument" name="document" accept=".pdf" onchange="previewDocument()">
+                                        <small class="text-muted">Only PDF files are allowed. Maximum file size: 10MB</small>
+                                        <div id="documentPreview" class="document-preview" style="display: none;">
+                                            <i class="fas fa-file-pdf"></i>
+                                            <span id="documentName"></span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             <div class="form-group">
-                                <label for="grainwatchDocument" class="required">Document (PDF)</label>
-                                <input type="file" id="grainwatchDocument" name="document" accept=".pdf" onchange="previewDocument()">
-                                <small class="text-muted">Only PDF files are allowed. Maximum file size: 10MB</small>
-                                <div id="documentPreview" class="document-preview" style="display: none;">
-                                    <i class="fas fa-file-pdf"></i>
-                                    <span id="documentName"></span>
-                                </div>
+                                <label for="grainwatchDescription" class="required">Description</label>
+                                <textarea id="grainwatchDescription" name="description" required rows="4" placeholder="Enter grainwatch description..."></textarea>
                             </div>
                         </div>
                     </form>
@@ -1064,9 +1075,10 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                             <tr>
                                 <th width="25%">Heading</th>
                                 <th width="15%">Category</th>
-                                <th width="30%">Description</th>
+                                <th width="25%">Description</th>
+                                <th width="10%">Cover Image</th>
                                 <th width="10%">Document</th>
-                                <th width="10%">Posted</th>
+                                <th width="5%">Posted</th>
                                 <th width="10%">Actions</th>
                             </tr>
                         </thead>
@@ -1085,9 +1097,14 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                                         </small>
                                     </td>
                                     <td>
+                                        ${gw.image ? `
+                                            <img src="${gw.image}" alt="Cover" style="width: 40px; height: 30px; object-fit: cover; border-radius: 3px;">
+                                        ` : '<span class="text-muted">No image</span>'}
+                                    </td>
+                                    <td>
                                         ${gw.document_path ? `
                                             <a href="${gw.document_path}" target="_blank" class="btn btn-outline-primary btn-sm">
-                                                <i class="fas fa-file-pdf"></i> View PDF
+                                                <i class="fas fa-file-pdf"></i> PDF
                                             </a>
                                         ` : '<span class="text-muted">No document</span>'}
                                     </td>
@@ -1171,6 +1188,8 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             document.getElementById('grainwatchForm').reset();
             document.getElementById('grainwatchId').value = '';
             document.getElementById('grainwatchCategory').value = '';
+            document.getElementById('grainwatchImage').value = '';
+            document.getElementById('grainwatchImagePreview').style.display = 'none';
             document.getElementById('documentPreview').style.display = 'none';
             
             const modal = new bootstrap.Modal(document.getElementById('grainwatchModal'));
@@ -1232,7 +1251,15 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                 document.getElementById('grainwatchId').value = gw.id;
                 document.getElementById('grainwatchHeading').value = gw.heading;
                 document.getElementById('grainwatchCategory').value = gw.category;
+                document.getElementById('grainwatchImage').value = gw.image || '';
                 document.getElementById('grainwatchDescription').value = gw.description;
+                
+                if (gw.image) {
+                    document.getElementById('grainwatchImagePreview').src = gw.image;
+                    document.getElementById('grainwatchImagePreview').style.display = 'block';
+                } else {
+                    document.getElementById('grainwatchImagePreview').style.display = 'none';
+                }
                 
                 if (gw.document_path) {
                     document.getElementById('documentName').textContent = gw.document_path.split('/').pop();
@@ -1253,6 +1280,23 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         function previewImage() {
             const imageUrl = document.getElementById('image').value;
             const preview = document.getElementById('imagePreview');
+            
+            if (imageUrl) {
+                preview.src = imageUrl;
+                preview.style.display = 'block';
+                preview.onerror = function() {
+                    this.style.display = 'none';
+                    showToast('Invalid image URL', 'warning');
+                };
+            } else {
+                preview.style.display = 'none';
+            }
+        }
+
+        // Preview grainwatch image
+        function previewGrainWatchImage() {
+            const imageUrl = document.getElementById('grainwatchImage').value;
+            const preview = document.getElementById('grainwatchImagePreview');
             
             if (imageUrl) {
                 preview.src = imageUrl;
@@ -1398,6 +1442,7 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             
             const heading = formData.get('heading');
             const category = formData.get('category');
+            const image = formData.get('image');
             const description = formData.get('description');
             const documentFile = document.getElementById('grainwatchDocument').files[0];
 
@@ -1426,6 +1471,7 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                 const grainwatchData = {
                     heading: heading,
                     category: category,
+                    image: image || null,
                     description: description,
                     document_path: documentPath
                 };
