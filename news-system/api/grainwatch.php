@@ -112,6 +112,17 @@ function handleGet($pdo) {
     $stmt->execute($params);
     
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Convert document_path to full URLs and add document_url field
+    $baseUrl = 'https://ratin.net/ratinapp/news-system/api/';
+    foreach ($results as &$result) {
+        if (!empty($result['document_path'])) {
+            $result['document_url'] = $baseUrl . $result['document_path'];
+        } else {
+            $result['document_url'] = null;
+        }
+    }
+    
     echo json_encode($results);
 }
 
@@ -127,6 +138,7 @@ function handlePost($pdo) {
     $heading = trim($input['heading']);
     $description = trim($input['description']);
     $category = trim($input['category']);
+    $image = isset($input['image']) ? trim($input['image']) : null;
     $document_path = isset($input['document_path']) ? $input['document_path'] : null;
     
     // Validate category
@@ -144,8 +156,8 @@ function handlePost($pdo) {
     }
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO grainwatch (heading, description, category, document_path) VALUES (?, ?, ?, ?)");
-        $stmt->execute([$heading, $description, $category, $document_path]);
+        $stmt = $pdo->prepare("INSERT INTO grainwatch (heading, description, category, image, document_path) VALUES (?, ?, ?, ?, ?)");
+        $stmt->execute([$heading, $description, $category, $image, $document_path]);
         
         $id = $pdo->lastInsertId();
         echo json_encode([
@@ -160,7 +172,11 @@ function handlePost($pdo) {
 }
 
 function handlePut($pdo) {
-    $id = filter_var($_GET['id'], FILTER_VALIDATE_INT);
+    // Get ID from URL parameter
+    $url_parts = explode('/', $_SERVER['REQUEST_URI']);
+    $id = end($url_parts);
+    $id = filter_var($id, FILTER_VALIDATE_INT);
+    
     if (!$id) {
         http_response_code(400);
         echo json_encode(['error' => 'Invalid ID']);
@@ -178,6 +194,7 @@ function handlePut($pdo) {
     $heading = trim($input['heading']);
     $description = trim($input['description']);
     $category = trim($input['category']);
+    $image = isset($input['image']) ? trim($input['image']) : null;
     $document_path = isset($input['document_path']) ? $input['document_path'] : null;
     
     // Validate category
@@ -195,8 +212,8 @@ function handlePut($pdo) {
     }
     
     try {
-        $stmt = $pdo->prepare("UPDATE grainwatch SET heading = ?, description = ?, category = ?, document_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
-        $stmt->execute([$heading, $description, $category, $document_path, $id]);
+        $stmt = $pdo->prepare("UPDATE grainwatch SET heading = ?, description = ?, category = ?, image = ?, document_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+        $stmt->execute([$heading, $description, $category, $image, $document_path, $id]);
         
         if ($stmt->rowCount() > 0) {
             echo json_encode(['success' => true, 'message' => 'GrainWatch entry updated successfully']);
@@ -211,7 +228,11 @@ function handlePut($pdo) {
 }
 
 function handleDelete($pdo) {
-    $id = filter_var($_GET['id'], FILTER_VALIDATE_INT);
+    // Get ID from URL parameter
+    $url_parts = explode('/', $_SERVER['REQUEST_URI']);
+    $id = end($url_parts);
+    $id = filter_var($id, FILTER_VALIDATE_INT);
+    
     if (!$id) {
         http_response_code(400);
         echo json_encode(['error' => 'Invalid ID']);
