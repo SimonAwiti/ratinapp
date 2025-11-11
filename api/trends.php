@@ -11,18 +11,20 @@ header('Access-Control-Allow-Methods: GET, POST');
 header('Access-Control-Allow-Headers: Content-Type');
 
 // Function to get commodity prices in the required format
-function getCommodityPrices($con, $countryFilter = '', $commodityFilter = '') {
+function getCommodityPrices($con, $countryFilter = '', $commodityFilter = '', $categoryFilter = '') {
     // Build the query using the correct column names from your database
     $query = "
         SELECT 
             mp.country_admin_0 as country,
             mp.market as location,
             c.commodity_name as commodity,
+            cat.name as category_name,
             mp.Price as price,
             mp.date_posted,
             mp.price_type
         FROM market_prices mp
         JOIN commodities c ON mp.commodity = c.id
+        JOIN commodity_categories cat ON c.category_id = cat.id
         WHERE mp.status IN ('published', 'approved')
         AND mp.date_posted IN (
             SELECT MAX(date_posted)
@@ -49,6 +51,12 @@ function getCommodityPrices($con, $countryFilter = '', $commodityFilter = '') {
     if (!empty($commodityFilter)) {
         $conditions[] = "c.commodity_name = ?";
         $params[] = $commodityFilter;
+        $types .= 's';
+    }
+    
+    if (!empty($categoryFilter)) {
+        $conditions[] = "cat.name = ?";
+        $params[] = $categoryFilter;
         $types .= 's';
     }
     
@@ -84,11 +92,13 @@ function getCommodityPrices($con, $countryFilter = '', $commodityFilter = '') {
             mp.country_admin_0 as country,
             mp.market as location,
             c.commodity_name as commodity,
+            cat.name as category_name,
             mp.Price as price,
             mp.date_posted,
             mp.price_type
         FROM market_prices mp
         JOIN commodities c ON mp.commodity = c.id
+        JOIN commodity_categories cat ON c.category_id = cat.id
         WHERE mp.status IN ('published', 'approved')
         ORDER BY mp.date_posted DESC
         LIMIT 2000
@@ -112,6 +122,7 @@ function getCommodityPrices($con, $countryFilter = '', $commodityFilter = '') {
         $commodity = $price['commodity'];
         $currentPrice = floatval($price['price']);
         $priceType = $price['price_type'];
+        $category = $price['category_name'];
         
         // Only include wholesale prices for consistency, or adjust as needed
         if ($priceType !== 'Wholesale') {
@@ -129,6 +140,7 @@ function getCommodityPrices($con, $countryFilter = '', $commodityFilter = '') {
             'country' => $country,
             'location' => $location,
             'commodity' => $commodity,
+            'category' => $category,
             'price' => $currentPrice,
             'eastafr' => $eastafr,
             'trend' => $trend
@@ -144,8 +156,9 @@ function getCommodityPrices($con, $countryFilter = '', $commodityFilter = '') {
                 'country' => 'EAC',
                 'location' => 'EAGC avg',
                 'commodity' => 'Maize',
+                'category' => 'Cereals',
                 'price' => $maizeEAAvg,
-                'eastafr' => -15, // You can adjust this calculation as needed
+                'eastafr' => -15,
                 'trend' => $maizeTrend
             ];
         }
@@ -283,7 +296,8 @@ function getEACTrendData($historicalData, $commodity, $limit = 5) {
 function getAvailableFilters($con) {
     $filters = [
         'countries' => [],
-        'commodities' => []
+        'commodities' => [],
+        'categories' => []
     ];
     
     // Get available countries
@@ -304,6 +318,13 @@ function getAvailableFilters($con) {
         $filters['commodities'][] = $row['commodity_name'];
     }
     
+    // Get available categories from commodity_categories table
+    $categoriesQuery = "SELECT DISTINCT name FROM commodity_categories ORDER BY name";
+    $result = $con->query($categoriesQuery);
+    while ($row = $result->fetch_assoc()) {
+        $filters['categories'][] = $row['name'];
+    }
+    
     return $filters;
 }
 
@@ -316,9 +337,10 @@ try {
     // Get filter parameters from request
     $countryFilter = isset($_GET['country']) ? $_GET['country'] : '';
     $commodityFilter = isset($_GET['commodity']) ? $_GET['commodity'] : '';
+    $categoryFilter = isset($_GET['category']) ? $_GET['category'] : '';
     
     // Get commodity prices
-    $commodityPrices = getCommodityPrices($con, $countryFilter, $commodityFilter);
+    $commodityPrices = getCommodityPrices($con, $countryFilter, $commodityFilter, $categoryFilter);
     
     // Get available filters
     $availableFilters = getAvailableFilters($con);
@@ -335,7 +357,8 @@ try {
             'filters' => [
                 'applied' => [
                     'country' => $countryFilter,
-                    'commodity' => $commodityFilter
+                    'commodity' => $commodityFilter,
+                    'category' => $categoryFilter
                 ],
                 'available' => $availableFilters
             ],
