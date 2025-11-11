@@ -470,6 +470,16 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                             <input type="text" id="grainwatchSearchInput" class="form-control" placeholder="Search grainwatch entries...">
                         </div>
                         <div class="filter-group">
+                            <label>Category</label>
+                            <select id="grainwatchCategoryFilter" class="form-select">
+                                <option value="">All Categories</option>
+                                <option value="grain watch">Grain Watch</option>
+                                <option value="grain standards">Grain Standards</option>
+                                <option value="policy briefs">Policy Briefs</option>
+                                <option value="reports">Reports</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
                             <button class="btn btn-primary" onclick="applyGrainWatchFilters()">
                                 <i class="fas fa-filter"></i> Filter
                             </button>
@@ -621,6 +631,17 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                             <div class="form-group">
                                 <label for="grainwatchHeading" class="required">Heading</label>
                                 <input type="text" id="grainwatchHeading" name="heading" required maxlength="255" placeholder="Enter grainwatch heading...">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="grainwatchCategory" class="required">Category</label>
+                                <select id="grainwatchCategory" name="category" required class="form-select">
+                                    <option value="">Select Category</option>
+                                    <option value="grain watch">Grain Watch</option>
+                                    <option value="grain standards">Grain Standards</option>
+                                    <option value="policy briefs">Policy Briefs</option>
+                                    <option value="reports">Reports</option>
+                                </select>
                             </div>
 
                             <div class="form-group">
@@ -1041,9 +1062,10 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                     <table class="table table-hover">
                         <thead>
                             <tr>
-                                <th width="30%">Heading</th>
-                                <th width="35%">Description</th>
-                                <th width="15%">Document</th>
+                                <th width="25%">Heading</th>
+                                <th width="15%">Category</th>
+                                <th width="30%">Description</th>
+                                <th width="10%">Document</th>
                                 <th width="10%">Posted</th>
                                 <th width="10%">Actions</th>
                             </tr>
@@ -1053,6 +1075,9 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                                 <tr>
                                     <td>
                                         <strong>${escapeHtml(gw.heading)}</strong>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-primary">${escapeHtml(gw.category)}</span>
                                     </td>
                                     <td>
                                         <small class="text-muted">
@@ -1145,6 +1170,7 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             document.getElementById('grainwatchModalTitle').textContent = 'Create New GrainWatch';
             document.getElementById('grainwatchForm').reset();
             document.getElementById('grainwatchId').value = '';
+            document.getElementById('grainwatchCategory').value = '';
             document.getElementById('documentPreview').style.display = 'none';
             
             const modal = new bootstrap.Modal(document.getElementById('grainwatchModal'));
@@ -1205,6 +1231,7 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                 document.getElementById('grainwatchModalTitle').textContent = 'Edit GrainWatch';
                 document.getElementById('grainwatchId').value = gw.id;
                 document.getElementById('grainwatchHeading').value = gw.heading;
+                document.getElementById('grainwatchCategory').value = gw.category;
                 document.getElementById('grainwatchDescription').value = gw.description;
                 
                 if (gw.document_path) {
@@ -1370,11 +1397,12 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             const grainwatchId = formData.get('id');
             
             const heading = formData.get('heading');
+            const category = formData.get('category');
             const description = formData.get('description');
             const documentFile = document.getElementById('grainwatchDocument').files[0];
 
             // Validate required fields
-            if (!heading || !description) {
+            if (!heading || !category || !description) {
                 showToast('Please fill in all required fields.', 'warning');
                 return;
             }
@@ -1397,6 +1425,7 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 
                 const grainwatchData = {
                     heading: heading,
+                    category: category,
                     description: description,
                     document_path: documentPath
                 };
@@ -1516,6 +1545,7 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
                 document.getElementById('deleteItemInfo').innerHTML = `
                     <div class="alert alert-danger">
                         <strong>Heading:</strong> ${escapeHtml(gw.heading)}<br>
+                        <strong>Category:</strong> ${escapeHtml(gw.category)}<br>
                         <strong>Created:</strong> ${formatDate(gw.created_at)}
                     </div>
                 `;
@@ -1612,12 +1642,14 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         // Apply filters for grainwatch
         async function applyGrainWatchFilters() {
             const searchTerm = document.getElementById('grainwatchSearchInput').value.trim();
+            const categoryFilter = document.getElementById('grainwatchCategoryFilter').value;
 
             showLoading('grainwatchTableContainer');
 
             try {
                 const params = new URLSearchParams();
                 if (searchTerm) params.append('search', searchTerm);
+                if (categoryFilter) params.append('category', categoryFilter);
 
                 const queryString = params.toString();
                 const endpoint = queryString ? `grainwatch.php?${queryString}` : 'grainwatch.php';

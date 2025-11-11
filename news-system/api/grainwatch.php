@@ -88,16 +88,28 @@ function handleGet($pdo) {
         return;
     }
     
-    // Get all grainwatch entries with optional search
+    // Get all grainwatch entries with optional search and category filter
     $search = isset($_GET['search']) ? '%' . $_GET['search'] . '%' : null;
+    $category = isset($_GET['category']) ? $_GET['category'] : null;
+    
+    $sql = "SELECT * FROM grainwatch WHERE 1=1";
+    $params = [];
     
     if ($search) {
-        $stmt = $pdo->prepare("SELECT * FROM grainwatch WHERE heading LIKE ? OR description LIKE ? ORDER BY created_at DESC");
-        $stmt->execute([$search, $search]);
-    } else {
-        $stmt = $pdo->prepare("SELECT * FROM grainwatch ORDER BY created_at DESC");
-        $stmt->execute();
+        $sql .= " AND (heading LIKE ? OR description LIKE ?)";
+        $params[] = $search;
+        $params[] = $search;
     }
+    
+    if ($category) {
+        $sql .= " AND category = ?";
+        $params[] = $category;
+    }
+    
+    $sql .= " ORDER BY created_at DESC";
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
     
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
     echo json_encode($results);
@@ -106,25 +118,34 @@ function handleGet($pdo) {
 function handlePost($pdo) {
     $input = json_decode(file_get_contents('php://input'), true);
     
-    if (!isset($input['heading']) || !isset($input['description'])) {
+    if (!isset($input['heading']) || !isset($input['description']) || !isset($input['category'])) {
         http_response_code(400);
-        echo json_encode(['error' => 'Heading and description are required']);
+        echo json_encode(['error' => 'Heading, description and category are required']);
         return;
     }
     
     $heading = trim($input['heading']);
     $description = trim($input['description']);
+    $category = trim($input['category']);
     $document_path = isset($input['document_path']) ? $input['document_path'] : null;
     
-    if (empty($heading) || empty($description)) {
+    // Validate category
+    $validCategories = ['grain watch', 'grain standards', 'policy briefs', 'reports'];
+    if (!in_array($category, $validCategories)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Heading and description cannot be empty']);
+        echo json_encode(['error' => 'Invalid category. Must be one of: ' . implode(', ', $validCategories)]);
+        return;
+    }
+    
+    if (empty($heading) || empty($description) || empty($category)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Heading, description and category cannot be empty']);
         return;
     }
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO grainwatch (heading, description, document_path) VALUES (?, ?, ?)");
-        $stmt->execute([$heading, $description, $document_path]);
+        $stmt = $pdo->prepare("INSERT INTO grainwatch (heading, description, category, document_path) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$heading, $description, $category, $document_path]);
         
         $id = $pdo->lastInsertId();
         echo json_encode([
@@ -148,25 +169,34 @@ function handlePut($pdo) {
     
     $input = json_decode(file_get_contents('php://input'), true);
     
-    if (!isset($input['heading']) || !isset($input['description'])) {
+    if (!isset($input['heading']) || !isset($input['description']) || !isset($input['category'])) {
         http_response_code(400);
-        echo json_encode(['error' => 'Heading and description are required']);
+        echo json_encode(['error' => 'Heading, description and category are required']);
         return;
     }
     
     $heading = trim($input['heading']);
     $description = trim($input['description']);
+    $category = trim($input['category']);
     $document_path = isset($input['document_path']) ? $input['document_path'] : null;
     
-    if (empty($heading) || empty($description)) {
+    // Validate category
+    $validCategories = ['grain watch', 'grain standards', 'policy briefs', 'reports'];
+    if (!in_array($category, $validCategories)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Heading and description cannot be empty']);
+        echo json_encode(['error' => 'Invalid category. Must be one of: ' . implode(', ', $validCategories)]);
+        return;
+    }
+    
+    if (empty($heading) || empty($description) || empty($category)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Heading, description and category cannot be empty']);
         return;
     }
     
     try {
-        $stmt = $pdo->prepare("UPDATE grainwatch SET heading = ?, description = ?, document_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
-        $stmt->execute([$heading, $description, $document_path, $id]);
+        $stmt = $pdo->prepare("UPDATE grainwatch SET heading = ?, description = ?, category = ?, document_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+        $stmt->execute([$heading, $description, $category, $document_path, $id]);
         
         if ($stmt->rowCount() > 0) {
             echo json_encode(['success' => true, 'message' => 'GrainWatch entry updated successfully']);
