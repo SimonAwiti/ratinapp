@@ -424,6 +424,11 @@ if ($dirName === 'base') {
         <!-- ADMIN Section -->
         <div class="section-header">ADMIN</div>
 
+        <a href="<?= $adminPath ?>user_management.php" class="nav-link <?= ($currentPage == 'user_management.php') ? 'active' : '' ?>">
+            <i class="fa fa-user"></i>
+            <span>User subscription</span>
+        </a>
+
         <a href="<?= $adminPath ?>profile.php" class="nav-link <?= ($currentPage == 'profile.php') ? 'active' : '' ?>">
             <i class="fa fa-user"></i>
             <span>Profile</span>
