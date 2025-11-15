@@ -591,6 +591,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
                         <option value="Tanzania">Tanzania</option>
                         <option value="Rwanda">Rwanda</option>
                         <option value="Burundi">Burundi</option>
+                        <option value="Ethiopia">Ethiopia</option>
                     </select>
                 </div>
 
