@@ -2,8 +2,9 @@
 // add_currency.php
 include '../admin/includes/config.php';
 
-$countries = ['Kenya', 'Uganda', 'Tanzania', 'Rwanda', 'Burundi'];
-$currencies = ['KES', 'UGX', 'TZS', 'RWF', 'BIF', 'USD', 'EUR'];
+$countries = ['Kenya', 'Uganda', 'Tanzania', 'Rwanda', 'Burundi', 'Ethiopia'];
+$currencies = ['KES', 'UGX', 'TZS', 'RWF', 'BIF', 'ETB', 'USD', 'EUR'];
+
 
 // Processing the form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'])) {
