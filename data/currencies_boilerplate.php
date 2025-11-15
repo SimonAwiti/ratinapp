@@ -493,15 +493,15 @@ function formatExchangeRate($rate) {
             </div>
             <div class="modal-body">
                 <div class="import-instructions">
-                    <h5>CSV Format Instructions</h5>
-                    <p>Your CSV file should have the following columns in order:</p>
-                    <ol>
-                        <li><strong>Country</strong> (required)</li>
-                        <li><strong>Currency Code</strong> (required, e.g., "KES", "USD")</li>
-                        <li><strong>Exchange Rate</strong> (required, numeric, e.g., "150.25")</li>
-                        <li><strong>Effective Date</strong> (required, YYYY-MM-DD format)</li>
-                    </ol>
-                    <a href="../data/downloads/currency_rates_template.csv" class="download-template">
+                    <h5>CSV Format</h5>
+                    <p>Your CSV file needs these 4 columns:</p>
+                    <ul>
+                        <li><strong>Country</strong> (e.g., "Kenya", "Ethiopia")</li>
+                        <li><strong>Currency Code</strong> (e.g., "KES", "ETB")</li>
+                        <li><strong>Exchange Rate</strong> (e.g., "128.24")</li>
+                        <li><strong>Effective Date</strong> (e.g., "2025-11-13")</li>
+                    </ul>
+                    <a href="../data/generate_currency_template.php" class="download-template">
                         <i class="fas fa-download"></i> Download CSV Template
                     </a>
                 </div>
