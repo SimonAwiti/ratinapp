@@ -8,7 +8,7 @@ include 'includes/config.php';
 
 // Check admin authentication
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    header("Location: admin_login.php");
+    header("Location: index.php");
     exit;
 }
 
@@ -91,6 +91,39 @@ try {
     $error_message = "Failed to fetch users: " . $e->getMessage();
     $users = [];
 }
+
+// --- Fetch counts for summary boxes ---
+$total_users_query = "SELECT COUNT(*) AS total FROM subscribed_users";
+$total_users_result = $con->query($total_users_query);
+$total_users = 0;
+if ($total_users_result) {
+    $row = $total_users_result->fetch_assoc();
+    $total_users = $row['total'];
+}
+
+$active_users_query = "SELECT COUNT(*) AS total FROM subscribed_users WHERE status = 'active'";
+$active_users_result = $con->query($active_users_query);
+$active_users_count = 0;
+if ($active_users_result) {
+    $row = $active_users_result->fetch_assoc();
+    $active_users_count = $row['total'];
+}
+
+$pending_users_query = "SELECT COUNT(*) AS total FROM subscribed_users WHERE status = 'pending'";
+$pending_users_result = $con->query($pending_users_query);
+$pending_users_count = 0;
+if ($pending_users_result) {
+    $row = $pending_users_result->fetch_assoc();
+    $pending_users_count = $row['total'];
+}
+
+$suspended_users_query = "SELECT COUNT(*) AS total FROM subscribed_users WHERE status = 'suspended'";
+$suspended_users_result = $con->query($suspended_users_query);
+$suspended_users_count = 0;
+if ($suspended_users_result) {
+    $row = $suspended_users_result->fetch_assoc();
+    $suspended_users_count = $row['total'];
+}
 ?>
 
 <style>
@@ -136,10 +169,113 @@ try {
     .alert {
         margin: 20px;
     }
+    
+    /* Stats Container Styles */
+    .stats-container {
+        display: flex;
+        gap: 15px;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: nowrap;
+        width: 87%;
+        max-width: 100%;
+        margin: 0 auto 20px auto;
+        margin-left: 0.7%;
+    }
+    .stats-container > div {
+        flex: 1;
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        text-align: center;
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    .stats-icon {
+        width: 40px;
+        height: 40px;
+        margin-bottom: 10px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+    }
+    .total-icon {
+        background-color: #9b59b6;
+        color: white;
+    }
+    .active-icon {
+        background-color: #27ae60;
+        color: white;
+    }
+    .pending-icon {
+        background-color: #f39c12;
+        color: white;
+    }
+    .suspended-icon {
+        background-color: #e74c3c;
+        color: white;
+    }
+    .stats-section {
+        text-align: left;
+        margin-left: 11%;
+    }
+    .stats-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #2c3e50;
+        margin: 8px 0 5px 0;
+    }
+    .stats-number {
+        font-size: 24px;
+        font-weight: 700;
+        color: #34495e;
+    }
 </style>
 
-<div class="text-wrapper-8"><h3>Subscribed Users Management</h3></div>
-<p class="p">Manage subscribed user accounts and subscriptions</p>
+<div class="stats-section">
+    <div class="text-wrapper-8"><h3>Subscribed Users Management</h3></div>
+    <p class="p">Manage subscribed user accounts and subscriptions</p>
+
+    <div class="stats-container">
+        <div class="overlap-6">
+            <div class="stats-icon total-icon">
+                <i class="fas fa-users"></i>
+            </div>
+            <div class="stats-title">Total Users</div>
+            <div class="stats-number"><?= $total_users ?></div>
+        </div>
+        
+        <div class="overlap-6">
+            <div class="stats-icon active-icon">
+                <i class="fas fa-user-check"></i>
+            </div>
+            <div class="stats-title">Active Users</div>
+            <div class="stats-number"><?= $active_users_count ?></div>
+        </div>
+        
+        <div class="overlap-7">
+            <div class="stats-icon pending-icon">
+                <i class="fas fa-user-clock"></i>
+            </div>
+            <div class="stats-title">Pending Verification</div>
+            <div class="stats-number"><?= $pending_users_count ?></div>
+        </div>
+        
+        <div class="overlap-7">
+            <div class="stats-icon suspended-icon">
+                <i class="fas fa-user-slash"></i>
+            </div>
+            <div class="stats-title">Suspended Users</div>
+            <div class="stats-number"><?= $suspended_users_count ?></div>
+        </div>
+    </div>
+</div>
 
 <?php if (isset($error_message)): ?>
     <div class="alert alert-danger">
