@@ -1,5 +1,12 @@
 <?php
 // market_prices_view.php
+session_start();
+
+// Check if user is logged in, redirect to login if not
+if (!isset($_SESSION['user_logged_in']) || $_SESSION['user_logged_in'] !== true) {
+    header("Location: index.php");
+    exit;
+}
 
 // Include your database configuration file
 include '../admin/includes/config.php';
@@ -474,7 +481,6 @@ foreach ($markets as $market) {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        /* Your existing CSS styles */
         body {
             font-family: Arial, sans-serif;
             background-color: #f8f9fa;
@@ -590,6 +596,51 @@ foreach ($markets as $market) {
             gap: 8px;
             font-weight: bold;
             color: #8B4513;
+            position: relative;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 5px;
+            transition: background-color 0.2s;
+        }
+
+        .user-display:hover {
+            background-color: #f5f5f5;
+        }
+
+        .user-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            min-width: 150px;
+            z-index: 1000;
+            display: none;
+        }
+
+        .user-menu.show {
+            display: block;
+        }
+
+        .user-menu-item {
+            padding: 10px 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            color: #333;
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s;
+        }
+
+        .user-menu-item:hover {
+            background-color: #f5f5f5;
+        }
+
+        .user-menu-item:last-child {
+            border-bottom: none;
         }
 
         /* Main Content */
@@ -944,8 +995,20 @@ foreach ($markets as $market) {
                     <li class="breadcrumb-item active" aria-current="page">Market Prices</li>
                 </ol>
             </nav>
-            <div class="user-display">
-                <i class="fa fa-user-circle"></i> <span>Martin Kim</span>
+            <div class="user-display" id="user-display">
+                <i class="fa fa-user-circle"></i> 
+                <span><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'User'); ?></span>
+                <div class="user-menu" id="user-menu">
+                    <a href="#" class="user-menu-item">
+                        <i class="fas fa-user"></i> Profile
+                    </a>
+                    <a href="#" class="user-menu-item">
+                        <i class="fas fa-cog"></i> Settings
+                    </a>
+                    <a href="logout.php" class="user-menu-item">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </a>
+                </div>
             </div>
         </div>
 
@@ -1378,6 +1441,27 @@ foreach ($markets as $market) {
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
 <script>
+// Add user menu toggle functionality
+document.addEventListener('DOMContentLoaded', function() {
+    const userDisplay = document.getElementById('user-display');
+    const userMenu = document.getElementById('user-menu');
+    
+    if (userDisplay && userMenu) {
+        userDisplay.addEventListener('click', function(e) {
+            e.stopPropagation();
+            userMenu.classList.toggle('show');
+        });
+        
+        // Close menu when clicking elsewhere
+        document.addEventListener('click', function() {
+            userMenu.classList.remove('show');
+        });
+    }
+    
+    // Your existing JavaScript code remains the same
+    // ... (all the existing JavaScript code) ...
+});
+
 // Initialize charts
 let priceTrendChart;
 let currentChartType = 'line';
