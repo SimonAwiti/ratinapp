@@ -112,79 +112,38 @@ foreach ($input['submissions'] as $index => $submission) {
     
     error_log("DEBUG: Before data_source processing - subject='{$subject}', supply_status='{$supply_status_from_payload}'");
 
-    // --- LOGIC FOR data_source (reporting sources) --- CORRECTED
-    $data_reporting_source_names = [];
+    // --- SIMPLIFIED LOGIC FOR data_source (reporting sources) ---
+    $data_source_db_value = 'RATIN'; // Default value
     
-    // Debug logging
-    error_log("DEBUG: Processing submission index {$index}");
-    error_log("DEBUG: Raw submission data: " . json_encode($submission));
-    
-    if (isset($submission['data_reporting_sources'])) {
-        error_log("DEBUG: data_reporting_sources exists");
-        error_log("DEBUG: data_reporting_sources type: " . gettype($submission['data_reporting_sources']));
-        error_log("DEBUG: data_reporting_sources content: " . json_encode($submission['data_reporting_sources']));
+    // Check for data_reporting_sources array first
+    if (isset($submission['data_reporting_sources']) && is_array($submission['data_reporting_sources'])) {
+        $valid_sources = [];
         
-        if (is_array($submission['data_reporting_sources'])) {
-            error_log("DEBUG: data_reporting_sources is an array with " . count($submission['data_reporting_sources']) . " items");
-            
-            foreach ($submission['data_reporting_sources'] as $idx => $source_item) {
-                error_log("DEBUG: Processing source item {$idx}: " . json_encode($source_item));
-                
-                if (isset($source_item['name'])) {
-                    $raw_name = $source_item['name'];
-                    error_log("DEBUG: Found name field: '{$raw_name}'");
-                    
-                    if (!empty(trim($raw_name))) {
-                        $cleaned_name = trim($raw_name);
-                        error_log("DEBUG: Cleaned name: '{$cleaned_name}'");
-                        
-                        // Skip if name is literally "0"
-                        if ($cleaned_name !== '0') {
-                            $escaped_name = mysqli_real_escape_string($con, $cleaned_name);
-                            $data_reporting_source_names[] = $escaped_name;
-                            error_log("DEBUG: Added to array: '{$escaped_name}'");
-                        } else {
-                            error_log("DEBUG: Skipped '0' value");
-                        }
-                    } else {
-                        error_log("DEBUG: Name field is empty after trim");
-                    }
-                } else {
-                    error_log("DEBUG: Source item has no 'name' field");
+        foreach ($submission['data_reporting_sources'] as $source_item) {
+            if (isset($source_item['name']) && !empty(trim($source_item['name']))) {
+                $source_name = trim($source_item['name']);
+                // Only add if it's not "0" and not empty
+                if ($source_name !== '0' && $source_name !== '') {
+                    $valid_sources[] = mysqli_real_escape_string($con, $source_name);
                 }
             }
-        } else {
-            error_log("DEBUG: data_reporting_sources is NOT an array");
         }
-    } else {
-        error_log("DEBUG: data_reporting_sources does NOT exist in submission");
+        
+        if (!empty($valid_sources)) {
+            $data_source_db_value = implode(', ', $valid_sources);
+            error_log("DEBUG: Using data_reporting_sources: '{$data_source_db_value}'");
+        }
     }
-
-    error_log("DEBUG: Final data_reporting_source_names array: " . json_encode($data_reporting_source_names));
-
-    // Store comma-separated names for 'data_source' column
-    // DEFAULT to 'RATIN' if no valid sources provided
-    if (!empty($data_reporting_source_names)) {
-        $data_source_db_value = implode(', ', $data_reporting_source_names);
-        error_log("DEBUG: Using names from array: '{$data_source_db_value}'");
-    } else {
-        // Fallback: check if there's a data_source directly in submission
-        if (isset($submission['data_source']) && !empty(trim($submission['data_source'])) && trim($submission['data_source']) !== '0') {
-            $data_source_db_value = mysqli_real_escape_string($con, trim($submission['data_source']));
+    // If no valid data_reporting_sources, check for direct data_source field
+    else if (isset($submission['data_source']) && !empty(trim($submission['data_source']))) {
+        $direct_source = trim($submission['data_source']);
+        if ($direct_source !== '0' && $direct_source !== '') {
+            $data_source_db_value = mysqli_real_escape_string($con, $direct_source);
             error_log("DEBUG: Using direct data_source: '{$data_source_db_value}'");
-        } else {
-            $data_source_db_value = 'RATIN';
-            error_log("DEBUG: Using default RATIN");
         }
-    }
-
-    // Final validation: ensure it's never "0" or empty - default to RATIN
-    if (empty($data_source_db_value) || $data_source_db_value === '0') {
-        error_log("DEBUG: Data source was empty or '0', forcing to RATIN");
-        $data_source_db_value = 'RATIN';
     }
     
-    error_log("DEBUG: FINAL data_source_db_value to be inserted: '{$data_source_db_value}'");
+    error_log("DEBUG: FINAL data_source_db_value: '{$data_source_db_value}'");
 
     // --- LOGIC FOR commodity_sources_data (NEW JSON COLUMN) ---
     $commodity_sources_payload = isset($submission['commodity_sources']) && is_array($submission['commodity_sources'])
@@ -281,22 +240,32 @@ foreach ($input['submissions'] as $index => $submission) {
     $wholesale_price_usd = convertToUSD($wholesale_price_local, $country_admin_0, $con);
     $retail_price_usd = convertToUSD($retail_price_local, $country_admin_0, $con);
 
-    // Prepare the SQL statement for inserting market prices
-    // This will insert one row for wholesale and potentially one for retail
-    // Added 'commodity_sources_data' column at the end
-    $sql_values_template = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 21 placeholders
-    $sql_insert_base = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source, supplied_volume, comments, supply_status, commodity_sources_data) VALUES ";
+    // Final validation to prevent "0" values in critical fields
+    if ($data_source_db_value === '0') {
+        $data_source_db_value = 'RATIN';
+    }
+    if ($subject === '0') {
+        $subject = "Market Prices";
+    }
+    if ($supply_status_from_payload === '0') {
+        $supply_status_from_payload = 'unknown';
+    }
+    if ($measuring_unit === '0') {
+        $measuring_unit = 'kg'; // Default to kg if unit is 0
+    }
 
-    $params = [];
-    $types = "";
+    // Handle NULL values for supplied_volume
+    $supplied_volume_for_db = $supplied_volume === null ? 0 : $supplied_volume;
 
-    // Add wholesale price if available
+    // SINGLE INSERT APPROACH - Much more reliable than batch inserts
+    $inserted_count = 0;
+    
+    // Insert wholesale price if available
     if ($wholesale_price_local > 0) {
-        $sql = $sql_insert_base . $sql_values_template;
+        $sql = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source, supplied_volume, comments, supply_status, commodity_sources_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
-        error_log("DEBUG: Wholesale - About to insert with data_source='{$data_source_db_value}', subject='{$subject}', supply_status='{$supply_status_from_payload}'");
-        
-        $params = array_merge($params, [
+        $types = "sisssdssdiiisssssssis"; // 21 characters - supplied_volume treated as string
+        $params = [
             $category_name, 
             $commodity_id, 
             $country_admin_0, 
@@ -306,42 +275,61 @@ foreach ($input['submissions'] as $index => $submission) {
             $measuring_unit,
             'Wholesale', 
             $wholesale_price_usd, 
-            $subject, 
+            $subject,
             $day, 
             $month, 
             $year, 
             $date_posted, 
             $admin_status, 
             $variety,
-            $data_source_db_value, 
-            $supplied_volume, 
+            $data_source_db_value,
+            $supplied_volume_for_db,
             $comments, 
             $supply_status_from_payload, 
             $commodity_sources_json_db_value
-        ]);
+        ];
         
-        error_log("DEBUG: Wholesale params[16] (data_source): '" . $params[16] . "'");
-        error_log("DEBUG: Wholesale params[9] (subject): '" . $params[9] . "'");
-        error_log("DEBUG: Wholesale params[19] (supply_status): '" . $params[19] . "'");
-        
-        // s (category) i (commodity_id) s (country_admin_0) i (market_id) s (market) d (weight) s (unit) s (price_type) d (Price)
-        // s (subject) i (day) i (month) i (year) s (date_posted) s (status) s (variety) s (data_source) i (supplied_volume)
-        // s (comments) s (supply_status) s (commodity_sources_data)
-        $types .= "sisssdssdiiissssissis";
-    }
-
-    // Add retail price if available
-    if ($retail_price_local > 0) {
-        // If wholesale price was added, append with a comma; otherwise, start a new INSERT statement
-        if ($wholesale_price_local > 0) {
-            $sql .= ", " . $sql_values_template;
+        error_log("INSERTING WHOLESALE - data_source: '{$data_source_db_value}'");
+        $stmt = $con->prepare($sql);
+        if ($stmt) {
+            $stmt->bind_param($types, ...$params);
+            if ($stmt->execute()) {
+                $inserted_id = $con->insert_id;
+                $inserted_ids[] = $inserted_id;
+                $inserted_count++;
+                error_log("Wholesale inserted successfully, ID: " . $inserted_id);
+                
+                // Immediate verification
+                $verify_sql = "SELECT id, data_source, subject, supply_status FROM market_prices WHERE id = ?";
+                $stmt_verify = $con->prepare($verify_sql);
+                $stmt_verify->bind_param("i", $inserted_id);
+                $stmt_verify->execute();
+                $verify_result = $stmt_verify->get_result();
+                if ($verify_row = $verify_result->fetch_assoc()) {
+                    error_log("VERIFICATION WHOLESALE: ID {$verify_row['id']} - data_source='{$verify_row['data_source']}', subject='{$verify_row['subject']}', supply_status='{$verify_row['supply_status']}'");
+                } else {
+                    error_log("VERIFICATION FAILED: Could not retrieve inserted wholesale record");
+                }
+                $stmt_verify->close();
+            } else {
+                error_log("Wholesale insert failed: " . $stmt->error);
+                $failed_submissions[] = ['index' => $index, 'error' => "Wholesale insert failed: " . $stmt->error];
+                $all_success = false;
+            }
+            $stmt->close();
         } else {
-            $sql = $sql_insert_base . $sql_values_template;
+            error_log("Failed to prepare wholesale statement: " . $con->error);
+            $failed_submissions[] = ['index' => $index, 'error' => "Failed to prepare wholesale statement"];
+            $all_success = false;
         }
+    }
+    
+    // Insert retail price if available
+    if ($retail_price_local > 0) {
+        $sql = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source, supplied_volume, comments, supply_status, commodity_sources_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
-        error_log("DEBUG: Retail - About to insert with data_source='{$data_source_db_value}', subject='{$subject}', supply_status='{$supply_status_from_payload}'");
-        
-        $params = array_merge($params, [
+        $types = "sisssdssdiiisssssssis"; // 21 characters - supplied_volume treated as string
+        $params = [
             $category_name, 
             $commodity_id, 
             $country_admin_0, 
@@ -351,60 +339,59 @@ foreach ($input['submissions'] as $index => $submission) {
             $measuring_unit,
             'Retail', 
             $retail_price_usd, 
-            $subject, 
+            $subject,
             $day, 
             $month, 
             $year, 
             $date_posted, 
             $admin_status, 
             $variety,
-            $data_source_db_value, 
-            $supplied_volume, 
+            $data_source_db_value,
+            $supplied_volume_for_db,
             $comments, 
             $supply_status_from_payload, 
             $commodity_sources_json_db_value
-        ]);
+        ];
         
-        $param_offset = $wholesale_price_local > 0 ? 21 : 0;
-        error_log("DEBUG: Retail params[" . ($param_offset + 16) . "] (data_source): '" . $params[$param_offset + 16] . "'");
-        error_log("DEBUG: Retail params[" . ($param_offset + 9) . "] (subject): '" . $params[$param_offset + 9] . "'");
-        error_log("DEBUG: Retail params[" . ($param_offset + 19) . "] (supply_status): '" . $params[$param_offset + 19] . "'");
-        
-        $types .= "sisssdssdiiissssissis";
-    }
-
-    // Only proceed if at least one price type (wholesale or retail) is available for insertion
-    if (!empty($params)) {
-        error_log("DEBUG: Final SQL: " . $sql);
-        error_log("DEBUG: Final types: " . $types);
-        error_log("DEBUG: Total params count: " . count($params));
-        error_log("DEBUG: All params: " . json_encode($params));
-        
-        $stmt_insert = $con->prepare($sql);
-
-        if ($stmt_insert) {
-
-            $stmt_insert->bind_param($types, ...$params);
-
-            if (!$stmt_insert->execute()) {
-                error_log("Error inserting record for submission {$index}: " . $stmt_insert->error);
-                $failed_submissions[] = ['index' => $index, 'error' => "Database insert failed: " . $stmt_insert->error];
-                $all_success = false;
+        error_log("INSERTING RETAIL - data_source: '{$data_source_db_value}'");
+        $stmt = $con->prepare($sql);
+        if ($stmt) {
+            $stmt->bind_param($types, ...$params);
+            if ($stmt->execute()) {
+                $inserted_id = $con->insert_id;
+                $inserted_ids[] = $inserted_id;
+                $inserted_count++;
+                error_log("Retail inserted successfully, ID: " . $inserted_id);
+                
+                // Immediate verification
+                $verify_sql = "SELECT id, data_source, subject, supply_status FROM market_prices WHERE id = ?";
+                $stmt_verify = $con->prepare($verify_sql);
+                $stmt_verify->bind_param("i", $inserted_id);
+                $stmt_verify->execute();
+                $verify_result = $stmt_verify->get_result();
+                if ($verify_row = $verify_result->fetch_assoc()) {
+                    error_log("VERIFICATION RETAIL: ID {$verify_row['id']} - data_source='{$verify_row['data_source']}', subject='{$verify_row['subject']}', supply_status='{$verify_row['supply_status']}'");
+                } else {
+                    error_log("VERIFICATION FAILED: Could not retrieve inserted retail record");
+                }
+                $stmt_verify->close();
             } else {
-                $inserted_ids[] = $con->insert_id;
-                error_log("DEBUG: Successfully inserted with ID: " . $con->insert_id);
+                error_log("Retail insert failed: " . $stmt->error);
+                $failed_submissions[] = ['index' => $index, 'error' => "Retail insert failed: " . $stmt->error];
+                $all_success = false;
             }
-
-            $stmt_insert->close();
+            $stmt->close();
         } else {
-            error_log("Error preparing insert statement for submission {$index}: " . $con->error);
-            $failed_submissions[] = ['index' => $index, 'error' => "Failed to prepare SQL statement."];
+            error_log("Failed to prepare retail statement: " . $con->error);
+            $failed_submissions[] = ['index' => $index, 'error' => "Failed to prepare retail statement"];
             $all_success = false;
         }
-    } else {
-        error_log("No valid wholesale or retail price found for commodity_id {$commodity_id} in submission {$index}. Skipping insertion.");
+    }
+    
+    if ($inserted_count === 0) {
+        error_log("No records inserted for submission {$index}");
         $failed_submissions[] = ['index' => $index, 'error' => "No valid prices provided."];
-        $all_success = false; // Mark overall failure if a submission was meant to insert but had no prices.
+        $all_success = false;
     }
 }
 
