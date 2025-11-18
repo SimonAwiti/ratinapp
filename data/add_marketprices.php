@@ -219,7 +219,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
         );
 
         if ($stmt->execute()) {
-            echo "<script>alert('New records created successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
+            echo "<script>alert('New records created successfully'); window.location.href='marketprices_boilerplate.php';</script>";
         } else {
             error_log("Error inserting market prices: " . $stmt->error);
             echo "<script>alert('Error inserting records: " . $stmt->error . "');</script>";
@@ -567,7 +567,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='marketprices_boilerplate.php'">×</button>
 
         <div class="steps-sidebar">
             <h3>Progress</h3>
