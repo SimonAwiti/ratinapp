@@ -9,7 +9,19 @@ $country_currency = [
     'Uganda' => 'UGX',
     'Rwanda' => 'RWF',
     'Burundi' => 'BIF',
-    'Ethiopia' => 'ETB'
+    'Ethiopia' => 'ETB',
+    'South Sudan' => 'SSP',
+    'Somalia' => 'SOS',
+    'Djibouti' => 'DJF',
+    'Eritrea' => 'ERN',
+    'Sudan' => 'SDG',
+    'Madagascar' => 'MGA',
+    'Mauritius' => 'MUR',
+    'Comoros' => 'KMF',
+    'Seychelles' => 'SCR',
+    'Malawi' => 'MWK',
+    'Zambia' => 'ZMW',
+    'Mozambique' => 'MZN'
 ];
 
 // Processing the form submission
@@ -38,7 +50,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
         $date_created);
     
     if ($stmt->execute()) {
-        echo "<script>alert('Country added successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
+        echo "<script>alert('Country added successfully'); window.location.href='countries_boilerplate.php';</script>";
     } else {
         echo "<script>alert('Error adding country: " . $con->error . "');</script>";
     }
@@ -130,7 +142,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='countries_boilerplate.php'">×</button>
         <div class="steps">
             <div class="step">
                 <div class="step-circle active"></div>
