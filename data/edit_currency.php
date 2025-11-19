@@ -2,8 +2,35 @@
 // edit_currency.php
 include '../admin/includes/config.php';
 
-$countries = ['Kenya', 'Uganda', 'Tanzania', 'Rwanda', 'Burundi'];
-$currencies = ['KES', 'UGX', 'TZS', 'RWF', 'BIF', 'USD', 'EUR'];
+// East African countries with their currencies
+$eastAfricanCountries = [
+    'Kenya' => 'KES',
+    'Uganda' => 'UGX',
+    'Tanzania' => 'TZS',
+    'Rwanda' => 'RWF',
+    'Burundi' => 'BIF',
+    'Ethiopia' => 'ETB',
+    'South Sudan' => 'SSP',
+    'Sudan' => 'SDG',
+    'Somalia' => 'SOS',
+    'Djibouti' => 'DJF',
+    'Eritrea' => 'ERN',
+    'DR Congo' => 'CDF',
+    'Comoros' => 'KMF',
+    'Seychelles' => 'SCR',
+    'Mauritius' => 'MUR',
+    'Madagascar' => 'MGA',
+    'Malawi' => 'MWK',
+    'Zambia' => 'ZMW',
+    'Zimbabwe' => 'ZWL',
+    'Mozambique' => 'MZN'
+];
+
+$currencies = array_unique(array_values($eastAfricanCountries));
+// Add common international currencies
+$additionalCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'AED', 'INR'];
+$currencies = array_merge($currencies, $additionalCurrencies);
+sort($currencies);
 
 // Get currency ID from URL parameter
 $currency_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
@@ -18,11 +45,11 @@ if ($currency_id > 0) {
     $currency_data = $result->fetch_assoc();
     
     if (!$currency_data) {
-        echo "<script>alert('Currency record not found'); window.location.href='../base/commodities_boilerplate.php';</script>";
+        echo "<script>alert('Currency record not found'); window.location.href='currencies_boilerplate.php';</script>";
         exit;
     }
 } else {
-    echo "<script>alert('Invalid currency ID'); window.location.href='../base/commodities_boilerplate.php';</script>";
+    echo "<script>alert('Invalid currency ID'); window.location.href='.currencies_boilerplate.php';</script>";
     exit;
 }
 
@@ -70,7 +97,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
         $currency_id);
     
     if ($stmt->execute()) {
-        echo "<script>alert('Currency rate updated successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
+        echo "<script>alert('Currency rate updated successfully'); window.location.href='currencies_boilerplate.php';</script>";
     } else {
         echo "<script>alert('Error updating currency rate: " . $con->error . "');</script>";
     }
@@ -205,11 +232,34 @@ if (isset($con)) {
             margin: 5px 0;
             color: #666;
         }
+        .currency-auto-info {
+            font-size: 12px;
+            color: #666;
+            margin-top: -10px;
+            margin-bottom: 15px;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .currency-match {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .currency-mismatch {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .currency-neutral {
+            background-color: #e2e3e5;
+            color: #383d41;
+            border: 1px solid #d6d8db;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='currencies_boilerplate.php'">×</button>
         <div class="form-container">
             <div>
                 <h2>Edit Currency Rate</h2>
@@ -232,8 +282,9 @@ if (isset($con)) {
                         <label for="country">Country *</label>
                         <select name="country" id="country" required>
                             <option value="" disabled>Select Country</option>
-                            <?php foreach ($countries as $country): ?>
+                            <?php foreach ($eastAfricanCountries as $country => $currencyCode): ?>
                                 <option value="<?= htmlspecialchars($country) ?>" 
+                                        data-currency="<?= htmlspecialchars($currencyCode) ?>"
                                         <?= ($country == $currency_data['country']) ? 'selected' : '' ?>>
                                     <?= htmlspecialchars($country) ?>
                                 </option>
@@ -251,6 +302,9 @@ if (isset($con)) {
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                        <div class="currency-auto-info currency-neutral" id="currencyInfo">
+                            Currency will auto-update when you change the country
+                        </div>
                     </div>
                 </div>
 
@@ -285,9 +339,75 @@ if (isset($con)) {
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            const countrySelect = document.getElementById('country');
+            const currencySelect = document.getElementById('currency');
+            const currencyInfo = document.getElementById('currencyInfo');
             const rateInput = document.getElementById('rate');
             const dateInput = document.getElementById('date');
             
+            // Country-currency mapping
+            const countryCurrencyMap = <?= json_encode($eastAfricanCountries) ?>;
+            
+            // Auto-select currency when country changes
+            countrySelect.addEventListener('change', function() {
+                const selectedCountry = this.value;
+                const expectedCurrency = countryCurrencyMap[selectedCountry];
+                
+                if (expectedCurrency) {
+                    // Find and select the corresponding currency
+                    for (let i = 0; i < currencySelect.options.length; i++) {
+                        if (currencySelect.options[i].value === expectedCurrency) {
+                            currencySelect.selectedIndex = i;
+                            updateCurrencyInfo(selectedCountry, expectedCurrency, true);
+                            break;
+                        }
+                    }
+                } else {
+                    updateCurrencyInfo(selectedCountry, '', false);
+                }
+            });
+            
+            // Update currency info when currency is manually changed
+            currencySelect.addEventListener('change', function() {
+                const selectedCountry = countrySelect.value;
+                const expectedCurrency = countryCurrencyMap[selectedCountry];
+                const selectedCurrency = this.value;
+                
+                if (expectedCurrency && selectedCurrency === expectedCurrency) {
+                    updateCurrencyInfo(selectedCountry, selectedCurrency, true);
+                } else if (expectedCurrency && selectedCurrency !== expectedCurrency) {
+                    updateCurrencyInfo(selectedCountry, selectedCurrency, false, expectedCurrency);
+                } else {
+                    updateCurrencyInfo(selectedCountry, selectedCurrency, null);
+                }
+            });
+            
+            function updateCurrencyInfo(country, currency, isMatch, expectedCurrency = '') {
+                if (isMatch === true) {
+                    currencyInfo.textContent = `✓ Auto-selected: ${currency} for ${country}`;
+                    currencyInfo.className = 'currency-auto-info currency-match';
+                } else if (isMatch === false) {
+                    currencyInfo.textContent = `⚠ ${currency} is not the typical currency for ${country} (usually ${expectedCurrency})`;
+                    currencyInfo.className = 'currency-auto-info currency-mismatch';
+                } else {
+                    currencyInfo.textContent = `Selected: ${currency} for ${country}`;
+                    currencyInfo.className = 'currency-auto-info currency-neutral';
+                }
+            }
+            
+            // Initialize currency info on page load
+            const initialCountry = countrySelect.value;
+            const initialCurrency = currencySelect.value;
+            const expectedInitialCurrency = countryCurrencyMap[initialCountry];
+            
+            if (expectedInitialCurrency && initialCurrency === expectedInitialCurrency) {
+                updateCurrencyInfo(initialCountry, initialCurrency, true);
+            } else if (expectedInitialCurrency && initialCurrency !== expectedInitialCurrency) {
+                updateCurrencyInfo(initialCountry, initialCurrency, false, expectedInitialCurrency);
+            } else {
+                updateCurrencyInfo(initialCountry, initialCurrency, null);
+            }
+
             // Auto-format rate input
             rateInput.addEventListener('input', function() {
                 const value = parseFloat(this.value);
