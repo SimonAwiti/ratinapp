@@ -2,9 +2,35 @@
 // add_currency.php
 include '../admin/includes/config.php';
 
-$countries = ['Kenya', 'Uganda', 'Tanzania', 'Rwanda', 'Burundi', 'Ethiopia'];
-$currencies = ['KES', 'UGX', 'TZS', 'RWF', 'BIF', 'ETB', 'USD', 'EUR'];
+// East African countries with their currencies
+$eastAfricanCountries = [
+    'Kenya' => 'KES',
+    'Uganda' => 'UGX',
+    'Tanzania' => 'TZS',
+    'Rwanda' => 'RWF',
+    'Burundi' => 'BIF',
+    'Ethiopia' => 'ETB',
+    'South Sudan' => 'SSP',
+    'Sudan' => 'SDG',
+    'Somalia' => 'SOS',
+    'Djibouti' => 'DJF',
+    'Eritrea' => 'ERN',
+    'DR Congo' => 'CDF',
+    'Comoros' => 'KMF',
+    'Seychelles' => 'SCR',
+    'Mauritius' => 'MUR',
+    'Madagascar' => 'MGA',
+    'Malawi' => 'MWK',
+    'Zambia' => 'ZMW',
+    'Zimbabwe' => 'ZWL',
+    'Mozambique' => 'MZN'
+];
 
+$currencies = array_unique(array_values($eastAfricanCountries));
+// Add common international currencies
+$additionalCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'AED', 'INR'];
+$currencies = array_merge($currencies, $additionalCurrencies);
+sort($currencies);
 
 // Processing the form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'])) {
@@ -44,7 +70,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($con) && isset($_POST['submit'
         $year);
     
     if ($stmt->execute()) {
-        echo "<script>alert('Currency rate added successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
+        echo "<script>alert('Currency rate added successfully'); window.location.href='currencies_boilerplate.php';</script>";
     } else {
         echo "<script>alert('Error adding currency rate: " . $con->error . "');</script>";
     }
@@ -142,11 +168,17 @@ if (isset($con)) {
             cursor: pointer;
             color: #333;
         }
+        .currency-info {
+            font-size: 12px;
+            color: #666;
+            margin-top: -10px;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='currencies_boilerplate.php'">×</button>
         <div class="steps">
             <div class="step">
                 <div class="step-circle active"></div>
@@ -162,8 +194,10 @@ if (isset($con)) {
                         <label for="country">Country *</label>
                         <select name="country" id="country" required>
                             <option value="" disabled selected>Select Country</option>
-                            <?php foreach ($countries as $country): ?>
-                                <option value="<?= htmlspecialchars($country) ?>"><?= htmlspecialchars($country) ?></option>
+                            <?php foreach ($eastAfricanCountries as $country => $currencyCode): ?>
+                                <option value="<?= htmlspecialchars($country) ?>" data-currency="<?= htmlspecialchars($currencyCode) ?>">
+                                    <?= htmlspecialchars($country) ?>
+                                </option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -175,13 +209,16 @@ if (isset($con)) {
                                 <option value="<?= htmlspecialchars($curr) ?>"><?= htmlspecialchars($curr) ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <div class="currency-info" id="currencyInfo">
+                            Currency will be auto-selected when you choose a country
+                        </div>
                     </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
                         <label for="rate">Exchange Rate (to USD) *</label>
-                        <input type="number" step="0.0001" name="rate" id="rate" required>
+                        <input type="number" step="0.0001" name="rate" id="rate" required placeholder="Enter exchange rate">
                     </div>
                     <div class="form-group">
                         <label for="date">Effective Date *</label>
@@ -196,21 +233,41 @@ if (isset($con)) {
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            // Set default currency based on country selection
-            const countryCurrencyMap = {
-                'Kenya': 'KES',
-                'Uganda': 'UGX',
-                'Tanzania': 'TZS',
-                'Rwanda': 'RWF',
-                'Burundi': 'BIF'
-            };
+            const countrySelect = document.getElementById('country');
+            const currencySelect = document.getElementById('currency');
+            const currencyInfo = document.getElementById('currencyInfo');
 
-            document.getElementById('country').addEventListener('change', function() {
-                const country = this.value;
-                const currencySelect = document.getElementById('currency');
+            countrySelect.addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                const currencyCode = selectedOption.getAttribute('data-currency');
                 
-                if (country in countryCurrencyMap) {
-                    currencySelect.value = countryCurrencyMap[country];
+                if (currencyCode) {
+                    // Set the currency select to the corresponding currency
+                    for (let i = 0; i < currencySelect.options.length; i++) {
+                        if (currencySelect.options[i].value === currencyCode) {
+                            currencySelect.selectedIndex = i;
+                            currencyInfo.textContent = `Auto-selected: ${currencyCode} for ${selectedOption.textContent}`;
+                            currencyInfo.style.color = '#28a745';
+                            break;
+                        }
+                    }
+                } else {
+                    currencyInfo.textContent = 'Please select a currency manually';
+                    currencyInfo.style.color = '#dc3545';
+                }
+            });
+
+            // Also update when currency is manually changed
+            currencySelect.addEventListener('change', function() {
+                const selectedCountry = countrySelect.options[countrySelect.selectedIndex];
+                const expectedCurrency = selectedCountry.getAttribute('data-currency');
+                
+                if (expectedCurrency && this.value !== expectedCurrency) {
+                    currencyInfo.textContent = `Note: ${this.value} is not the typical currency for ${selectedCountry.textContent} (usually ${expectedCurrency})`;
+                    currencyInfo.style.color = '#ffc107';
+                } else if (expectedCurrency) {
+                    currencyInfo.textContent = `Correct currency: ${this.value} for ${selectedCountry.textContent}`;
+                    currencyInfo.style.color = '#28a745';
                 }
             });
         });
