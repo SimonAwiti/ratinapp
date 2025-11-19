@@ -21,7 +21,8 @@ $country_currency = [
     'Seychelles' => 'SCR',
     'Malawi' => 'MWK',
     'Zambia' => 'ZMW',
-    'Mozambique' => 'MZN'
+    'Mozambique' => 'MZN',
+    'DR Congo' => 'CDF'
 ];
 
 // Processing the form submission
