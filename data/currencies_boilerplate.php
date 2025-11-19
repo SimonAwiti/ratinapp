@@ -194,8 +194,8 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
     $import_status = 'danger';
 }
 
-// Function to fetch currency rates data from the database
-function getCurrencyRatesData($con, $limit = 10, $offset = 0) {
+// Function to fetch currency rates data from the database WITH SEARCH
+function getCurrencyRatesData($con, $limit = 10, $offset = 0, $search = '') {
     $sql = "SELECT
                 cr.id,
                 cr.country,
@@ -203,10 +203,14 @@ function getCurrencyRatesData($con, $limit = 10, $offset = 0) {
                 cr.exchange_rate,
                 cr.effective_date
             FROM
-                currencies cr
-            ORDER BY
-                cr.effective_date DESC, cr.country ASC
-            LIMIT $limit OFFSET $offset";
+                currencies cr";
+    
+    // Add search condition if provided
+    if (!empty($search)) {
+        $sql .= " WHERE cr.country LIKE '%$search%' OR cr.currency_code LIKE '%$search%'";
+    }
+    
+    $sql .= " ORDER BY cr.effective_date DESC, cr.country ASC LIMIT $limit OFFSET $offset";
 
     $result = $con->query($sql);
     $data = [];
@@ -223,8 +227,14 @@ function getCurrencyRatesData($con, $limit = 10, $offset = 0) {
     return $data;
 }
 
-function getTotalCurrencyRecords($con) {
+function getTotalCurrencyRecords($con, $search = '') {
     $sql = "SELECT count(*) as total FROM currencies";
+    
+    // Add search condition if provided
+    if (!empty($search)) {
+        $sql .= " WHERE country LIKE '%$search%' OR currency_code LIKE '%$search%'";
+    }
+    
     $result = $con->query($sql);
     if ($result) {
         $row = $result->fetch_assoc();
@@ -233,16 +243,25 @@ function getTotalCurrencyRecords($con) {
     return 0;
 }
 
-// Get total number of records
-$total_records = getTotalCurrencyRecords($con);
+// Get search parameter
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
 
 // Set pagination parameters
-$limit = 10;
+$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 10;
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
 
+// Validate limit options
+$allowed_limits = [10, 25, 50, 100];
+if (!in_array($limit, $allowed_limits)) {
+    $limit = 10;
+}
+
+// Get total number of records
+$total_records = getTotalCurrencyRecords($con, $search);
+
 // Fetch currency rates data
-$currency_rates_data = getCurrencyRatesData($con, $limit, $offset);
+$currency_rates_data = getCurrencyRatesData($con, $limit, $offset, $search);
 
 // Calculate total pages
 $total_pages = ceil($total_records / $limit);
@@ -267,8 +286,14 @@ function formatExchangeRate($rate) {
         align-items: center;
         margin-bottom: 20px;
         flex-wrap: wrap;
+        gap: 12px;
     }
     .toolbar-left {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .toolbar-right {
         display: flex;
         gap: 12px;
         flex-wrap: wrap;
@@ -284,6 +309,32 @@ function formatExchangeRate($rate) {
     .toolbar .primary {
         background-color: rgba(180, 80, 50, 1);
         color: white;
+    }
+    .search-box {
+        display: flex;
+        align-items: center;
+        background: white;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 8px 12px;
+        min-width: 300px;
+    }
+    .search-box input {
+        border: none;
+        outline: none;
+        flex: 1;
+        padding: 4px 8px;
+        font-size: 14px;
+    }
+    .search-box button {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 4px;
+        color: #666;
+    }
+    .search-box button:hover {
+        color: #333;
     }
     table {
         width: 100%;
@@ -313,6 +364,7 @@ function formatExchangeRate($rate) {
         font-size: 14px;
         align-items: center;
         flex-wrap: wrap;
+        gap: 10px;
     }
     .pagination .pages {
         display: flex;
@@ -323,6 +375,8 @@ function formatExchangeRate($rate) {
         border-radius: 6px;
         background-color: #eee;
         cursor: pointer;
+        text-decoration: none;
+        color: #333;
     }
     .pagination .current {
         background-color: #cddc39;
@@ -330,6 +384,8 @@ function formatExchangeRate($rate) {
     select {
         padding: 6px;
         margin-left: 5px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
     }
     .currency-code {
         font-weight: bold;
@@ -380,6 +436,21 @@ function formatExchangeRate($rate) {
     .alert {
         margin-bottom: 20px;
     }
+    .filter-row {
+        background-color: white;
+    }
+    .filter-input {
+        width: 100%;
+        border: none;
+        background: white;
+        padding: 5px;
+        border-radius: 5px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .filter-input:focus {
+        outline: none;
+        background: white;
+    }
 </style>
 
 <div class="text-wrapper-8"><h3>Currency Rates Management</h3></div>
@@ -394,7 +465,7 @@ function formatExchangeRate($rate) {
 <div class="container">
     <div class="toolbar">
         <div class="toolbar-left">
-            <a href="../data/add_currency.php" class="primary" style="display: inline-block; width: 302px; height: 52px; margin-right: 15px; text-align: center; line-height: 52px; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
+            <a href="../data/add_currency.php" class="primary" style="display: inline-block; padding: 12px 20px; text-align: center; line-height: normal; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
                 <i class="fa fa-plus" style="margin-right: 6px;"></i> Add New
             </a>
             <button class="delete-btn">
@@ -418,10 +489,22 @@ function formatExchangeRate($rate) {
             <button class="btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
                 <i class="fa fa-upload" style="margin-right: 6px;"></i> Import
             </button>
-            
-            <button>
-                <i class="fa fa-filter" style="margin-right: 6px;"></i> Filters
-            </button>
+        </div>
+        
+        <div class="toolbar-right">
+            <form method="GET" action="" class="search-box">
+                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Search countries or currency codes...">
+                <button type="submit">
+                    <i class="fa fa-search"></i>
+                </button>
+                <?php if (!empty($search)): ?>
+                    <a href="?" style="margin-left: 8px; color: #666; text-decoration: none;">
+                        <i class="fa fa-times"></i>
+                    </a>
+                <?php endif; ?>
+                <!-- Keep limit as hidden field -->
+                <input type="hidden" name="limit" value="<?php echo $limit; ?>">
+            </form>
         </div>
     </div>
 
@@ -435,49 +518,71 @@ function formatExchangeRate($rate) {
                 <th>Effective Date</th>
                 <th>Actions</th>
             </tr>
+            <tr class="filter-row">
+                <th></th>
+                <th><input type="text" class="filter-input" id="filterCountry" placeholder="Filter Country" onkeyup="filterTable()"></th>
+                <th><input type="text" class="filter-input" id="filterCurrency" placeholder="Filter Currency" onkeyup="filterTable()"></th>
+                <th><input type="text" class="filter-input" id="filterRate" placeholder="Filter Rate" onkeyup="filterTable()"></th>
+                <th><input type="text" class="filter-input" id="filterDate" placeholder="Filter Date" onkeyup="filterTable()"></th>
+                <th></th>
+            </tr>
         </thead>
-        <tbody>
-            <?php foreach ($currency_rates_data as $rate): ?>
+        <tbody id="currencyRatesTable">
+            <?php if (!empty($currency_rates_data)): ?>
+                <?php foreach ($currency_rates_data as $rate): ?>
+                    <tr>
+                        <td><input type="checkbox" data-id="<?php echo $rate['id']; ?>"/></td>
+                        <td><?php echo htmlspecialchars($rate['country']); ?></td>
+                        <td><span class="currency-code"><?php echo htmlspecialchars($rate['currency_code']); ?></span></td>
+                        <td class="exchange-rate"><?php echo formatExchangeRate($rate['exchange_rate']); ?></td>
+                        <td><?php echo date('Y-m-d', strtotime($rate['effective_date'])); ?></td>
+                        <td>
+                            <a href="../data/edit_currency.php?id=<?= $rate['id'] ?>">
+                                <button class="btn btn-sm btn-warning">
+                                    <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
+                                </button>
+                            </a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            <?php else: ?>
                 <tr>
-                    <td><input type="checkbox" data-id="<?php echo $rate['id']; ?>"/></td>
-                    <td><?php echo htmlspecialchars($rate['country']); ?></td>
-                    <td><span class="currency-code"><?php echo htmlspecialchars($rate['currency_code']); ?></span></td>
-                    <td class="exchange-rate"><?php echo formatExchangeRate($rate['exchange_rate']); ?></td>
-                    <td><?php echo date('Y-m-d', strtotime($rate['effective_date'])); ?></td>
-                    <td>
-                        <a href="../data/edit_currency.php?id=<?= $rate['id'] ?>">
-                            <button class="btn btn-sm btn-warning">
-                                <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
-                            </button>
-                        </a>
+                    <td colspan="6" style="text-align: center; padding: 20px;">
+                        No currency rates found<?php echo !empty($search) ? ' matching your search criteria' : ''; ?>.
                     </td>
                 </tr>
-            <?php endforeach; ?>
+            <?php endif; ?>
         </tbody>
     </table>
 
     <div class="pagination">
         <div>
             Show
-            <select>
-                <option>10</option>
-                <option>25</option>
-                <option>50</option>
+            <select id="itemsPerPage" onchange="updateItemsPerPage(this.value)">
+                <option value="10" <?php echo $limit == 10 ? 'selected' : ''; ?>>10</option>
+                <option value="25" <?php echo $limit == 25 ? 'selected' : ''; ?>>25</option>
+                <option value="50" <?php echo $limit == 50 ? 'selected' : ''; ?>>50</option>
+                <option value="100" <?php echo $limit == 100 ? 'selected' : ''; ?>>100</option>
             </select>
             entries
         </div>
         <div>Displaying <?php echo ($offset + 1) . ' to ' . min($offset + $limit, $total_records) . ' of ' . $total_records; ?> items</div>
         <div class="pages">
             <?php if ($page > 1): ?>
-                <a href="?page=<?php echo $page - 1; ?>" class="page">‹</a>
+                <a href="?page=<?php echo $page - 1; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>" class="page">‹</a>
             <?php endif; ?>
 
-            <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                <a href="?page=<?php echo $i; ?>" class="page <?php echo ($page == $i) ? 'current' : ''; ?>"><?php echo $i; ?></a>
+            <?php 
+            // Show limited page numbers for better UX
+            $start_page = max(1, $page - 2);
+            $end_page = min($total_pages, $page + 2);
+            
+            for ($i = $start_page; $i <= $end_page; $i++): ?>
+                <a href="?page=<?php echo $i; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>" class="page <?php echo ($page == $i) ? 'current' : ''; ?>"><?php echo $i; ?></a>
             <?php endfor; ?>
 
             <?php if ($page < $total_pages): ?>
-                <a href="?page=<?php echo $page + 1; ?>" class="page">›</a>
+                <a href="?page=<?php echo $page + 1; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>" class="page">›</a>
             <?php endif; ?>
         </div>
     </div>
@@ -660,6 +765,49 @@ function exportSelected(format) {
     form.submit();
     document.body.removeChild(form);
 }
+
+function updateItemsPerPage(value) {
+    const url = new URL(window.location);
+    url.searchParams.set('limit', value);
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
+}
+
+function filterTable() {
+    const countryFilter = document.getElementById('filterCountry').value.toLowerCase();
+    const currencyFilter = document.getElementById('filterCurrency').value.toLowerCase();
+    const rateFilter = document.getElementById('filterRate').value.toLowerCase();
+    const dateFilter = document.getElementById('filterDate').value.toLowerCase();
+    
+    const rows = document.querySelectorAll('#currencyRatesTable tr');
+    
+    rows.forEach(row => {
+        if (row.cells.length < 5) return;
+        
+        const countryName = row.cells[1].textContent.toLowerCase();
+        const currencyCode = row.cells[2].textContent.toLowerCase();
+        const exchangeRate = row.cells[3].textContent.toLowerCase();
+        const effectiveDate = row.cells[4].textContent.toLowerCase();
+        
+        const matchesCountry = countryName.includes(countryFilter);
+        const matchesCurrency = currencyCode.includes(currencyFilter);
+        const matchesRate = exchangeRate.includes(rateFilter);
+        const matchesDate = effectiveDate.includes(dateFilter);
+        
+        row.style.display = (matchesCountry && matchesCurrency && matchesRate && matchesDate) ? '' : 'none';
+    });
+}
+
+// Clear filters when clicking on clear button in search
+document.addEventListener('DOMContentLoaded', function() {
+    const clearButton = document.querySelector('.search-box a');
+    if (clearButton) {
+        clearButton.addEventListener('click', function(e) {
+            e.preventDefault();
+            window.location.href = '?limit=<?php echo $limit; ?>';
+        });
+    }
+});
 </script>
 
 <?php include '../admin/includes/footer.php'; ?>
