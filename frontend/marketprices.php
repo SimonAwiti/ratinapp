@@ -278,6 +278,208 @@ function getTotalPriceRecords($con, $filters = []) {
      return 0;
 }
 
+// CORRECTED: Function to calculate Day-over-Day change
+function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
+    if ($currentPrice === null || $currentPrice === '' || $currentPrice <= 0) return 0;
+
+    try {
+        // Get the previous day's price for the same commodity/market/price_type
+        $previousDate = date('Y-m-d', strtotime($currentDate . ' -1 day'));
+        
+        $sql = "SELECT Price FROM market_prices 
+                WHERE commodity = ? 
+                AND market = ?
+                AND price_type = ?
+                AND DATE(date_posted) = ?
+                LIMIT 1";
+
+        $stmt = $con->prepare($sql);
+        if (!$stmt) return 0;
+        
+        $stmt->bind_param("isss", $commodityId, $market, $priceType, $previousDate);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result && $result->num_rows > 0) {
+            $previousData = $result->fetch_assoc();
+            $previousPrice = $previousData['Price'];
+            if ($previousPrice > 0) {
+                $change = (($currentPrice - $previousPrice) / $previousPrice) * 100;
+                $stmt->close();
+                return round($change, 2);
+            }
+        }
+        $stmt->close();
+        
+        // If no exact previous day found, try to find the most recent price before current date
+        $sql = "SELECT Price FROM market_prices 
+                WHERE commodity = ? 
+                AND market = ?
+                AND price_type = ?
+                AND DATE(date_posted) < DATE(?)
+                ORDER BY date_posted DESC 
+                LIMIT 1";
+
+        $stmt = $con->prepare($sql);
+        if (!$stmt) return 0;
+        
+        $stmt->bind_param("isss", $commodityId, $market, $priceType, $currentDate);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result && $result->num_rows > 0) {
+            $previousData = $result->fetch_assoc();
+            $previousPrice = $previousData['Price'];
+            if ($previousPrice > 0) {
+                $change = (($currentPrice - $previousPrice) / $previousPrice) * 100;
+                $stmt->close();
+                return round($change, 2);
+            }
+        }
+        $stmt->close();
+        
+    } catch (Exception $e) {
+        error_log("Error in calculateDoDChange: " . $e->getMessage());
+    }
+    
+    return 0;
+}
+
+// CORRECTED: Function to calculate Month-over-Month change
+function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
+    if ($currentPrice === null || $currentPrice === '' || $currentPrice <= 0) return 0;
+
+    try {
+        // Calculate date 30 days before current date
+        $monthAgoDate = date('Y-m-d', strtotime($currentDate . ' -30 days'));
+        
+        // Find price from approximately 30 days ago
+        $sql = "SELECT Price FROM market_prices
+                WHERE commodity = ?
+                AND market = ?
+                AND price_type = ?
+                AND DATE(date_posted) = ?
+                LIMIT 1";
+
+        $stmt = $con->prepare($sql);
+        if (!$stmt) return 0;
+        
+        $stmt->bind_param("isss", $commodityId, $market, $priceType, $monthAgoDate);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result && $result->num_rows > 0) {
+            $monthAgoData = $result->fetch_assoc();
+            $monthAgoPrice = $monthAgoData['Price'];
+            if ($monthAgoPrice > 0) {
+                $change = (($currentPrice - $monthAgoPrice) / $monthAgoPrice) * 100;
+                $stmt->close();
+                return round($change, 2);
+            }
+        }
+        $stmt->close();
+        
+        // If exact month-ago date not found, try to find the closest date within a range
+        $sql = "SELECT Price FROM market_prices
+                WHERE commodity = ?
+                AND market = ?
+                AND price_type = ?
+                AND DATE(date_posted) BETWEEN DATE_SUB(?, INTERVAL 5 DAY) AND DATE_SUB(?, INTERVAL 25 DAY)
+                ORDER BY ABS(DATEDIFF(DATE(date_posted), ?)) ASC
+                LIMIT 1";
+
+        $stmt = $con->prepare($sql);
+        if (!$stmt) return 0;
+        
+        $stmt->bind_param("isssss", $commodityId, $market, $priceType, $monthAgoDate, $monthAgoDate, $monthAgoDate);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result && $result->num_rows > 0) {
+            $monthAgoData = $result->fetch_assoc();
+            $monthAgoPrice = $monthAgoData['Price'];
+            if ($monthAgoPrice > 0) {
+                $change = (($currentPrice - $monthAgoPrice) / $monthAgoPrice) * 100;
+                $stmt->close();
+                return round($change, 2);
+            }
+        }
+        $stmt->close();
+        
+    } catch (Exception $e) {
+        error_log("Error in calculateDoMChange: " . $e->getMessage());
+    }
+    
+    return 0;
+}
+// CORRECTED: Function to calculate Year-over-Year change
+function calculateYoYChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
+    if ($currentPrice === null || $currentPrice === '' || $currentPrice <= 0) return 0;
+
+    try {
+        // Calculate date 1 year ago
+        $oneYearAgo = date('Y-m-d', strtotime($currentDate . ' -1 year'));
+        
+        // Find price from exactly 1 year ago
+        $sql = "SELECT Price FROM market_prices
+                WHERE commodity = ?
+                AND market = ?
+                AND price_type = ?
+                AND DATE(date_posted) = ?
+                LIMIT 1";
+
+        $stmt = $con->prepare($sql);
+        if (!$stmt) return 0;
+        
+        $stmt->bind_param("isss", $commodityId, $market, $priceType, $oneYearAgo);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result && $result->num_rows > 0) {
+            $yearAgoData = $result->fetch_assoc();
+            $yearAgoPrice = $yearAgoData['Price'];
+            if ($yearAgoPrice > 0) {
+                $change = (($currentPrice - $yearAgoPrice) / $yearAgoPrice) * 100;
+                $stmt->close();
+                return round($change, 2);
+            }
+        }
+        $stmt->close();
+        
+        // If exact year-ago date not found, try to find the closest date within a range
+        $sql = "SELECT Price FROM market_prices
+                WHERE commodity = ?
+                AND market = ?
+                AND price_type = ?
+                AND DATE(date_posted) BETWEEN DATE_SUB(?, INTERVAL 14 DAY) AND DATE_ADD(?, INTERVAL 14 DAY)
+                ORDER BY ABS(DATEDIFF(DATE(date_posted), ?)) ASC
+                LIMIT 1";
+
+        $stmt = $con->prepare($sql);
+        if (!$stmt) return 0;
+        
+        $stmt->bind_param("isssss", $commodityId, $market, $priceType, $oneYearAgo, $oneYearAgo, $oneYearAgo);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result && $result->num_rows > 0) {
+            $yearAgoData = $result->fetch_assoc();
+            $yearAgoPrice = $yearAgoData['Price'];
+            if ($yearAgoPrice > 0) {
+                $change = (($currentPrice - $yearAgoPrice) / $yearAgoPrice) * 100;
+                $stmt->close();
+                return round($change, 2);
+            }
+        }
+        $stmt->close();
+        
+    } catch (Exception $e) {
+        error_log("Error in calculateYoYChange: " . $e->getMessage());
+    }
+    
+    return 0;
+}
+
 // Get filter values from request
 $filters = [
     'country' => isset($_GET['country']) ? $_GET['country'] : '',
@@ -305,64 +507,6 @@ $prices_data = getPricesData($con, $limit, $offset, $filters);
 
 // Calculate total pages
 $total_pages = ceil($total_records / $limit);
-
-// Fetch prices data with filters
-$prices_data = getPricesData($con, $limit, $offset, $filters);
-
-// Calculate total pages
-$total_pages = ceil($total_records / $limit);
-
-// Function to calculate price changes
-function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $con) {
-    if ($currentPrice === null || $currentPrice === '') return 0;
-
-    $yesterday = date('Y-m-d', strtotime('-1 day'));
-
-    $sql = "SELECT Price FROM market_prices
-            WHERE commodity = " . (int)$commodityId . "
-            AND market = '" . $con->real_escape_string($market) . "'
-            AND price_type = '" . $con->real_escape_string($priceType) . "'
-            AND DATE(date_posted) = '$yesterday'";
-
-    $result = $con->query($sql);
-
-    if ($result && $result->num_rows > 0) {
-        $yesterdayData = $result->fetch_assoc();
-        $yesterdayPrice = $yesterdayData['Price'];
-        if($yesterdayPrice != 0){
-            $change = (($currentPrice - $yesterdayPrice) / $yesterdayPrice) * 100;
-            return round($change, 2);
-        }
-        return 0;
-    }
-    return 0;
-}
-
-function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $con) {
-    if ($currentPrice === null || $currentPrice === '') return 0;
-
-    $firstDayOfLastMonth = date('Y-m-01', strtotime('-1 month'));
-    $lastDayOfLastMonth = date('Y-m-t', strtotime('-1 month'));
-
-    $sql = "SELECT AVG(Price) as avg_price FROM market_prices
-            WHERE commodity = " . (int)$commodityId . "
-            AND market = '" . $con->real_escape_string($market) . "'
-            AND price_type = '" . $con->real_escape_string($priceType) . "'
-            AND DATE(date_posted) BETWEEN '$firstDayOfLastMonth' AND '$lastDayOfLastMonth'";
-
-    $result = $con->query($sql);
-
-    if ($result && $result->num_rows > 0) {
-        $monthData = $result->fetch_assoc();
-        $averagePrice = $monthData['avg_price'];
-        if($averagePrice != 0){
-             $change = (($currentPrice - $averagePrice) / $averagePrice) * 100;
-             return round($change, 2);
-        }
-        return 0;
-    }
-    return 0;
-}
 
 // Group data by market, commodity, date, and source
 $grouped_data = [];
@@ -474,7 +618,7 @@ foreach ($markets as $market) {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        /* Your existing CSS styles */
+        /* Your existing CSS styles - UNCHANGED */
         body {
             font-family: Arial, sans-serif;
             background-color: #f8f9fa;
@@ -1094,15 +1238,19 @@ foreach ($markets as $market) {
                                     $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
 
                                     foreach($prices_in_group as $price):
-                                        $dayChange = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
-                                        $monthChange = calculateDoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
-                                        $yearChange = 20; // Hardcoded as per original design
+                                        // Calculate price changes
+                                        $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price['date_posted'], $con);
+                                        $month_change = calculateDoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price['date_posted'], $con);
+                                        $year_change = calculateYoYChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price['date_posted'], $con);
                                         
-                                        $dayChangeClass = $dayChange >= 0 ? 'change-positive' : 'change-negative';
-                                        $monthChangeClass = $monthChange >= 0 ? 'change-positive' : 'change-negative';
-                                        $yearChangeClass = $yearChange >= 0 ? 'change-positive' : 'change-negative';
+                                        // Set CSS classes for change indicators
+                                        // Negative change means price decreased (good for market) - Green
+                                        // Positive change means price increased (bad for market) - Red
+                                        $dayChangeClass = $day_change < 0 ? 'change-positive' : 'change-negative';
+                                        $monthChangeClass = $month_change < 0 ? 'change-positive' : 'change-negative';
+                                        $yearChangeClass = $year_change < 0 ? 'change-positive' : 'change-negative';
                                         
-                                        // CORRECTED: Get currency code and date-matched exchange rate
+                                        // Get currency code and date-matched exchange rate
                                         $currency = getCurrencyCode($price['country_admin_0']);
                                         $exchangeRate = getExchangeRate($price['country_admin_0'], $price['date_posted'], $con);
                                         
@@ -1134,26 +1282,27 @@ foreach ($markets as $market) {
                                         <td style="font-weight: 600;"><?php echo number_format($localPrice, 2); ?> <?php echo $currency; ?></td>
                                         <td style="font-weight: 600;">$<?php echo number_format($usdPrice, 2); ?></td>
                                         <td><?php echo number_format($exchangeRate, 2); ?> <?php echo $currency; ?>/USD</td>
-                                        <td class="<?php echo $dayChangeClass; ?>"><?php echo $dayChange >= 0 ? '+' : ''; ?><?php echo $dayChange; ?>%</td>
-                                        <td class="<?php echo $monthChangeClass; ?>"><?php echo $monthChange >= 0 ? '+' : ''; ?><?php echo $monthChange; ?>%</td>
-                                        <td class="<?php echo $yearChangeClass; ?>"><?php echo $yearChange >= 0 ? '+' : ''; ?><?php echo $yearChange; ?>%</td>
+                                        <td class="<?php echo $dayChangeClass; ?>"><?php echo $day_change >= 0 ? '+' : ''; ?><?php echo $day_change; ?>%</td>
+                                        <td class="<?php echo $monthChangeClass; ?>"><?php echo $month_change >= 0 ? '+' : ''; ?><?php echo $month_change; ?>%</td>
+                                        <td class="<?php echo $yearChangeClass; ?>"><?php echo $year_change >= 0 ? '+' : ''; ?><?php echo $year_change; ?>%</td>
                                         <?php if ($first_row): ?>
                                             <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['data_source']); ?></td>
                                         <?php endif; ?>
                                     </tr>
                                     <?php
-                                            $first_row = false;
-                                        endforeach;
+                                        $first_row = false;
                                     endforeach;
-                                } else {
-                                    echo '<tr><td colspan="14" style="text-align: center; padding: 20px;">No market prices data found</td></tr>';
-                                }
-                                ?>
-                            </tbody>
+                                endforeach;
+                            } else {
+                                echo '<tr><td colspan="14" style="text-align: center; padding: 20px;">No market prices data found</td></tr>';
+                            }
+                            ?>
+                        </tbody>
                     </table>
                 </div>
 
                 <div id="chart-view" style="display: none; padding: 20px;">
+                    <!-- Chart view content remains EXACTLY the same -->
                     <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                         <div>
                             <h4>Market Price Trends</h4>
@@ -1223,6 +1372,7 @@ foreach ($markets as $market) {
                 </div>
 
                 <div id="map-view" style="display: none; padding: 20px;">
+                    <!-- Map view content remains EXACTLY the same -->
                     <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                         <div>
                             <h4>Market Locations</h4>
@@ -1307,6 +1457,7 @@ foreach ($markets as $market) {
 
                 <?php if ($total_records > 0): ?>
                 <div class="pagination">
+                    <!-- Pagination remains EXACTLY the same -->
                     <div class="flex items-center gap-4">
                         <span class="text-sm text-gray-700">
                             Showing <span class="font-medium"><?php echo $offset + 1; ?></span> to <span class="font-medium"><?php echo min($offset + $limit, $total_records); ?></span> of <span class="font-medium"><?php echo $total_records; ?></span> results
