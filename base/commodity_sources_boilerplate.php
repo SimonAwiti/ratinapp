@@ -7,7 +7,48 @@ include '../admin/includes/config.php';
 // Include the shared header with the sidebar and initial HTML
 include '../admin/includes/header.php';
 
-// --- Fetch all data for the table ---
+// Handle delete action
+if (isset($_POST['delete_selected']) && isset($_POST['selected_ids'])) {
+    $selected_ids = $_POST['selected_ids'];
+    
+    // Convert all IDs to integers for safety
+    $ids = array_map('intval', $selected_ids);
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    
+    $delete_sql = "DELETE FROM commodity_sources WHERE id IN ($placeholders)";
+    $stmt = $con->prepare($delete_sql);
+    
+    if ($stmt) {
+        // Build the types string (all integers)
+        $types = str_repeat('i', count($ids));
+        $stmt->bind_param($types, ...$ids);
+        
+        if ($stmt->execute()) {
+            $delete_message = "Successfully deleted " . $stmt->affected_rows . " source(s).";
+            $delete_status = 'success';
+            
+            // Refresh the page to show updated data
+            echo '<script>setTimeout(function() { window.location.href = window.location.pathname + "?' . http_build_query($_GET) . '"; }, 1000);</script>';
+        } else {
+            $delete_message = "Error deleting sources: " . $stmt->error;
+            $delete_status = 'danger';
+        }
+        $stmt->close();
+    } else {
+        $delete_message = "Error preparing delete statement: " . $con->error;
+        $delete_status = 'danger';
+    }
+}
+
+// Handle filters
+$filters = [
+    'id' => isset($_GET['filter_id']) ? trim($_GET['filter_id']) : '',
+    'admin0' => isset($_GET['filter_admin0']) ? trim($_GET['filter_admin0']) : '',
+    'admin1' => isset($_GET['filter_admin1']) ? trim($_GET['filter_admin1']) : '',
+    'created_at' => isset($_GET['filter_created_at']) ? trim($_GET['filter_created_at']) : ''
+];
+
+// Build query with filters
 $query = "
     SELECT
         id,
@@ -16,10 +57,51 @@ $query = "
         created_at
     FROM
         commodity_sources
-    ORDER BY admin0_country ASC, admin1_county_district ASC
+    WHERE 1=1
 ";
-$result = $con->query($query);
-$commodity_sources = $result->fetch_all(MYSQLI_ASSOC);
+
+$params = [];
+$types = '';
+
+if (!empty($filters['id'])) {
+    $query .= " AND id LIKE ?";
+    $params[] = '%' . $filters['id'] . '%';
+    $types .= 's';
+}
+
+if (!empty($filters['admin0'])) {
+    $query .= " AND admin0_country LIKE ?";
+    $params[] = '%' . $filters['admin0'] . '%';
+    $types .= 's';
+}
+
+if (!empty($filters['admin1'])) {
+    $query .= " AND admin1_county_district LIKE ?";
+    $params[] = '%' . $filters['admin1'] . '%';
+    $types .= 's';
+}
+
+if (!empty($filters['created_at'])) {
+    $query .= " AND DATE(created_at) LIKE ?";
+    $params[] = '%' . $filters['created_at'] . '%';
+    $types .= 's';
+}
+
+$query .= " ORDER BY admin0_country ASC, admin1_county_district ASC";
+
+// Get all data with filters
+$stmt = $con->prepare($query);
+if ($stmt) {
+    if (!empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $commodity_sources = $result->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+} else {
+    $commodity_sources = [];
+}
 
 // Pagination and Filtering Logic
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
@@ -33,19 +115,23 @@ $commodity_sources_paged = array_slice($commodity_sources, $startIndex, $itemsPe
 // --- Fetch counts for summary boxes ---
 $total_sources_query = "SELECT COUNT(*) AS total FROM commodity_sources";
 $total_sources_result = $con->query($total_sources_query);
-$total_sources = $total_sources_result->fetch_assoc()['total'];
+$total_sources_row = $total_sources_result->fetch_assoc();
+$total_sources = $total_sources_row['total'];
 
 $distinct_countries_query = "SELECT COUNT(DISTINCT admin0_country) AS total FROM commodity_sources";
 $distinct_countries_result = $con->query($distinct_countries_query);
-$distinct_countries_count = $distinct_countries_result->fetch_assoc()['total'];
+$distinct_countries_row = $distinct_countries_result->fetch_assoc();
+$distinct_countries_count = $distinct_countries_row['total'];
 
 $distinct_counties_query = "SELECT COUNT(DISTINCT admin1_county_district) AS total FROM commodity_sources";
 $distinct_counties_result = $con->query($distinct_counties_query);
-$distinct_counties_count = $distinct_counties_result->fetch_assoc()['total'];
+$distinct_counties_row = $distinct_counties_result->fetch_assoc();
+$distinct_counties_count = $distinct_counties_row['total'];
 
 $kenya_sources_query = "SELECT COUNT(*) AS total FROM commodity_sources WHERE admin0_country = 'Kenya'";
 $kenya_sources_result = $con->query($kenya_sources_query);
-$kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
+$kenya_sources_row = $kenya_sources_result->fetch_assoc();
+$kenya_sources_count = $kenya_sources_row['total'];
 ?>
 
 <style>
@@ -73,14 +159,21 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
     .btn-add-new:hover {
         background-color: darkred;
     }
-    .btn-delete, .btn-export {
+    .btn-delete, .btn-export, .btn-bulk-export {
         background-color: white;
         color: black;
         border: 1px solid #ddd;
         padding: 8px 16px;
     }
-    .btn-delete:hover, .btn-export:hover {
+    .btn-delete:hover, .btn-export:hover, .btn-bulk-export:hover {
         background-color: #f8f9fa;
+    }
+    .btn-bulk-export {
+        background-color: #17a2b8;
+        color: white;
+    }
+    .btn-bulk-export:hover {
+        background-color: #138496;
     }
     .dropdown-menu {
         min-width: 120px;
@@ -202,6 +295,22 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
     .btn-primary:hover {
         background-color: darkred;
     }
+    .alert {
+        padding: 12px 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        border: 1px solid transparent;
+    }
+    .alert-success {
+        background-color: #d4edda;
+        border-color: #c3e6cb;
+        color: #155724;
+    }
+    .alert-danger {
+        background-color: #f8d7da;
+        border-color: #f5c6cb;
+        color: #721c24;
+    }
 </style>
 
 <div class="stats-section">
@@ -214,7 +323,7 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
                 <i class="fas fa-globe-americas"></i>
             </div>
             <div class="stats-title">Total Sources</div>
-            <div class="stats-number"><?= $total_sources ?></div>
+            <div class="stats-number"><?php echo $total_sources; ?></div>
         </div>
         
         <div class="overlap-6">
@@ -222,7 +331,7 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
                 <i class="fas fa-flag"></i>
             </div>
             <div class="stats-title">Distinct Countries</div>
-            <div class="stats-number"><?= $distinct_countries_count ?></div>
+            <div class="stats-number"><?php echo $distinct_countries_count; ?></div>
         </div>
         
         <div class="overlap-7">
@@ -230,7 +339,7 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
                 <i class="fas fa-city"></i>
             </div>
             <div class="stats-title">Distinct Counties/Districts</div>
-            <div class="stats-number"><?= $distinct_counties_count ?></div>
+            <div class="stats-number"><?php echo $distinct_counties_count; ?></div>
         </div>
         
         <div class="overlap-7">
@@ -238,10 +347,16 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
                 <i class="fas fa-map-marker-alt"></i>
             </div>
             <div class="stats-title">Sources from Kenya</div>
-            <div class="stats-number"><?= $kenya_sources_count ?></div>
+            <div class="stats-number"><?php echo $kenya_sources_count; ?></div>
         </div>
     </div>
 </div>
+
+<?php if (isset($delete_message)): ?>
+    <div class="alert alert-<?php echo $delete_status; ?>" style="margin: 20px; width: auto;">
+        <?php echo $delete_message; ?>
+    </div>
+<?php endif; ?>
 
 <div class="container">
     <div class="table-container">
@@ -251,93 +366,146 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
                 Add New
             </a>
 
-            <button class="btn btn-delete" onclick="deleteSelectedSources()">
+            <button class="btn btn-delete" onclick="confirmDelete()">
                 <i class="fas fa-trash" style="margin-right: 3px;"></i>
                 Delete
             </button>
 
-            <div class="dropdown">
-                <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="fas fa-download" style="margin-right: 3px;"></i>
-                    Export
+            <form method="POST" action="export_current_page_sources.php" style="display: inline;">
+                <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
+                <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
+                <input type="hidden" name="filters" value="<?php echo htmlspecialchars(json_encode($filters)); ?>">
+                <button type="submit" class="btn-export">
+                    <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
                 </button>
-                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
-                    <li><a class="dropdown-item" href="#" onclick="exportSelectedSources('excel')">
-                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export to Excel
-                    </a></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportSelectedSources('pdf')">
-                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
-                    </a></li>
-                </ul>
-            </div>
+            </form>
+
+            <form method="POST" action="bulk_export_sources.php" style="display: inline;">
+                <input type="hidden" name="filters" value="<?php echo htmlspecialchars(json_encode($filters)); ?>">
+                <button type="submit" class="btn-bulk-export">
+                    <i class="fas fa-database" style="margin-right: 3px;"></i> Bulk Export (All)
+                </button>
+            </form>
         </div>
 
-        <table class="table table-striped table-hover">
-            <thead>
-                <tr style="background-color: #d3d3d3 !important; color: black !important;">
-                    <th><input type="checkbox" id="selectAll"></th>
-                    <th>ID</th>
-                    <th>Admin-0 (Country)</th>
-                    <th>Admin-1 (County/District)</th>
-                    <th>Created On</th>
-                    <th>Actions</th>
-                </tr>
-                <tr class="filter-row" style="background-color: white !important; color: black !important;">
-                    <th></th>
-                    <th><input type="text" class="filter-input" id="filterId" placeholder="Filter ID"></th>
-                    <th><input type="text" class="filter-input" id="filterAdmin0" placeholder="Filter Country"></th>
-                    <th><input type="text" class="filter-input" id="filterAdmin1" placeholder="Filter County/District"></th>
-                    <th><input type="text" class="filter-input" id="filterCreatedAt" placeholder="Filter Date"></th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody id="commoditySourceTable">
-                <?php foreach ($commodity_sources_paged as $source): ?>
-                    <tr>
-                        <td>
-                            <input type="checkbox" class="row-checkbox" value="<?= htmlspecialchars($source['id']) ?>">
-                        </td>
-                        <td><?= htmlspecialchars($source['id']) ?></td>
-                        <td><?= htmlspecialchars($source['admin0_country']) ?></td>
-                        <td><?= htmlspecialchars($source['admin1_county_district']) ?></td>
-                        <td><?= date('Y-m-d H:i', strtotime($source['created_at'])) ?></td>
-                        <td>
-                            <a href="edit_commodity_sources.php?id=<?= htmlspecialchars($source['id']) ?>">
-                                <button class="btn btn-sm btn-warning">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                            </a>
-                        </td>
+        <form method="GET" action="" id="filterForm">
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr style="background-color: #d3d3d3 !important; color: black !important;">
+                        <th><input type="checkbox" id="selectAll"></th>
+                        <th>ID</th>
+                        <th>Admin-0 (Country)</th>
+                        <th>Admin-1 (County/District)</th>
+                        <th>Created On</th>
+                        <th>Actions</th>
                     </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
+                    <tr class="filter-row" style="background-color: white !important; color: black !important;">
+                        <th></th>
+                        <th>
+                            <input type="text" 
+                                   class="filter-input" 
+                                   name="filter_id" 
+                                   placeholder="Filter ID"
+                                   value="<?php echo htmlspecialchars($filters['id']); ?>"
+                                   onkeyup="this.form.submit()">
+                        </th>
+                        <th>
+                            <input type="text" 
+                                   class="filter-input" 
+                                   name="filter_admin0" 
+                                   placeholder="Filter Country"
+                                   value="<?php echo htmlspecialchars($filters['admin0']); ?>"
+                                   onkeyup="this.form.submit()">
+                        </th>
+                        <th>
+                            <input type="text" 
+                                   class="filter-input" 
+                                   name="filter_admin1" 
+                                   placeholder="Filter County/District"
+                                   value="<?php echo htmlspecialchars($filters['admin1']); ?>"
+                                   onkeyup="this.form.submit()">
+                        </th>
+                        <th>
+                            <input type="text" 
+                                   class="filter-input" 
+                                   name="filter_created_at" 
+                                   placeholder="YYYY-MM-DD"
+                                   value="<?php echo htmlspecialchars($filters['created_at']); ?>"
+                                   onkeyup="this.form.submit()">
+                        </th>
+                        <th>
+                            <?php if (!empty($filters['id']) || !empty($filters['admin0']) || !empty($filters['admin1']) || !empty($filters['created_at'])): ?>
+                                <a href="?" class="btn btn-sm" style="background-color: #6c757d; color: white; text-decoration: none;">
+                                    <i class="fas fa-times"></i> Clear
+                                </a>
+                            <?php endif; ?>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody id="commoditySourceTable">
+                    <?php if (empty($commodity_sources_paged)): ?>
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 40px; color: #666;">
+                                <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; display: block; color: #ccc;"></i>
+                                No commodity sources found<?php echo (!empty($filters['id']) || !empty($filters['admin0']) || !empty($filters['admin1']) || !empty($filters['created_at'])) ? ' matching your filters' : ''; ?>.
+                            </td>
+                        </tr>
+                    <?php else: ?>
+                        <?php foreach ($commodity_sources_paged as $source): ?>
+                            <tr>
+                                <td>
+                                    <input type="checkbox" 
+                                           class="row-checkbox" 
+                                           name="selected_ids[]" 
+                                           value="<?php echo htmlspecialchars($source['id']); ?>">
+                                </td>
+                                <td><?php echo htmlspecialchars($source['id']); ?></td>
+                                <td><?php echo htmlspecialchars($source['admin0_country']); ?></td>
+                                <td><?php echo htmlspecialchars($source['admin1_county_district']); ?></td>
+                                <td><?php echo date('Y-m-d H:i', strtotime($source['created_at'])); ?></td>
+                                <td>
+                                    <a href="edit_commodity_sources.php?id=<?php echo htmlspecialchars($source['id']); ?>">
+                                        <button class="btn btn-sm btn-warning">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                    </a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+
+            <!-- Hidden inputs for pagination -->
+            <input type="hidden" name="page" value="<?php echo $page; ?>">
+            <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
+        </form>
 
         <div class="d-flex justify-content-between align-items-center">
             <div>
-                Displaying <?= $startIndex + 1 ?> to <?= min($startIndex + $itemsPerPage, $totalItems) ?> of <?= $totalItems ?> items
+                Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
             </div>
             <div>
                 <label for="itemsPerPage">Show:</label>
-                <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                    <option value="7" <?= $itemsPerPage == 7 ? 'selected' : '' ?>>7</option>
-                    <option value="10" <?= $itemsPerPage == 10 ? 'selected' : '' ?>>10</option>
-                    <option value="20" <?= $itemsPerPage == 20 ? 'selected' : '' ?>>20</option>
-                    <option value="50" <?= $itemsPerPage == 50 ? 'selected' : '' ?>>50</option>
+                <select name="limit" class="form-select d-inline w-auto" onchange="this.form.submit()">
+                    <option value="7" <?php echo ($itemsPerPage == 7) ? 'selected' : ''; ?>>7</option>
+                    <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
+                    <option value="20" <?php echo ($itemsPerPage == 20) ? 'selected' : ''; ?>>20</option>
+                    <option value="50" <?php echo ($itemsPerPage == 50) ? 'selected' : ''; ?>>50</option>
                 </select>
             </div>
             <nav>
                 <ul class="pagination mb-0">
-                    <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $page <= 1 ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage ?>">Prev</a>
+                    <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
+                        <a class="page-link" href="?page=<?php echo $page - 1; ?>&limit=<?php echo $itemsPerPage; ?>&<?php echo http_build_query($filters); ?>">Prev</a>
                     </li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <li class="page-item <?= $page == $i ? 'active' : '' ?>">
-                            <a class="page-link" href="?page=<?= $i ?>&limit=<?= $itemsPerPage ?>"><?= $i ?></a>
+                        <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
+                            <a class="page-link" href="?page=<?php echo $i; ?>&limit=<?php echo $itemsPerPage; ?>&<?php echo http_build_query($filters); ?>"><?php echo $i; ?></a>
                         </li>
                     <?php endfor; ?>
-                    <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $page >= $totalPages ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage ?>">Next</a>
+                    <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
+                        <a class="page-link" href="?page=<?php echo $page + 1; ?>&limit=<?php echo $itemsPerPage; ?>&<?php echo http_build_query($filters); ?>">Next</a>
                     </li>
                 </ul>
             </nav>
@@ -345,18 +513,27 @@ $kenya_sources_count = $kenya_sources_result->fetch_assoc()['total'];
     </div>
 </div>
 
+<!-- Delete form (separate from filter form) -->
+<form method="POST" action="" id="deleteForm" style="display: none;">
+    <input type="hidden" name="delete_selected" value="1">
+</form>
+
 <script>
 document.addEventListener("DOMContentLoaded", function() {
-    // Initialize filter functionality
-    const filterInputs = document.querySelectorAll('.filter-input');
-    filterInputs.forEach(input => {
-        input.addEventListener('keyup', applyFilters);
-    });
-
     // Initialize select all checkbox
     document.getElementById('selectAll').addEventListener('change', function() {
-        document.querySelectorAll('.row-checkbox').forEach(checkbox => {
+        const checkboxes = document.querySelectorAll('.row-checkbox');
+        checkboxes.forEach(checkbox => {
             checkbox.checked = this.checked;
+        });
+    });
+
+    // Update select-all when individual checkboxes change
+    document.querySelectorAll('.row-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            const allChecked = document.querySelectorAll('.row-checkbox:checked').length;
+            const total = document.querySelectorAll('.row-checkbox').length;
+            document.getElementById('selectAll').checked = allChecked === total && total > 0;
         });
     });
 
@@ -366,62 +543,33 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 });
 
-function applyFilters() {
-    const filters = {
-        id: document.getElementById('filterId').value.toLowerCase(),
-        admin0: document.getElementById('filterAdmin0').value.toLowerCase(),
-        admin1: document.getElementById('filterAdmin1').value.toLowerCase(),
-        createdAt: document.getElementById('filterCreatedAt').value.toLowerCase()
-    };
-
-    const rows = document.querySelectorAll('#commoditySourceTable tr');
-    rows.forEach(row => {
-        const cells = row.querySelectorAll('td');
-        const matches = 
-            cells[1].textContent.toLowerCase().includes(filters.id) &&
-            cells[2].textContent.toLowerCase().includes(filters.admin0) &&
-            cells[3].textContent.toLowerCase().includes(filters.admin1) &&
-            cells[4].textContent.toLowerCase().includes(filters.createdAt);
-        
-        row.style.display = matches ? '' : 'none';
-    });
-}
-
-function updateItemsPerPage(value) {
-    const url = new URL(window.location);
-    url.searchParams.set('limit', value);
-    url.searchParams.set('page', '1');
-    window.location.href = url.toString();
-}
-
-function deleteSelectedSources() {
-    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
-    if (checkedBoxes.length === 0) {
+function confirmDelete() {
+    const selected = document.querySelectorAll('.row-checkbox:checked');
+    if (selected.length === 0) {
         alert('Please select at least one source to delete.');
         return;
     }
-    
-    if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected source(s)?`)) {
-        const ids = Array.from(checkedBoxes).map(cb => cb.value);
-        // Implement your delete logic here
-        console.log('Deleting sources with IDs:', ids);
-        // Example: fetch('delete_sources.php', { method: 'POST', body: JSON.stringify({ ids }) })
-        // .then(response => response.json())
-        // .then(data => { if(data.success) location.reload(); });
-    }
-}
 
-function exportSelectedSources(format) {
-    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
-    if (checkedBoxes.length === 0) {
-        alert('Please select at least one source to export.');
-        return;
+    if (confirm('Are you sure you want to delete ' + selected.length + ' selected source(s)?')) {
+        // Get the delete form
+        const deleteForm = document.getElementById('deleteForm');
+        
+        // Remove any existing selected_ids inputs
+        const existingInputs = deleteForm.querySelectorAll('input[name="selected_ids[]"]');
+        existingInputs.forEach(input => input.remove());
+        
+        // Add selected IDs to the delete form
+        selected.forEach(checkbox => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'selected_ids[]';
+            input.value = checkbox.value;
+            deleteForm.appendChild(input);
+        });
+        
+        // Submit the delete form
+        deleteForm.submit();
     }
-    
-    const ids = Array.from(checkedBoxes).map(cb => cb.value);
-    // Implement your export logic here
-    console.log(`Exporting ${format} for sources with IDs:`, ids);
-    // Example: window.location.href = `export_sources.php?format=${format}&ids=${ids.join(',')}`;
 }
 </script>
 
