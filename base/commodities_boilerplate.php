@@ -393,14 +393,21 @@ if ($oil_seeds_result) {
     .btn-add-new:hover {
         background-color: darkred;
     }
-    .btn-delete, .btn-export, .btn-import {
+    .btn-delete, .btn-export, .btn-import, .btn-bulk-export {
         background-color: white;
         color: black;
         border: 1px solid #ddd;
         padding: 8px 16px;
     }
-    .btn-delete:hover, .btn-export:hover, .btn-import:hover {
+    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover {
         background-color: #f8f9fa;
+    }
+    .btn-bulk-export {
+        background-color: #17a2b8;
+        color: white;
+    }
+    .btn-bulk-export:hover {
+        background-color: #138496;
     }
     .dropdown-menu {
         min-width: 120px;
@@ -600,7 +607,7 @@ if ($oil_seeds_result) {
                 <i class="fas fa-seedling"></i>
             </div>
             <div class="stats-title">Total Commodities</div>
-            <div class="stats-number"><?= $total_commodities ?></div>
+            <div class="stats-number"><?php echo $total_commodities; ?></div>
         </div>
         
         <div class="overlap-6">
@@ -608,7 +615,7 @@ if ($oil_seeds_result) {
                 <i class="fas fa-wheat-awn"></i>
             </div>
             <div class="stats-title">Cereals</div>
-            <div class="stats-number"><?= $cereals_count ?></div>
+            <div class="stats-number"><?php echo $cereals_count; ?></div>
         </div>
         
         <div class="overlap-7">
@@ -616,7 +623,7 @@ if ($oil_seeds_result) {
                 <i class="fas fa-dot-circle"></i>
             </div>
             <div class="stats-title">Pulses</div>
-            <div class="stats-number"><?= $pulses_count ?></div>
+            <div class="stats-number"><?php echo $pulses_count; ?></div>
         </div>
         
         <div class="overlap-7">
@@ -624,14 +631,14 @@ if ($oil_seeds_result) {
                 <i class="fas fa-leaf"></i>
             </div>
             <div class="stats-title">Oil Seeds</div>
-            <div class="stats-number"><?= $oil_seeds_count ?></div>
+            <div class="stats-number"><?php echo $oil_seeds_count; ?></div>
         </div>
     </div>
 </div>
 
 <?php if (isset($import_message)): ?>
-    <div class="alert alert-<?= $import_status ?>">
-        <?= $import_message ?>
+    <div class="alert alert-<?php echo $import_status; ?>">
+        <?php echo $import_message; ?>
     </div>
 <?php endif; ?>
 
@@ -648,20 +655,19 @@ if ($oil_seeds_result) {
                 Delete
             </button>
 
-            <div class="dropdown">
-                <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="fas fa-download" style="margin-right: 3px;"></i>
-                    Export
+            <form method="POST" action="export_current_page_commodities.php" style="display: inline;">
+                <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
+                <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
+                <button type="submit" class="btn-export">
+                    <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
                 </button>
-                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">
-                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export to Excel
-                    </a></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
-                    </a></li>
-                </ul>
-            </div>
+            </form>
+
+            <form method="POST" action="bulk_export_commodities.php" style="display: inline;">
+                <button type="submit" class="btn-bulk-export">
+                    <i class="fas fa-database" style="margin-right: 3px;"></i> Bulk Export (All)
+                </button>
+            </form>
             
             <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
                 <i class="fas fa-upload" style="margin-right: 3px;"></i>
@@ -696,19 +702,19 @@ if ($oil_seeds_result) {
                 <?php foreach ($commodities_paged as $commodity): ?>
                     <tr>
                         <td>
-                            <input type="checkbox" class="row-checkbox" value="<?= htmlspecialchars($commodity['id']) ?>">
+                            <input type="checkbox" class="row-checkbox" value="<?php echo htmlspecialchars($commodity['id']); ?>">
                         </td>
-                        <td><?= htmlspecialchars($commodity['id']) ?></td>
-                        <td><?= htmlspecialchars($commodity['hs_code']) ?></td>
-                        <td><?= htmlspecialchars($commodity['category']) ?></td>
-                        <td><?= htmlspecialchars($commodity['commodity_name']) ?></td>
-                        <td><?= htmlspecialchars($commodity['variety']) ?></td>
+                        <td><?php echo htmlspecialchars($commodity['id']); ?></td>
+                        <td><?php echo htmlspecialchars($commodity['hs_code']); ?></td>
+                        <td><?php echo htmlspecialchars($commodity['category']); ?></td>
+                        <td><?php echo htmlspecialchars($commodity['commodity_name']); ?></td>
+                        <td><?php echo htmlspecialchars($commodity['variety']); ?></td>
                         <td>
                             <?php if (!empty($commodity['image_url'])): ?>
-                                <img src="<?= htmlspecialchars($commodity['image_url']) ?>" 
-                                    alt="<?= htmlspecialchars($commodity['commodity_name']) ?>" 
+                                <img src="<?php echo htmlspecialchars($commodity['image_url']); ?>" 
+                                    alt="<?php echo htmlspecialchars($commodity['commodity_name']); ?>" 
                                     class="image-preview" 
-                                    onclick="showImageModal('<?= htmlspecialchars($commodity['image_url']) ?>', '<?= htmlspecialchars($commodity['commodity_name']) ?>')">
+                                    onclick="showImageModal('<?php echo htmlspecialchars($commodity['image_url']); ?>', '<?php echo htmlspecialchars($commodity['commodity_name']); ?>')">
                             <?php else: ?>
                                 <span class="no-image">No Image</span>
                             <?php endif; ?>
@@ -716,7 +722,7 @@ if ($oil_seeds_result) {
                         <td>
                             <!-- FIXED: Added action buttons to match the column header -->
                             <div class="btn-group" role="group">
-                                <a href="edit_commodity.php?id=<?= $commodity['id'] ?>" class="btn btn-sm btn-primary">
+                                <a href="edit_commodity.php?id=<?php echo $commodity['id']; ?>" class="btn btn-sm btn-primary">
                                     <i class="fas fa-edit"></i>
                                 </a>
                             </div>
@@ -728,30 +734,30 @@ if ($oil_seeds_result) {
 
         <div class="d-flex justify-content-between align-items-center">
             <div>
-                Displaying <?= $startIndex + 1 ?> to <?= min($startIndex + $itemsPerPage, $totalItems) ?> of <?= $totalItems ?> items
+                Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
             </div>
             <div>
                 <label for="itemsPerPage">Show:</label>
                 <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                    <option value="7" <?= $itemsPerPage == 7 ? 'selected' : '' ?>>7</option>
-                    <option value="10" <?= $itemsPerPage == 10 ? 'selected' : '' ?>>10</option>
-                    <option value="20" <?= $itemsPerPage == 20 ? 'selected' : '' ?>>20</option>
-                    <option value="50" <?= $itemsPerPage == 50 ? 'selected' : '' ?>>50</option>
-                    <option value="100" <?= $itemsPerPage == 100 ? 'selected' : '' ?>>100</option>
+                    <option value="7" <?php echo ($itemsPerPage == 7) ? 'selected' : ''; ?>>7</option>
+                    <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
+                    <option value="20" <?php echo ($itemsPerPage == 20) ? 'selected' : ''; ?>>20</option>
+                    <option value="50" <?php echo ($itemsPerPage == 50) ? 'selected' : ''; ?>>50</option>
+                    <option value="100" <?php echo ($itemsPerPage == 100) ? 'selected' : ''; ?>>100</option>
                 </select>
             </div>
             <nav>
                 <ul class="pagination mb-0">
-                    <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $page <= 1 ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage ?>">Prev</a>
+                    <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
+                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage; ?>">Prev</a>
                     </li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <li class="page-item <?= $page == $i ? 'active' : '' ?>">
-                            <a class="page-link" href="?page=<?= $i ?>&limit=<?= $itemsPerPage ?>"><?= $i ?></a>
+                        <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
+                            <a class="page-link" href="?page=<?php echo $i; ?>&limit=<?php echo $itemsPerPage; ?>"><?php echo $i; ?></a>
                         </li>
                     <?php endfor; ?>
-                    <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $page >= $totalPages ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage ?>">Next</a>
+                    <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
+                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage; ?>">Next</a>
                     </li>
                 </ul>
             </nav>
@@ -896,7 +902,7 @@ function deleteSelected() {
         return;
     }
 
-    if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected commodity(ies)?`)) {
+    if (confirm('Are you sure you want to delete ' + checkedBoxes.length + ' selected commodity(ies)?')) {
         const ids = Array.from(checkedBoxes).map(cb => cb.value);
 
         fetch('delete_commodity.php', {
