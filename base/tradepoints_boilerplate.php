@@ -473,15 +473,15 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
             $con->commit();
             $warningCount = count($errors) - $criticalErrors;
             if ($warningCount > 0) {
-                $import_message = "Successfully imported $successCount tradepoints with $warningCount warnings. Warnings: " . implode('<br>', $errors);
+                $import_message = "Successfully imported " . $successCount . " tradepoints with " . $warningCount . " warnings. Warnings: " . implode('<br>', $errors);
                 $import_status = 'warning';
             } else {
-                $import_message = "Successfully imported $successCount tradepoints.";
+                $import_message = "Successfully imported " . $successCount . " tradepoints.";
                 $import_status = 'success';
             }
         } else {
             $con->rollback();
-            $import_message = "Import rolled back due to $criticalErrors critical errors. Processed $successCount rows successfully. Errors: " . implode('<br>', $errors);
+            $import_message = "Import rolled back due to " . $criticalErrors . " critical errors. Processed " . $successCount . " rows successfully. Errors: " . implode('<br>', $errors);
             $import_status = 'danger';
         }
         
@@ -612,194 +612,24 @@ $total_tradepoints_query = "SELECT COUNT(*) AS total FROM (
     SELECT id FROM miller_details
 ) AS combined";
 $total_tradepoints_result = $con->query($total_tradepoints_query);
-$total_tradepoints = 0;
-if ($total_tradepoints_result) {
-    $row = $total_tradepoints_result->fetch_assoc();
-    $total_tradepoints = $row['total'];
-}
+$total_tradepoints_row = $total_tradepoints_result->fetch_assoc();
+$total_tradepoints = $total_tradepoints_row['total'];
 
 $markets_query = "SELECT COUNT(*) AS total FROM markets";
 $markets_result = $con->query($markets_query);
-$markets_count = 0;
-if ($markets_result) {
-    $row = $markets_result->fetch_assoc();
-    $markets_count = $row['total'];
-}
+$markets_row = $markets_result->fetch_assoc();
+$markets_count = $markets_row['total'];
 
 $border_points_query = "SELECT COUNT(*) AS total FROM border_points";
 $border_points_result = $con->query($border_points_query);
-$border_points_count = 0;
-if ($border_points_result) {
-    $row = $border_points_result->fetch_assoc();
-    $border_points_count = $row['total'];
-}
+$border_points_row = $border_points_result->fetch_assoc();
+$border_points_count = $border_points_row['total'];
 
 $millers_query = "SELECT COUNT(*) AS total FROM miller_details";
 $millers_result = $con->query($millers_query);
-$millers_count = 0;
-if ($millers_result) {
-    $row = $millers_result->fetch_assoc();
-    $millers_count = $row['total'];
-}
+$millers_row = $millers_result->fetch_assoc();
+$millers_count = $millers_row['total'];
 ?>
-
-<!-- Rest of your HTML/CSS remains the same until the JavaScript section -->
-
-<script>
-document.addEventListener("DOMContentLoaded", function() {
-    // Initialize filter functionality
-    const filterInputs = document.querySelectorAll('.filter-input');
-    filterInputs.forEach(input => {
-        input.addEventListener('keyup', applyFilters);
-    });
-
-    // Initialize select all checkbox
-    document.getElementById('selectAll').addEventListener('change', function() {
-        document.querySelectorAll('.row-checkbox').forEach(checkbox => {
-            checkbox.checked = this.checked;
-        });
-    });
-
-    // Update breadcrumb
-    if (typeof updateBreadcrumb === 'function') {
-        updateBreadcrumb('Base', 'Tradepoints');
-    }
-    
-    // Handle tradepoint type selection in import modal
-    document.getElementById('tradepoint_type').addEventListener('change', function() {
-        const type = this.value;
-        document.getElementById('selected_tradepoint_type').value = type;
-        
-        // Hide all instruction blocks first
-        document.querySelectorAll('.type-instructions').forEach(el => {
-            el.style.display = 'none';
-        });
-        
-        // Show the relevant instruction block
-        if (type === 'Markets') {
-            document.getElementById('marketsInstructions').style.display = 'block';
-        } else if (type === 'Millers') {
-            document.getElementById('millersInstructions').style.display = 'block';
-        } else if (type === 'Border Points') {
-            document.getElementById('borderInstructions').style.display = 'block';
-        }
-    });
-    
-    // Show import modal if there was an error
-    <?php if (isset($import_message) && $import_status === 'danger'): ?>
-        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
-        importModal.show();
-    <?php endif; ?>
-});
-
-function applyFilters() {
-    const filters = {
-        name: document.getElementById('filterName').value.toLowerCase(),
-        type: document.getElementById('filterType').value.toLowerCase(),
-        country: document.getElementById('filterCountry').value.toLowerCase(),
-        region: document.getElementById('filterRegion').value.toLowerCase()
-    };
-
-    const rows = document.querySelectorAll('#tradepointTable tr');
-    rows.forEach(row => {
-        const cells = row.querySelectorAll('td');
-        const matches = 
-            cells[1].textContent.toLowerCase().includes(filters.name) &&
-            cells[2].textContent.toLowerCase().includes(filters.type) &&
-            cells[3].textContent.toLowerCase().includes(filters.country) &&
-            cells[4].textContent.toLowerCase().includes(filters.region);
-        
-        row.style.display = matches ? '' : 'none';
-    });
-}
-
-function updateItemsPerPage(value) {
-    const url = new URL(window.location);
-    url.searchParams.set('limit', value);
-    url.searchParams.set('page', '1');
-    window.location.href = url.toString();
-}
-
-function deleteSelected() {
-    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
-    if (checkedBoxes.length === 0) {
-        alert('Please select at least one tradepoint to delete.');
-        return;
-    }
-
-    if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected tradepoint(s)?`)) {
-        const ids = Array.from(checkedBoxes).map(cb => cb.value);
-
-        fetch('delete_tradepoint.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ids: ids })
-        })
-        .then(response => {
-            if (!response.ok) throw new Error('Network error');
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                alert(data.message);
-                location.reload();
-            } else {
-                alert('Error: ' + data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error:', error);
-            alert('Request failed: ' + error.message);
-        });
-    }
-}
-
-function exportSelected(format) {
-    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
-    if (checkedBoxes.length === 0) {
-        alert('Please select at least one tradepoint to export.');
-        return;
-    }
-    
-    const ids = Array.from(checkedBoxes).map(cb => cb.value);
-    
-    // Create a form to submit the export request
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = 'export_tradepoints.php';
-    
-    // Add format parameter
-    const formatInput = document.createElement('input');
-    formatInput.type = 'hidden';
-    formatInput.name = 'export_format';
-    formatInput.value = format;
-    form.appendChild(formatInput);
-    
-    // Add selected IDs
-    ids.forEach(id => {
-        const idInput = document.createElement('input');
-        idInput.type = 'hidden';
-        idInput.name = 'selected_ids[]';
-        idInput.value = id;
-        form.appendChild(idInput);
-    });
-    
-    // Submit the form
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
-}
-</script>
-
-<?php 
-// Show import message if exists
-if (isset($import_message)): ?>
-    <div class="alert alert-<?= $import_status ?>">
-        <?= $import_message ?>
-    </div>
-<?php endif; ?>
 
 <style>
     .table-container {
@@ -826,14 +656,21 @@ if (isset($import_message)): ?>
     .btn-add-new:hover {
         background-color: darkred;
     }
-    .btn-delete, .btn-export, .btn-import {
+    .btn-delete, .btn-export, .btn-import, .btn-bulk-export {
         background-color: white;
         color: black;
         border: 1px solid #ddd;
         padding: 8px 16px;
     }
-    .btn-delete:hover, .btn-export:hover, .btn-import:hover {
+    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover {
         background-color: #f8f9fa;
+    }
+    .btn-bulk-export {
+        background-color: #17a2b8;
+        color: white;
+    }
+    .btn-bulk-export:hover {
+        background-color: #138496;
     }
     .dropdown-menu {
         min-width: 120px;
@@ -1017,7 +854,7 @@ if (isset($import_message)): ?>
                 <i class="fas fa-map-marked-alt"></i>
             </div>
             <div class="stats-title">Total Tradepoints</div>
-            <div class="stats-number"><?= $total_tradepoints ?></div>
+            <div class="stats-number"><?php echo $total_tradepoints; ?></div>
         </div>
         
         <div class="overlap-6">
@@ -1025,7 +862,7 @@ if (isset($import_message)): ?>
                 <i class="fas fa-store"></i>
             </div>
             <div class="stats-title">Markets</div>
-            <div class="stats-number"><?= $markets_count ?></div>
+            <div class="stats-number"><?php echo $markets_count; ?></div>
         </div>
         
         <div class="overlap-7">
@@ -1033,7 +870,7 @@ if (isset($import_message)): ?>
                 <i class="fas fa-passport"></i>
             </div>
             <div class="stats-title">Border Points</div>
-            <div class="stats-number"><?= $border_points_count ?></div>
+            <div class="stats-number"><?php echo $border_points_count; ?></div>
         </div>
         
         <div class="overlap-7">
@@ -1041,10 +878,18 @@ if (isset($import_message)): ?>
                 <i class="fas fa-industry"></i>
             </div>
             <div class="stats-title">Millers</div>
-            <div class="stats-number"><?= $millers_count ?></div>
+            <div class="stats-number"><?php echo $millers_count; ?></div>
         </div>
     </div>
 </div>
+
+<?php 
+// Show import message if exists
+if (isset($import_message)): ?>
+    <div class="alert alert-<?php echo $import_status; ?>">
+        <?php echo $import_message; ?>
+    </div>
+<?php endif; ?>
 
 <div class="container">
     <div class="table-container">
@@ -1059,20 +904,19 @@ if (isset($import_message)): ?>
                 Delete
             </button>
 
-            <div class="dropdown">
-                <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="fas fa-download" style="margin-right: 3px;"></i>
-                    Export
+            <form method="POST" action="export_current_page_tradepoints.php" style="display: inline;">
+                <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
+                <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
+                <button type="submit" class="btn-export">
+                    <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
                 </button>
-                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">
-                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export to Excel
-                    </a></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
-                    </a></li>
-                </ul>
-            </div>
+            </form>
+
+            <form method="POST" action="bulk_export_tradepoints.php" style="display: inline;">
+                <button type="submit" class="btn-bulk-export">
+                    <i class="fas fa-database" style="margin-right: 3px;"></i> Bulk Export (All)
+                </button>
+            </form>
             
             <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
                 <i class="fas fa-upload" style="margin-right: 3px;"></i>
@@ -1100,78 +944,87 @@ if (isset($import_message)): ?>
                 </tr>
             </thead>
             <tbody id="tradepointTable">
-                <?php foreach ($tradepoints_paged as $tradepoint): ?>
+                <?php if (empty($tradepoints_paged)): ?>
                     <tr>
-                        <td>
-                            <input type="checkbox" class="row-checkbox" value="<?= htmlspecialchars($tradepoint['id']) ?>">
-                        </td>
-                        <td><?= htmlspecialchars($tradepoint['name']) ?></td>
-                        <td>
-                            <?php 
-                            $badgeClass = '';
-                            if ($tradepoint['tradepoint_type'] === 'Markets') {
-                                $badgeClass = 'badge-market';
-                            } elseif ($tradepoint['tradepoint_type'] === 'Border Points') {
-                                $badgeClass = 'badge-border';
-                            } elseif ($tradepoint['tradepoint_type'] === 'Millers') {
-                                $badgeClass = 'badge-miller';
-                            }
-                            ?>
-                            <span class="type-badge <?= $badgeClass ?>"><?= htmlspecialchars($tradepoint['tradepoint_type']) ?></span>
-                        </td>
-                        <td><?= htmlspecialchars($tradepoint['admin0']) ?></td>
-                        <td><?= htmlspecialchars($tradepoint['admin1']) ?></td>
-                        <td>
-                            <?php
-                            $editPage = '';
-                            switch ($tradepoint['tradepoint_type']) {
-                                case 'Markets':
-                                    $editPage = 'edit_market.php';
-                                    break;
-                                case 'Border Points':
-                                    $editPage = 'edit_borderpoint.php';
-                                    break;
-                                case 'Millers':
-                                    $editPage = 'edit_miller.php';
-                                    break;
-                            }
-                            ?>
-                            <a href="<?= $editPage ?>?id=<?= htmlspecialchars($tradepoint['id']) ?>">
-                                <button class="btn btn-sm btn-warning">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                            </a>
+                        <td colspan="6" style="text-align: center; padding: 40px; color: #666;">
+                            <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; display: block; color: #ccc;"></i>
+                            No tradepoints found.
                         </td>
                     </tr>
-                <?php endforeach; ?>
+                <?php else: ?>
+                    <?php foreach ($tradepoints_paged as $tradepoint): ?>
+                        <tr>
+                            <td>
+                                <input type="checkbox" class="row-checkbox" value="<?php echo htmlspecialchars($tradepoint['id']); ?>">
+                            </td>
+                            <td><?php echo htmlspecialchars($tradepoint['name']); ?></td>
+                            <td>
+                                <?php 
+                                $badgeClass = '';
+                                if ($tradepoint['tradepoint_type'] === 'Markets') {
+                                    $badgeClass = 'badge-market';
+                                } elseif ($tradepoint['tradepoint_type'] === 'Border Points') {
+                                    $badgeClass = 'badge-border';
+                                } elseif ($tradepoint['tradepoint_type'] === 'Millers') {
+                                    $badgeClass = 'badge-miller';
+                                }
+                                ?>
+                                <span class="type-badge <?php echo $badgeClass; ?>"><?php echo htmlspecialchars($tradepoint['tradepoint_type']); ?></span>
+                            </td>
+                            <td><?php echo htmlspecialchars($tradepoint['admin0']); ?></td>
+                            <td><?php echo htmlspecialchars($tradepoint['admin1']); ?></td>
+                            <td>
+                                <?php
+                                $editPage = '';
+                                switch ($tradepoint['tradepoint_type']) {
+                                    case 'Markets':
+                                        $editPage = 'edit_market.php';
+                                        break;
+                                    case 'Border Points':
+                                        $editPage = 'edit_borderpoint.php';
+                                        break;
+                                    case 'Millers':
+                                        $editPage = 'edit_miller.php';
+                                        break;
+                                }
+                                ?>
+                                <a href="<?php echo $editPage; ?>?id=<?php echo htmlspecialchars($tradepoint['id']); ?>">
+                                    <button class="btn btn-sm btn-warning">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                </a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
 
         <div class="d-flex justify-content-between align-items-center">
             <div>
-                Displaying <?= $startIndex + 1 ?> to <?= min($startIndex + $itemsPerPage, $totalItems) ?> of <?= $totalItems ?> items
+                Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
             </div>
             <div>
                 <label for="itemsPerPage">Show:</label>
                 <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                    <option value="7" <?= $itemsPerPage == 7 ? 'selected' : '' ?>>7</option>
-                    <option value="10" <?= $itemsPerPage == 10 ? 'selected' : '' ?>>10</option>
-                    <option value="20" <?= $itemsPerPage == 20 ? 'selected' : '' ?>>20</option>
-                    <option value="50" <?= $itemsPerPage == 50 ? 'selected' : '' ?>>50</option>
+                    <option value="7" <?php echo ($itemsPerPage == 7) ? 'selected' : ''; ?>>7</option>
+                    <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
+                    <option value="20" <?php echo ($itemsPerPage == 20) ? 'selected' : ''; ?>>20</option>
+                    <option value="50" <?php echo ($itemsPerPage == 50) ? 'selected' : ''; ?>>50</option>
                 </select>
             </div>
             <nav>
                 <ul class="pagination mb-0">
-                    <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $page <= 1 ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage ?>">Prev</a>
+                    <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
+                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage; ?>">Prev</a>
                     </li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <li class="page-item <?= $page == $i ? 'active' : '' ?>">
-                            <a class="page-link" href="?page=<?= $i ?>&limit=<?= $itemsPerPage ?>"><?= $i ?></a>
+                        <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
+                            <a class="page-link" href="?page=<?php echo $i; ?>&limit=<?php echo $itemsPerPage; ?>"><?php echo $i; ?></a>
                         </li>
                     <?php endfor; ?>
-                    <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $page >= $totalPages ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage ?>">Next</a>
+                    <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
+                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage; ?>">Next</a>
                     </li>
                 </ul>
             </nav>
@@ -1363,7 +1216,7 @@ function deleteSelected() {
         return;
     }
 
-    if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected tradepoint(s)?`)) {
+    if (confirm('Are you sure you want to delete ' + checkedBoxes.length + ' selected tradepoint(s)?')) {
         const ids = Array.from(checkedBoxes).map(cb => cb.value);
 
         fetch('delete_tradepoint.php', {
