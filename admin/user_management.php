@@ -19,7 +19,7 @@ if (!$con) {
 
 // Handle actions - THIS MUST BE AT THE TOP BEFORE ANY OUTPUT
 if (isset($_POST['action'])) {
-    $user_id = (int)$_POST['user_id'];
+    $user_id = isset($_POST['user_id']) ? (int)$_POST['user_id'] : 0;
     $admin_id = $_SESSION['admin_id'];
     
     try {
@@ -59,6 +59,59 @@ if (isset($_POST['action'])) {
                 $stmt->bind_param("si", $new_subscription, $user_id);
                 $stmt->execute();
                 break;
+                
+            case 'add_user':
+                // Handle add user functionality
+                $username = trim($_POST['username']);
+                $email = trim($_POST['email']);
+                $password = $_POST['password'];
+                $full_name = trim($_POST['full_name']);
+                $company = trim($_POST['company']);
+                $phone = trim($_POST['phone']);
+                $subscription_type = $_POST['subscription_type'];
+                $status = $_POST['status']; // Allow admin to set status directly
+                
+                // Validation
+                if (empty($username) || empty($email) || empty($password) || empty($full_name) || empty($subscription_type)) {
+                    throw new Exception("Please fill all required fields.");
+                }
+                
+                if (strlen($password) < 6) {
+                    throw new Exception("Password must be at least 6 characters long.");
+                }
+                
+                // Check if username or email already exists
+                $check_stmt = $con->prepare("SELECT id FROM subscribed_users WHERE username = ? OR email = ?");
+                if (!$check_stmt) throw new Exception("Prepare failed: " . $con->error);
+                $check_stmt->bind_param("ss", $username, $email);
+                $check_stmt->execute();
+                $check_result = $check_stmt->get_result();
+                
+                if ($check_result->num_rows > 0) {
+                    throw new Exception("Username or email already exists.");
+                }
+                
+                // Insert new user
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $insert_stmt = $con->prepare("INSERT INTO subscribed_users (username, email, password, full_name, company, phone, subscription_type, status, registration_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+                if (!$insert_stmt) throw new Exception("Prepare failed: " . $con->error);
+                $insert_stmt->bind_param("ssssssss", $username, $email, $hashed_password, $full_name, $company, $phone, $subscription_type, $status);
+                
+                if ($insert_stmt->execute()) {
+                    $success_message = "User added successfully!";
+                    
+                    // Log activity
+                    $new_user_id = $insert_stmt->insert_id;
+                    $activity_stmt = $con->prepare("INSERT INTO user_activity_log (user_id, activity_type, description) VALUES (?, 'admin_created', ?)");
+                    if ($activity_stmt) {
+                        $activity_desc = "User created by admin with subscription: " . $subscription_type;
+                        $activity_stmt->bind_param("is", $new_user_id, $activity_desc);
+                        $activity_stmt->execute();
+                    }
+                } else {
+                    throw new Exception("Failed to add user. Please try again.");
+                }
+                break;
         }
         
         // Use JavaScript redirect instead of header() to avoid "headers already sent" error
@@ -90,6 +143,19 @@ try {
 } catch (Exception $e) {
     $error_message = "Failed to fetch users: " . $e->getMessage();
     $users = [];
+}
+
+// Get subscription packages for add user form
+$packages_stmt = $con->prepare("SELECT * FROM subscription_packages WHERE is_active = TRUE");
+if ($packages_stmt) {
+    $packages_stmt->execute();
+    $packages_result = $packages_stmt->get_result();
+    $packages = [];
+    while ($row = $packages_result->fetch_assoc()) {
+        $packages[] = $row;
+    }
+} else {
+    $packages = [];
 }
 
 // --- Fetch counts for summary boxes ---
@@ -140,6 +206,7 @@ if ($suspended_users_result) {
         align-items: center;
         margin-bottom: 20px;
         flex-wrap: wrap;
+        gap: 10px;
     }
     table {
         width: 100%;
@@ -236,6 +303,99 @@ if ($suspended_users_result) {
         font-weight: 700;
         color: #34495e;
     }
+    
+    /* Modal Styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+    }
+    .modal-content {
+        background-color: #fff;
+        margin: 5% auto;
+        padding: 30px;
+        border-radius: 10px;
+        width: 90%;
+        max-width: 600px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid #eee;
+    }
+    .modal-title {
+        font-size: 20px;
+        font-weight: 600;
+        color: #333;
+    }
+    .close-modal {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #999;
+    }
+    .close-modal:hover {
+        color: #333;
+    }
+    .form-row {
+        display: flex;
+        gap: 15px;
+        margin-bottom: 15px;
+    }
+    .form-group {
+        flex: 1;
+        margin-bottom: 15px;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 500;
+        color: #555;
+    }
+    .form-group input, .form-group select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 14px;
+    }
+    .form-group input:focus, .form-group select:focus {
+        outline: none;
+        border-color: #4CAF50;
+    }
+    .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+    }
+    .required::after {
+        content: " *";
+        color: #f44336;
+    }
+    .password-toggle {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        cursor: pointer;
+        color: #999;
+    }
+    .password-wrapper {
+        position: relative;
+    }
 </style>
 
 <div class="stats-section">
@@ -283,10 +443,21 @@ if ($suspended_users_result) {
     </div>
 <?php endif; ?>
 
+<?php if (isset($success_message)): ?>
+    <div class="alert alert-success">
+        <?= htmlspecialchars($success_message) ?>
+    </div>
+<?php endif; ?>
+
 <div class="container">
     <div class="toolbar">
         <div class="toolbar-left">
             <h4>Subscribed Users (<?= count($users) ?> total)</h4>
+        </div>
+        <div class="toolbar-right">
+            <button class="btn btn-primary" onclick="openAddUserModal()">
+                <i class="fas fa-user-plus"></i> Add New User
+            </button>
         </div>
     </div>
 
@@ -298,6 +469,7 @@ if ($suspended_users_result) {
             <ol>
                 <li>Make sure you've run the SQL queries to create the subscribed_users table</li>
                 <li>Register some test users through the frontend registration form</li>
+                <li>Use the "Add New User" button above to create users directly</li>
             </ol>
         </div>
     <?php else: ?>
@@ -362,4 +534,145 @@ if ($suspended_users_result) {
     <?php endif; ?>
 </div>
 
+<!-- Add User Modal -->
+<div id="addUserModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Add New User</h3>
+            <button class="close-modal" onclick="closeAddUserModal()">&times;</button>
+        </div>
+        <form method="POST" action="" id="addUserForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="required">Full Name</label>
+                    <input type="text" name="full_name" placeholder="Enter full name" required>
+                </div>
+                <div class="form-group">
+                    <label>Company</label>
+                    <input type="text" name="company" placeholder="Enter company name">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="required">Username</label>
+                    <input type="text" name="username" placeholder="Choose username" required>
+                </div>
+                <div class="form-group">
+                    <label class="required">Email</label>
+                    <input type="email" name="email" placeholder="Enter email address" required>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" name="phone" placeholder="Enter phone number">
+                </div>
+                <div class="form-group">
+                    <label class="required">Status</label>
+                    <select name="status" required>
+                        <option value="pending">Pending</option>
+                        <option value="active" selected>Active</option>
+                        <option value="suspended">Suspended</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="required">Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" name="password" id="modalPassword" placeholder="Enter password (min 6 chars)" required minlength="6">
+                        <i class="fas fa-eye password-toggle" onclick="togglePassword('modalPassword', this)"></i>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="required">Confirm Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" name="confirm_password" id="modalConfirmPassword" placeholder="Confirm password" required minlength="6">
+                        <i class="fas fa-eye password-toggle" onclick="togglePassword('modalConfirmPassword', this)"></i>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="required">Subscription Package</label>
+                <select name="subscription_type" required>
+                    <option value="">Select Package</option>
+                    <?php foreach ($packages as $package): ?>
+                        <option value="<?= $package['code'] ?>"><?= $package['name'] ?> ($<?= $package['price'] ?>)</option>
+                    <?php endforeach; ?>
+                    <?php if (empty($packages)): ?>
+                        <option value="basic">Basic</option>
+                        <option value="medium">Medium</option>
+                        <option value="premium">Premium</option>
+                    <?php endif; ?>
+                </select>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeAddUserModal()">Cancel</button>
+                <button type="submit" name="action" value="add_user" class="btn btn-primary">Add User</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <?php include 'includes/footer.php'; ?>
+
+<script>
+    // Modal functions
+    function openAddUserModal() {
+        document.getElementById('addUserModal').style.display = 'block';
+    }
+    
+    function closeAddUserModal() {
+        document.getElementById('addUserModal').style.display = 'none';
+        document.getElementById('addUserForm').reset();
+    }
+    
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('addUserModal');
+        if (event.target == modal) {
+            closeAddUserModal();
+        }
+    }
+    
+    // Password toggle function
+    function togglePassword(inputId, icon) {
+        const input = document.getElementById(inputId);
+        const type = input.getAttribute('type') === 'password' ? 'text' : 'password';
+        input.setAttribute('type', type);
+        
+        // Toggle icon
+        icon.classList.toggle('fa-eye');
+        icon.classList.toggle('fa-eye-slash');
+    }
+    
+    // Form validation
+    document.getElementById('addUserForm').addEventListener('submit', function(e) {
+        const password = document.getElementById('modalPassword').value;
+        const confirmPassword = document.getElementById('modalConfirmPassword').value;
+        const subscriptionType = document.querySelector('select[name="subscription_type"]').value;
+        
+        if (password.length < 6) {
+            e.preventDefault();
+            alert('Password must be at least 6 characters long.');
+            return;
+        }
+        
+        if (password !== confirmPassword) {
+            e.preventDefault();
+            alert('Passwords do not match.');
+            return;
+        }
+        
+        if (!subscriptionType) {
+            e.preventDefault();
+            alert('Please select a subscription package.');
+            return;
+        }
+    });
+</script>
