@@ -236,15 +236,15 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
             $con->commit();
             $warningCount = count($errors) - $criticalErrors;
             if ($warningCount > 0) {
-                $import_message = "Successfully imported $successCount enumerators with $warningCount warnings. Warnings: " . implode('<br>', $errors);
+                $import_message = "Successfully imported " . $successCount . " enumerators with " . $warningCount . " warnings. Warnings: " . implode('<br>', $errors);
                 $import_status = 'warning';
             } else {
-                $import_message = "Successfully imported $successCount enumerators.";
+                $import_message = "Successfully imported " . $successCount . " enumerators.";
                 $import_status = 'success';
             }
         } else {
             $con->rollback();
-            $import_message = "Import rolled back due to $criticalErrors critical errors. Processed $successCount rows successfully. Errors: " . implode('<br>', $errors);
+            $import_message = "Import rolled back due to " . $criticalErrors . " critical errors. Processed " . $successCount . " rows successfully. Errors: " . implode('<br>', $errors);
             $import_status = 'danger';
         }
         
@@ -332,7 +332,9 @@ $query = "
         tradepoints,
         latitude,
         longitude,
-        token
+        token,
+        username,
+        created_at
     FROM enumerators
     ORDER BY name ASC
 ";
@@ -419,14 +421,21 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
     .btn-add-new:hover {
         background-color: darkred;
     }
-    .btn-delete, .btn-export {
+    .btn-delete, .btn-export, .btn-import, .btn-bulk-export {
         background-color: white;
         color: black;
         border: 1px solid #ddd;
         padding: 8px 16px;
     }
-    .btn-delete:hover, .btn-export:hover {
+    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover {
         background-color: #f8f9fa;
+    }
+    .btn-bulk-export {
+        background-color: #17a2b8;
+        color: white;
+    }
+    .btn-bulk-export:hover {
+        background-color: #138496;
     }
     .dropdown-menu {
         min-width: 120px;
@@ -615,7 +624,7 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
                 <i class="fas fa-users"></i>
             </div>
             <div class="stats-title">Total Enumerators</div>
-            <div class="stats-number"><?= $totalEnumerators ?></div>
+            <div class="stats-number"><?php echo $totalEnumerators; ?></div>
         </div>
         
         <div class="overlap-6">
@@ -623,7 +632,7 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
                 <i class="fas fa-user-check"></i>
             </div>
             <div class="stats-title">Active</div>
-            <div class="stats-number"><?= $activeEnumerators ?></div>
+            <div class="stats-number"><?php echo $activeEnumerators; ?></div>
         </div>
         
         <div class="overlap-7">
@@ -631,7 +640,7 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
                 <i class="fas fa-user-tag"></i>
             </div>
             <div class="stats-title">Assigned</div>
-            <div class="stats-number"><?= $assignedEnumerators ?></div>
+            <div class="stats-number"><?php echo $assignedEnumerators; ?></div>
         </div>
         
         <div class="overlap-7">
@@ -639,14 +648,14 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
                 <i class="fas fa-user-minus"></i>
             </div>
             <div class="stats-title">Unassigned</div>
-            <div class="stats-number"><?= $unassignedEnumerators ?></div>
+            <div class="stats-number"><?php echo $unassignedEnumerators; ?></div>
         </div>
     </div>
 </div>
 
 <?php if (isset($import_message)): ?>
-    <div class="alert alert-<?= $import_status ?>">
-        <?= $import_message ?>
+    <div class="alert alert-<?php echo $import_status; ?>">
+        <?php echo $import_message; ?>
     </div>
 <?php endif; ?>
 
@@ -663,20 +672,19 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
                 Delete
             </button>
 
-            <div class="dropdown">
-                <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="fas fa-download" style="margin-right: 3px;"></i>
-                    Export
+            <form method="POST" action="export_current_page_enumerators.php" style="display: inline;">
+                <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
+                <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
+                <button type="submit" class="btn-export">
+                    <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
                 </button>
-                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">
-                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export to Excel
-                    </a></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
-                    </a></li>
-                </ul>
-            </div>
+            </form>
+
+            <form method="POST" action="bulk_export_enumerators.php" style="display: inline;">
+                <button type="submit" class="btn-bulk-export">
+                    <i class="fas fa-database" style="margin-right: 3px;"></i> Bulk Export (All)
+                </button>
+            </form>
             
             <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
                 <i class="fas fa-upload" style="margin-right: 3px;"></i>
@@ -704,46 +712,33 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
                 </tr>
             </thead>
             <tbody id="enumeratorTable">
-                <?php foreach ($enumerators_paged as $enumerator): ?>
+                <?php if (empty($enumerators_paged)): ?>
                     <tr>
-                        <td>
-                            <input type="checkbox" class="row-checkbox" value="<?= htmlspecialchars($enumerator['id']) ?>">
+                        <td colspan="6" style="text-align: center; padding: 40px; color: #666;">
+                            <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; display: block; color: #ccc;"></i>
+                            No enumerators found.
                         </td>
-                        <td><?= htmlspecialchars($enumerator['name']) ?></td>
-                        <td><?= htmlspecialchars($enumerator['country']) ?></td>
-                        <td><?= htmlspecialchars($enumerator['county_district']) ?></td>
-                        <td>
-                            <div class="tradepoints-container">
-                                <?php if (!empty($enumerator['tradepoints_list']) && !in_array('No Tradepoints', $enumerator['tradepoints_list'])): ?>
-                                    <?php 
-                                    $tradepoints = $enumerator['tradepoints_list'];
-                                    $visibleCount = 3;
-                                    $hasMore = count($tradepoints) > $visibleCount;
-                                    ?>
-                                    
-                                    <div class="tradepoints-visible">
-                                        <?php for ($i = 0; $i < min($visibleCount, count($tradepoints)); $i++): ?>
-                                            <?php 
-                                            $tp = $tradepoints[$i];
-                                            $class = '';
-                                            if (strpos($tp, '(Markets)') !== false || strpos($tp, '(Market)') !== false) {
-                                                $class = 'market';
-                                            } elseif (strpos($tp, '(Border Points)') !== false || strpos($tp, '(Border Point)') !== false) {
-                                                $class = 'border';
-                                            } elseif (strpos($tp, '(Millers)') !== false || strpos($tp, '(Miller)') !== false) {
-                                                $class = 'miller';
-                                            }
-                                            ?>
-                                            <span class="tradepoint-tag <?= $class ?>"><?= htmlspecialchars($tp) ?></span>
-                                        <?php endfor; ?>
-                                    </div>
-                                    
-                                    <?php if ($hasMore): ?>
-                                        <button class="show-more-btn" onclick="toggleTradepoints(this)">
-                                            +<?= count($tradepoints) - $visibleCount ?> more
-                                        </button>
-                                        <div class="tradepoints-hidden">
-                                            <?php for ($i = $visibleCount; $i < count($tradepoints); $i++): ?>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($enumerators_paged as $enumerator): ?>
+                        <tr>
+                            <td>
+                                <input type="checkbox" class="row-checkbox" value="<?php echo htmlspecialchars($enumerator['id']); ?>">
+                            </td>
+                            <td><?php echo htmlspecialchars($enumerator['name']); ?></td>
+                            <td><?php echo htmlspecialchars($enumerator['country']); ?></td>
+                            <td><?php echo htmlspecialchars($enumerator['county_district']); ?></td>
+                            <td>
+                                <div class="tradepoints-container">
+                                    <?php if (!empty($enumerator['tradepoints_list']) && !in_array('No Tradepoints', $enumerator['tradepoints_list'])): ?>
+                                        <?php 
+                                        $tradepoints = $enumerator['tradepoints_list'];
+                                        $visibleCount = 3;
+                                        $hasMore = count($tradepoints) > $visibleCount;
+                                        ?>
+                                        
+                                        <div class="tradepoints-visible">
+                                            <?php for ($i = 0; $i < min($visibleCount, count($tradepoints)); $i++): ?>
                                                 <?php 
                                                 $tp = $tradepoints[$i];
                                                 $class = '';
@@ -755,52 +750,74 @@ $enumerators_paged = array_slice($enumerators_raw, $startIndex, $itemsPerPage);
                                                     $class = 'miller';
                                                 }
                                                 ?>
-                                                <span class="tradepoint-tag <?= $class ?>"><?= htmlspecialchars($tp) ?></span>
+                                                <span class="tradepoint-tag <?php echo $class; ?>"><?php echo htmlspecialchars($tp); ?></span>
                                             <?php endfor; ?>
                                         </div>
+                                        
+                                        <?php if ($hasMore): ?>
+                                            <button class="show-more-btn" onclick="toggleTradepoints(this)">
+                                                +<?php echo count($tradepoints) - $visibleCount; ?> more
+                                            </button>
+                                            <div class="tradepoints-hidden">
+                                                <?php for ($i = $visibleCount; $i < count($tradepoints); $i++): ?>
+                                                    <?php 
+                                                    $tp = $tradepoints[$i];
+                                                    $class = '';
+                                                    if (strpos($tp, '(Markets)') !== false || strpos($tp, '(Market)') !== false) {
+                                                        $class = 'market';
+                                                    } elseif (strpos($tp, '(Border Points)') !== false || strpos($tp, '(Border Point)') !== false) {
+                                                        $class = 'border';
+                                                    } elseif (strpos($tp, '(Millers)') !== false || strpos($tp, '(Miller)') !== false) {
+                                                        $class = 'miller';
+                                                    }
+                                                    ?>
+                                                    <span class="tradepoint-tag <?php echo $class; ?>"><?php echo htmlspecialchars($tp); ?></span>
+                                                <?php endfor; ?>
+                                            </div>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <span class="no-tradepoints">No tradepoints assigned</span>
                                     <?php endif; ?>
-                                <?php else: ?>
-                                    <span class="no-tradepoints">No tradepoints assigned</span>
-                                <?php endif; ?>
-                            </div>
-                        </td>
-                        <td>
-                            <a href="edit_enumerator.php?id=<?= htmlspecialchars($enumerator['id']) ?>">
-                                <button class="btn btn-sm btn-warning">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                            </a>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
+                                </div>
+                            </td>
+                            <td>
+                                <a href="edit_enumerator.php?id=<?php echo htmlspecialchars($enumerator['id']); ?>">
+                                    <button class="btn btn-sm btn-warning">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                </a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
 
         <div class="d-flex justify-content-between align-items-center">
             <div>
-                Displaying <?= $startIndex + 1 ?> to <?= min($startIndex + $itemsPerPage, $totalItems) ?> of <?= $totalItems ?> items
+                Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
             </div>
             <div>
                 <label for="itemsPerPage">Show:</label>
                 <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                    <option value="7" <?= $itemsPerPage == 7 ? 'selected' : '' ?>>7</option>
-                    <option value="10" <?= $itemsPerPage == 10 ? 'selected' : '' ?>>10</option>
-                    <option value="20" <?= $itemsPerPage == 20 ? 'selected' : '' ?>>20</option>
-                    <option value="50" <?= $itemsPerPage == 50 ? 'selected' : '' ?>>50</option>
+                    <option value="7" <?php echo ($itemsPerPage == 7) ? 'selected' : ''; ?>>7</option>
+                    <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
+                    <option value="20" <?php echo ($itemsPerPage == 20) ? 'selected' : ''; ?>>20</option>
+                    <option value="50" <?php echo ($itemsPerPage == 50) ? 'selected' : ''; ?>>50</option>
                 </select>
             </div>
             <nav>
                 <ul class="pagination mb-0">
-                    <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $page <= 1 ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage ?>">Prev</a>
+                    <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
+                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage; ?>">Prev</a>
                     </li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <li class="page-item <?= $page == $i ? 'active' : '' ?>">
-                            <a class="page-link" href="?page=<?= $i ?>&limit=<?= $itemsPerPage ?>"><?= $i ?></a>
+                        <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
+                            <a class="page-link" href="?page=<?php echo $i; ?>&limit=<?php echo $itemsPerPage; ?>"><?php echo $i; ?></a>
                         </li>
                     <?php endfor; ?>
-                    <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
-                        <a class="page-link" href="<?= $page >= $totalPages ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage ?>">Next</a>
+                    <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
+                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage; ?>">Next</a>
                     </li>
                 </ul>
             </nav>
@@ -948,7 +965,7 @@ function deleteSelected() {
         return;
     }
 
-    if (confirm(`Are you sure you want to delete ${checkedBoxes.length} selected enumerator(s)?`)) {
+    if (confirm('Are you sure you want to delete ' + checkedBoxes.length + ' selected enumerator(s)?')) {
         const ids = Array.from(checkedBoxes).map(cb => cb.value);
 
         fetch('delete_enumerator.php', {
