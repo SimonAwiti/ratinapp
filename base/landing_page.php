@@ -102,27 +102,6 @@
             gap: 1rem;
         }
 
-        .notification-bell {
-            position: relative;
-            cursor: pointer;
-        }
-
-        .notification-badge {
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            background-color: var(--error-color);
-            color: white;
-            border-radius: 50%;
-            width: 18px;
-            height: 18px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.65rem;
-            font-weight: 600;
-        }
-
         .user-avatar {
             width: 36px;
             height: 36px;
@@ -762,11 +741,25 @@
         </div>
 
         <div class="user-menu">
-            <div class="notification-bell">
-                <i class="fas fa-bell"></i>
-                <span class="notification-badge">3</span>
+            <div class="user-avatar">
+                <?php
+                // Start session to get admin username
+                session_start();
+                if (isset($_SESSION['admin_username'])) {
+                    $username = $_SESSION['admin_username'];
+                    // Get initials from username
+                    $initials = '';
+                    $words = explode(' ', $username);
+                    foreach ($words as $word) {
+                        $initials .= strtoupper(substr($word, 0, 1));
+                        if (strlen($initials) >= 2) break;
+                    }
+                    echo $initials ?: 'AD';
+                } else {
+                    echo 'AD';
+                }
+                ?>
             </div>
-            <div class="user-avatar">AD</div>
         </div>
     </header>
 
@@ -775,60 +768,69 @@
         <!-- Sidebar - Consistent with other pages -->
         <aside class="sidebar">
             <div class="sidebar-menu">
-
-                
+                <!-- BASE MANAGEMENT Section -->
                 <div class="sidebar-section">
                     <h3>Base Management</h3>
+                    <a href="../data/countries_boilerplate.php" class="sidebar-link">
+                        <i class="fa fa-globe-africa"></i> Countries Covered
+                    </a>
+                    <a href="../base/commodity_sources_boilerplate.php" class="sidebar-link">
+                        <i class="fa fa-globe-africa"></i> Geographic Units
+                    </a>
                     <a href="../base/commodities_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-seedling"></i> Commodities
+                        <i class="fas fa-wheat-awn"></i> Commodities
                     </a>
                     <a href="../base/tradepoints_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-map-marker-alt"></i> Trade Points
+                        <i class="fa fa-map-marker-alt"></i> Trade Points
                     </a>
                     <a href="../base/enumerator_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-user-tie"></i> Enumerators
-                    </a>
-                    <a href="../data/currencies_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-money-bill-wave"></i> Currency Rates
+                        <i class="fa fa-users"></i> Enumerators
                     </a>
                 </div>
                 
+                <!-- DATA MANAGEMENT Section -->
                 <div class="sidebar-section">
                     <h3>Data Management</h3>
                     <a href="../data/marketprices_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-store-alt"></i> Market Prices
+                        <i class="fa fa-store"></i> Market Prices
+                    </a>
+                    <a href="../data/datasource_boilerplate.php" class="sidebar-link">
+                        <i class="fa fa-database"></i> Data Sources
                     </a>
                     <a href="../data/xbtvol_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-exchange-alt"></i> XBT Volumes
+                        <i class="fa fa-exchange-alt"></i> XBT Volumes
+                        <span class="badge" style="background: #10b981; color: white; font-size: 0.625rem; padding: 2px 6px; border-radius: 10px; margin-left: auto;">NEW</span>
                     </a>
                     <a href="../data/miller_price_boilerplate.php" class="sidebar-link">
-                        <i class="fas fa-industry"></i> Miller Prices
+                        <i class="fa fa-chart-bar"></i> Miller Prices
+                    </a>
+                    <a href="../data/currencies_boilerplate.php" class="sidebar-link">
+                        <i class="fa fa-credit-card"></i> Currency Rates
                     </a>
                 </div>
 
+                <!-- WEB Section -->
                 <div class="sidebar-section">
                     <h3>Web</h3>
-                    <a href="https://beta.ratin.net/frontend/" class="sidebar-link">
-                        <i class="fas fa-store-alt"></i> WebSite
+                    <a href="https://ratin.net/home/" class="sidebar-link" target="_blank">
+                        <i class="fa fa-monitor"></i> WebSite
                     </a>
                     <a href="../frontend/marketprices.php" class="sidebar-link">
-                        <i class="fas fa-exchange-alt"></i> Data display
+                        <i class="fa fa-chart-line"></i> Data display
                     </a>
                     <a href="../news-system/index.php" class="sidebar-link">
-                        <i class="fas fa-industry"></i> Website manager
+                        <i class="fa fa-newspaper"></i> Website manager
                     </a>
                 </div>
                 
+                <!-- ADMIN Section -->
                 <div class="sidebar-section">
                     <h3>Admin</h3>
-                    <a href="../user/profile.php" class="sidebar-link">
-                        <i class="fas fa-user"></i> Profile
+                    <a href="../admin/user_management.php" class="sidebar-link">
+                        <i class="fa fa-user"></i> User subscription
                     </a>
-                    <a href="../user/settings.php" class="sidebar-link">
-                        <i class="fas fa-cog"></i> Settings
-                    </a>
-                    <a href="../auth/logout.php" class="sidebar-link">
-                        <i class="fas fa-sign-out-alt"></i> Logout
+                    <a href="../admin/logout.php" class="sidebar-link">
+                        <i class="fa fa-sign-out-alt"></i> Logout
                     </a>
                 </div>
             </div>
@@ -888,8 +890,6 @@
                     </div>
                 </div>
 
-
-
                 <!-- Sections Grid -->
                 <div class="sections-grid">
                     <!-- Base Management Card -->
@@ -902,20 +902,32 @@
                         </div>
                         <ul>
                             <li>
+                                <a href="../base/countries_boilerplate.php">
+                                    <i class="fa fa-globe-africa"></i> Countries Covered
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage countries and regions covered by RATIN</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../base/commodity_sources_boilerplate.php">
+                                    <i class="fa fa-globe-africa"></i> Geographic Units
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage geographic units and regions</span></span>
+                                </a>
+                            </li>
+                            <li>
                                 <a href="../base/commodities_boilerplate.php">
-                                    <i class="fas fa-seedling"></i> Commodities
+                                    <i class="fas fa-wheat-awn"></i> Commodities
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage agricultural commodities and varieties</span></span>
                                 </a>
                             </li>
                             <li>
                                 <a href="../base/tradepoints_boilerplate.php">
-                                    <i class="fas fa-map-marker-alt"></i> Trade Points
+                                    <i class="fa fa-map-marker-alt"></i> Trade Points
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage markets, border points and millers</span></span>
                                 </a>
                             </li>
                             <li>
                                 <a href="../base/enumerator_boilerplate.php">
-                                    <i class="fas fa-user-tie"></i> Enumerators
+                                    <i class="fa fa-users"></i> Enumerators
                                     <span class="badge updated">Updated</span>
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage field data collectors</span></span>
                                 </a>
@@ -934,52 +946,63 @@
                         <ul>
                             <li>
                                 <a href="../data/marketprices_boilerplate.php">
-                                    <i class="fas fa-store-alt"></i> Market Prices
+                                    <i class="fa fa-store"></i> Market Prices
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View and manage market price data</span></span>
                                 </a>
                             </li>
                             <li>
                                 <a href="../data/datasource_boilerplate.php">
-                                    <i class="fas fa-database"></i> Data Sources
+                                    <i class="fa fa-database"></i> Data Sources
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage data collection sources</span></span>
                                 </a>
                             </li>
                             <li>
                                 <a href="../data/xbtvol_boilerplate.php">
-                                    <i class="fas fa-exchange-alt"></i> XBT Volumes
+                                    <i class="fa fa-exchange-alt"></i> XBT Volumes
                                     <span class="badge new">New</span>
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Cross-border trade volume data</span></span>
                                 </a>
                             </li>
                             <li>
                                 <a href="../data/miller_price_boilerplate.php">
-                                    <i class="fas fa-industry"></i> Miller Prices
+                                    <i class="fa fa-chart-bar"></i> Miller Prices
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage miller price data</span></span>
                                 </a>
                             </li>
                             <li>
                                 <a href="../data/currencies_boilerplate.php">
-                                    <i class="fas fa-money-bill-wave"></i> Currency Rates
+                                    <i class="fa fa-credit-card"></i> Currency Rates
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage currency exchange rates</span></span>
                                 </a>
                             </li>
                         </ul>
                     </div>
 
-                    <!-- Reports & Analytics Card -->
+                    <!-- Web Management Card -->
                     <div class="section-card">
                         <div class="section-header">
                             <div class="section-icon">
-                                <i class="fas fa-chart-pie"></i>
+                                <i class="fas fa-globe"></i>
                             </div>
-                            <h3>Reports & Analytics</h3>
+                            <h3>Web Management</h3>
                         </div>
                         <ul>
                             <li>
-                                <a href="#" style="opacity: 0.6; cursor: not-allowed;">
-                                    <i class="fas fa-file-export"></i> Export Reports
-                                    <span class="badge" style="background: #6b7280; color: white;">Soon</span>
-                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Coming in next release</span></span>
+                                <a href="https://beta.ratin.net/frontend/" target="_blank">
+                                    <i class="fa fa-monitor"></i> WebSite
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Visit the main RATIN website</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../frontend/marketprices.php">
+                                    <i class="fa fa-chart-line"></i> Data display
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View data display for public users</span></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="../news-system/index.php">
+                                    <i class="fa fa-newspaper"></i> Website manager
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage website content and news</span></span>
                                 </a>
                             </li>
                         </ul>
@@ -995,20 +1018,14 @@
                         </div>
                         <ul>
                             <li>
-                                <a href="../user/profile.php">
-                                    <i class="fas fa-user"></i> My Profile
-                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">View and edit your profile</span></span>
+                                <a href="../admin/user_management.php">
+                                    <i class="fa fa-user"></i> User subscription
+                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Manage user subscriptions and accounts</span></span>
                                 </a>
                             </li>
                             <li>
-                                <a href="../user/settings.php">
-                                    <i class="fas fa-cog"></i> Settings
-                                    <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">System and account settings</span></span>
-                                </a>
-                            </li>
-                            <li>
-                                <a href="../auth/logout.php">
-                                    <i class="fas fa-sign-out-alt"></i> Logout
+                                <a href="../admin/logout.php">
+                                    <i class="fa fa-sign-out-alt"></i> Logout
                                     <span class="tooltip"><i class="fas fa-info-circle"></i><span class="tooltiptext">Sign out of the system</span></span>
                                 </a>
                             </li>

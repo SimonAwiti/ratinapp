@@ -429,16 +429,6 @@ if ($dirName === 'base') {
             <span>User subscription</span>
         </a>
 
-        <a href="<?= $adminPath ?>profile.php" class="nav-link <?= ($currentPage == 'profile.php') ? 'active' : '' ?>">
-            <i class="fa fa-user"></i>
-            <span>Profile</span>
-        </a>
-
-        <a href="<?= $adminPath ?>settings.php" class="nav-link <?= ($currentPage == 'settings.php') ? 'active' : '' ?>">
-            <i class="fa fa-cog"></i>
-            <span>Settings</span>
-        </a>
-
         <a href="<?= $adminPath ?>logout.php" class="nav-link">
             <i class="fa fa-sign-out-alt"></i>
             <span>Logout</span>
