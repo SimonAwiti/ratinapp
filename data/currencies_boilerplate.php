@@ -477,11 +477,14 @@ function formatExchangeRate($rate) {
                     <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
                 </button>
                 <ul class="dropdown-menu" aria-labelledby="exportDropdown">
+                    <li><h6 class="dropdown-header">Export Selected</h6></li>
                     <li><a class="dropdown-item" href="#" onclick="exportSelected('csv')">
-                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export to CSV
+                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Selected to CSV
                     </a></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
+                    <li><hr class="dropdown-divider"></li>
+                    <li><h6 class="dropdown-header">Export All</h6></li>
+                    <li><a class="dropdown-item" href="#" onclick="exportAll('csv')">
+                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>All to CSV
                     </a></li>
                 </ul>
             </div>
@@ -808,6 +811,46 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+function exportAll(format) {
+    // Get current search parameters
+    const searchParams = new URLSearchParams(window.location.search);
+    const search = searchParams.get('search') || '';
+    const limit = searchParams.get('limit') || '10';
+    
+    // Create a form to submit the export request for ALL records
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '../data/export_currencies.php';
+    
+    // Add format parameter
+    const formatInput = document.createElement('input');
+    formatInput.type = 'hidden';
+    formatInput.name = 'export_format';
+    formatInput.value = format;
+    form.appendChild(formatInput);
+    
+    // Add export_all parameter to indicate we want all records
+    const allInput = document.createElement('input');
+    allInput.type = 'hidden';
+    allInput.name = 'export_all';
+    allInput.value = '1';
+    form.appendChild(allInput);
+    
+    // Add search parameter if exists
+    if (search) {
+        const searchInput = document.createElement('input');
+        searchInput.type = 'hidden';
+        searchInput.name = 'search';
+        searchInput.value = search;
+        form.appendChild(searchInput);
+    }
+    
+    // Submit the form
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+}
 </script>
 
 <?php include '../admin/includes/footer.php'; ?>
