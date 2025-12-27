@@ -393,8 +393,61 @@ if (isset($_SESSION['import_message'])) {
     unset($_SESSION['import_status']);
 }
 
-// Function to fetch XBT volumes data from the database
-function getXBTVolumesData($con, $limit = 10, $offset = 0) {
+// Function to fetch XBT volumes data from the database with filters
+function getXBTVolumesData($con, $limit = 10, $offset = 0, $filters = []) {
+    $where_clauses = [];
+    $params = [];
+    $types = '';
+    
+    // Apply filters if provided
+    if (!empty($filters['border'])) {
+        $where_clauses[] = "b.name LIKE ?";
+        $params[] = '%' . $filters['border'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['commodity'])) {
+        $where_clauses[] = "(c.commodity_name LIKE ? OR c.variety LIKE ?)";
+        $params[] = '%' . $filters['commodity'] . '%';
+        $params[] = '%' . $filters['commodity'] . '%';
+        $types .= 'ss';
+    }
+    
+    if (!empty($filters['source'])) {
+        $where_clauses[] = "x.source LIKE ?";
+        $params[] = '%' . $filters['source'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['destination'])) {
+        $where_clauses[] = "x.destination LIKE ?";
+        $params[] = '%' . $filters['destination'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['date'])) {
+        $where_clauses[] = "DATE(x.date_posted) LIKE ?";
+        $params[] = '%' . $filters['date'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['status'])) {
+        $where_clauses[] = "x.status LIKE ?";
+        $params[] = '%' . $filters['status'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['data_source'])) {
+        $where_clauses[] = "ds.data_source_name LIKE ?";
+        $params[] = '%' . $filters['data_source'] . '%';
+        $types .= 's';
+    }
+    
+    $where_sql = '';
+    if (!empty($where_clauses)) {
+        $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
+    }
+    
     $sql = "SELECT
                 x.id,
                 b.name AS border_name,
@@ -415,12 +468,25 @@ function getXBTVolumesData($con, $limit = 10, $offset = 0) {
                 commodities c ON x.commodity_id = c.id
             LEFT JOIN
                 data_sources ds ON x.data_source_id = ds.id
+            $where_sql
             ORDER BY
                 x.date_posted DESC
             LIMIT $limit OFFSET $offset";
 
-    $result = $con->query($sql);
+    $stmt = $con->prepare($sql);
+    if (!$stmt) {
+        error_log("Error preparing statement: " . $con->error);
+        return [];
+    }
+    
+    if (!empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+    
+    $stmt->execute();
+    $result = $stmt->get_result();
     $data = [];
+    
     if ($result) {
         if ($result->num_rows > 0) {
             while ($row = $result->fetch_assoc()) {
@@ -428,32 +494,117 @@ function getXBTVolumesData($con, $limit = 10, $offset = 0) {
             }
         }
         $result->free();
-    } else {
-        error_log("Error fetching XBT volumes data: " . $con->error);
     }
+    $stmt->close();
+    
     return $data;
 }
 
-function getTotalXBTVolumeRecords($con) {
-    $sql = "SELECT count(*) as total FROM xbt_volumes";
-    $result = $con->query($sql);
+function getTotalXBTVolumeRecords($con, $filters = []) {
+    $where_clauses = [];
+    $params = [];
+    $types = '';
+    
+    // Apply filters if provided
+    if (!empty($filters['border'])) {
+        $where_clauses[] = "b.name LIKE ?";
+        $params[] = '%' . $filters['border'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['commodity'])) {
+        $where_clauses[] = "(c.commodity_name LIKE ? OR c.variety LIKE ?)";
+        $params[] = '%' . $filters['commodity'] . '%';
+        $params[] = '%' . $filters['commodity'] . '%';
+        $types .= 'ss';
+    }
+    
+    if (!empty($filters['source'])) {
+        $where_clauses[] = "x.source LIKE ?";
+        $params[] = '%' . $filters['source'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['destination'])) {
+        $where_clauses[] = "x.destination LIKE ?";
+        $params[] = '%' . $filters['destination'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['date'])) {
+        $where_clauses[] = "DATE(x.date_posted) LIKE ?";
+        $params[] = '%' . $filters['date'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['status'])) {
+        $where_clauses[] = "x.status LIKE ?";
+        $params[] = '%' . $filters['status'] . '%';
+        $types .= 's';
+    }
+    
+    if (!empty($filters['data_source'])) {
+        $where_clauses[] = "ds.data_source_name LIKE ?";
+        $params[] = '%' . $filters['data_source'] . '%';
+        $types .= 's';
+    }
+    
+    $where_sql = '';
+    if (!empty($where_clauses)) {
+        $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
+    }
+    
+    $sql = "SELECT count(*) as total 
+            FROM xbt_volumes x
+            LEFT JOIN border_points b ON x.border_id = b.id
+            LEFT JOIN commodities c ON x.commodity_id = c.id
+            LEFT JOIN data_sources ds ON x.data_source_id = ds.id
+            $where_sql";
+    
+    $stmt = $con->prepare($sql);
+    if (!$stmt) {
+        error_log("Error preparing count statement: " . $con->error);
+        return 0;
+    }
+    
+    if (!empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+    
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $total = 0;
+    
     if ($result) {
         $row = $result->fetch_assoc();
-        return $row['total'];
+        $total = $row['total'];
     }
-    return 0;
+    $stmt->close();
+    
+    return $total;
 }
 
-// Get total number of records
-$total_records = getTotalXBTVolumeRecords($con);
+// Get filter values from GET parameters
+$filters = [
+    'border' => isset($_GET['filter_border']) ? trim($_GET['filter_border']) : '',
+    'commodity' => isset($_GET['filter_commodity']) ? trim($_GET['filter_commodity']) : '',
+    'source' => isset($_GET['filter_source']) ? trim($_GET['filter_source']) : '',
+    'destination' => isset($_GET['filter_destination']) ? trim($_GET['filter_destination']) : '',
+    'date' => isset($_GET['filter_date']) ? trim($_GET['filter_date']) : '',
+    'status' => isset($_GET['filter_status']) ? trim($_GET['filter_status']) : '',
+    'data_source' => isset($_GET['filter_data_source']) ? trim($_GET['filter_data_source']) : ''
+];
+
+// Get total number of records with filters
+$total_records = getTotalXBTVolumeRecords($con, $filters);
 
 // Set pagination parameters
-$limit = 10;
+$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 10;
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
 
-// Fetch XBT volumes data
-$xbt_volumes_data = getXBTVolumesData($con, $limit, $offset);
+// Fetch XBT volumes data with filters
+$xbt_volumes_data = getXBTVolumesData($con, $limit, $offset, $filters);
 
 // Calculate total pages
 $total_pages = ceil($total_records / $limit);
@@ -635,6 +786,72 @@ function getStatusDisplay($status) {
         background-color: #f8f9fa;
     }
     
+    /* Filter styles */
+    .filter-row th {
+        background-color: white;
+        padding: 8px;
+    }
+    .filter-input {
+        width: 100%;
+        border: 1px solid #e5e7eb;
+        background: white;
+        padding: 6px 8px;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+    .filter-input:focus {
+        outline: none;
+        border-color: rgba(180, 80, 50, 1);
+        box-shadow: 0 0 0 2px rgba(180, 80, 50, 0.1);
+    }
+    .btn-clear-filters {
+        background-color: white;
+        color: black;
+        border: 1px solid #ddd;
+        padding: 8px 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+    }
+    .btn-clear-filters:hover {
+        background-color: #f8f9fa;
+    }
+    
+    /* Dropdown styles */
+    .dropdown {
+        position: relative;
+        display: inline-block;
+    }
+    .dropdown-menu {
+        display: none;
+        position: absolute;
+        background-color: white;
+        min-width: 160px;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        z-index: 1000;
+        border-radius: 4px;
+        padding: 5px 0;
+    }
+    .dropdown-menu.show {
+        display: block;
+    }
+    .dropdown-item {
+        padding: 8px 16px;
+        text-decoration: none;
+        display: block;
+        color: #333;
+        cursor: pointer;
+    }
+    .dropdown-item:hover {
+        background-color: #f8f9fa;
+    }
+    .dropdown-divider {
+        height: 1px;
+        margin: 5px 0;
+        background-color: #e5e7eb;
+    }
+    
     /* Fixed Modal styles */
     .modal {
         display: none;
@@ -757,21 +974,46 @@ function getStatusDisplay($status) {
             <button class="delete-btn" onclick="deleteSelected()">
                 <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
             </button>
+            
             <div class="dropdown">
-                <button class="btn btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                <button class="btn btn-export dropdown-toggle" type="button" onclick="toggleExportDropdown()">
                     <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
                 </button>
-                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">
-                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export to Excel
-                    </a></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
-                    </a></li>
-                </ul>
+                <div class="dropdown-menu" id="exportDropdown">
+                    <a class="dropdown-item" href="#" onclick="exportSelected('excel')">
+                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export Selected (Excel)
+                    </a>
+                    <a class="dropdown-item" href="#" onclick="exportSelected('csv')">
+                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export Selected (CSV)
+                    </a>
+                    <a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
+                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export Selected (PDF)
+                    </a>
+                    <div class="dropdown-divider"></div>
+                    <a class="dropdown-item" href="#" onclick="exportAll('excel')">
+                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export All (Excel)
+                    </a>
+                    <a class="dropdown-item" href="#" onclick="exportAll('csv')">
+                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export All (CSV)
+                    </a>
+                    <a class="dropdown-item" href="#" onclick="exportAll('pdf')">
+                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export All (PDF)
+                    </a>
+                    <div class="dropdown-divider"></div>
+                    <a class="dropdown-item" href="#" onclick="exportAllWithFilters('excel')">
+                        <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (Excel)
+                    </a>
+                    <a class="dropdown-item" href="#" onclick="exportAllWithFilters('csv')">
+                        <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (CSV)
+                    </a>
+                    <a class="dropdown-item" href="#" onclick="exportAllWithFilters('pdf')">
+                        <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (PDF)
+                    </a>
+                </div>
             </div>
-            <button>
-                <i class="fa fa-filter" style="margin-right: 6px;"></i> Filters
+            
+            <button class="btn-clear-filters" onclick="clearAllFilters()">
+                <i class="fa fa-filter" style="margin-right: 6px;"></i> Clear Filters
             </button>
         </div>
         <div class="toolbar-right">
@@ -801,11 +1043,58 @@ function getStatusDisplay($status) {
                 <th>Data Source</th>
                 <th>Actions</th>
             </tr>
+            <tr class="filter-row">
+                <th></th>
+                <th>
+                    <input type="text" class="filter-input" id="filterBorder" 
+                           placeholder="Filter border" 
+                           value="<?php echo htmlspecialchars($filters['border']); ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterCommodity" 
+                           placeholder="Filter commodity" 
+                           value="<?php echo htmlspecialchars($filters['commodity']); ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th></th>
+                <th>
+                    <input type="text" class="filter-input" id="filterSource" 
+                           placeholder="Filter source" 
+                           value="<?php echo htmlspecialchars($filters['source']); ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterDestination" 
+                           placeholder="Filter destination" 
+                           value="<?php echo htmlspecialchars($filters['destination']); ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterDate" 
+                           placeholder="YYYY-MM-DD" 
+                           value="<?php echo htmlspecialchars($filters['date']); ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterStatus" 
+                           placeholder="Filter status" 
+                           value="<?php echo htmlspecialchars($filters['status']); ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterDataSource" 
+                           placeholder="Filter data source" 
+                           value="<?php echo htmlspecialchars($filters['data_source']); ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th></th>
+            </tr>
         </thead>
-        <tbody>
+        <tbody id="xbtTable">
             <?php foreach ($xbt_volumes_data as $volume): ?>
                 <tr>
-                    <td><input type="checkbox" data-id="<?php echo $volume['id']; ?>"/></td>
+                    <td><input type="checkbox" class="row-checkbox" data-id="<?php echo $volume['id']; ?>"/></td>
                     <td><?php echo htmlspecialchars($volume['border_name']); ?></td>
                     <td><?php echo htmlspecialchars($volume['commodity_display']); ?></td>
                     <td><?php echo htmlspecialchars($volume['volume']); ?></td>
@@ -829,25 +1118,52 @@ function getStatusDisplay($status) {
     <div class="pagination">
         <div>
             Show
-            <select>
-                <option>10</option>
-                <option>25</option>
-                <option>50</option>
+            <select id="itemsPerPage" onchange="updateItemsPerPage(this.value)">
+                <option value="10" <?php echo $limit == 10 ? 'selected' : ''; ?>>10</option>
+                <option value="25" <?php echo $limit == 25 ? 'selected' : ''; ?>>25</option>
+                <option value="50" <?php echo $limit == 50 ? 'selected' : ''; ?>>50</option>
+                <option value="100" <?php echo $limit == 100 ? 'selected' : ''; ?>>100</option>
             </select>
             entries
         </div>
         <div>Displaying <?php echo ($offset + 1) . ' to ' . min($offset + $limit, $total_records) . ' of ' . $total_records; ?> items</div>
         <div class="pages">
             <?php if ($page > 1): ?>
-                <a href="?page=<?php echo $page - 1; ?>" class="page">‹</a>
+                <a href="?page=<?php echo $page - 1; ?>&limit=<?php echo $limit; ?><?php echo getFilterParams($filters); ?>" class="page">‹</a>
             <?php endif; ?>
 
-            <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                <a href="?page=<?php echo $i; ?>" class="page <?php echo ($page == $i) ? 'current' : ''; ?>"><?php echo $i; ?></a>
-            <?php endfor; ?>
+            <?php 
+            // Calculate pagination range
+            $start_page = max(1, $page - 2);
+            $end_page = min($total_pages, $page + 2);
+            
+            // Show first page if not in range
+            if ($start_page > 1) {
+                echo '<a href="?page=1&limit=' . $limit . getFilterParams($filters) . '" class="page">1</a>';
+                if ($start_page > 2) {
+                    echo '<span class="page" style="background: none; cursor: default;">...</span>';
+                }
+            }
+            
+            for ($i = $start_page; $i <= $end_page; $i++): 
+            ?>
+                <a href="?page=<?php echo $i; ?>&limit=<?php echo $limit; ?><?php echo getFilterParams($filters); ?>" 
+                   class="page <?php echo ($page == $i) ? 'current' : ''; ?>">
+                    <?php echo $i; ?>
+                </a>
+            <?php endfor; 
+            
+            // Show last page if not in range
+            if ($end_page < $total_pages) {
+                if ($end_page < $total_pages - 1) {
+                    echo '<span class="page" style="background: none; cursor: default;">...</span>';
+                }
+                echo '<a href="?page=' . $total_pages . '&limit=' . $limit . getFilterParams($filters) . '" class="page">' . $total_pages . '</a>';
+            }
+            ?>
 
             <?php if ($page < $total_pages): ?>
-                <a href="?page=<?php echo $page + 1; ?>" class="page">›</a>
+                <a href="?page=<?php echo $page + 1; ?>&limit=<?php echo $limit; ?><?php echo getFilterParams($filters); ?>" class="page">›</a>
             <?php endif; ?>
         </div>
     </div>
@@ -925,8 +1241,111 @@ function getStatusDisplay($status) {
 </div>
 
 <script>
+document.addEventListener("DOMContentLoaded", function() {
+    // Initialize select all checkbox
+    document.getElementById('select-all').addEventListener('change', function() {
+        document.querySelectorAll('.row-checkbox').forEach(checkbox => {
+            checkbox.checked = this.checked;
+        });
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(event) {
+        const exportDropdown = document.getElementById('exportDropdown');
+        const exportButton = document.querySelector('.btn-export');
+        
+        if (exportButton && exportDropdown && !exportButton.contains(event.target) && !exportDropdown.contains(event.target)) {
+            exportDropdown.classList.remove('show');
+        }
+    });
+    
+    // Update breadcrumb if the function exists
+    if (typeof updateBreadcrumb === 'function') {
+        updateBreadcrumb('Base', 'XBT Volumes');
+    }
+});
+
+function toggleExportDropdown() {
+    const dropdown = document.getElementById('exportDropdown');
+    dropdown.classList.toggle('show');
+}
+
+function applyFilters() {
+    const filters = {
+        border: document.getElementById('filterBorder').value,
+        commodity: document.getElementById('filterCommodity').value,
+        source: document.getElementById('filterSource').value,
+        destination: document.getElementById('filterDestination').value,
+        date: document.getElementById('filterDate').value,
+        status: document.getElementById('filterStatus').value,
+        data_source: document.getElementById('filterDataSource').value
+    };
+    
+    // Build URL with filters
+    const url = new URL(window.location.href.split('?')[0], window.location.origin);
+    url.searchParams.set('page', '1');
+    
+    if (filters.border) url.searchParams.set('filter_border', filters.border);
+    if (filters.commodity) url.searchParams.set('filter_commodity', filters.commodity);
+    if (filters.source) url.searchParams.set('filter_source', filters.source);
+    if (filters.destination) url.searchParams.set('filter_destination', filters.destination);
+    if (filters.date) url.searchParams.set('filter_date', filters.date);
+    if (filters.status) url.searchParams.set('filter_status', filters.status);
+    if (filters.data_source) url.searchParams.set('filter_data_source', filters.data_source);
+    
+    // Keep current limit
+    const currentLimit = new URLSearchParams(window.location.search).get('limit');
+    if (currentLimit) url.searchParams.set('limit', currentLimit);
+    
+    window.location.href = url.toString();
+}
+
+function clearAllFilters() {
+    // Clear all filter inputs
+    document.getElementById('filterBorder').value = '';
+    document.getElementById('filterCommodity').value = '';
+    document.getElementById('filterSource').value = '';
+    document.getElementById('filterDestination').value = '';
+    document.getElementById('filterDate').value = '';
+    document.getElementById('filterStatus').value = '';
+    document.getElementById('filterDataSource').value = '';
+    
+    // Reload page without filters
+    const url = new URL(window.location.href.split('?')[0], window.location.origin);
+    
+    // Keep current limit
+    const currentLimit = new URLSearchParams(window.location.search).get('limit');
+    if (currentLimit) url.searchParams.set('limit', currentLimit);
+    
+    window.location.href = url.toString();
+}
+
+function updateItemsPerPage(value) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('limit', value);
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
+}
+
 /**
- * Export selected items to Excel or PDF
+ * Get all selected volume IDs
+ */
+function getSelectedVolumeIds() {
+    const selectedIds = [];
+    const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+    
+    checkboxes.forEach(checkbox => {
+        const volumeId = parseInt(checkbox.getAttribute('data-id'));
+        if (!isNaN(volumeId)) {
+            selectedIds.push(volumeId);
+        }
+    });
+    
+    return selectedIds;
+}
+
+/**
+ * Export selected items
  */
 function exportSelected(format) {
     const selectedIds = getSelectedVolumeIds();
@@ -943,6 +1362,71 @@ function exportSelected(format) {
     
     // Open export in new window
     window.open('export_xbt_volumes.php?' + params.toString(), '_blank');
+    
+    // Close dropdown
+    document.getElementById('exportDropdown').classList.remove('show');
+}
+
+/**
+ * Export all data (without filters)
+ */
+function exportAll(format) {
+    if (confirm('Export ALL XBT volumes? This may take a moment for large datasets.')) {
+        const params = new URLSearchParams();
+        params.append('export', format);
+        params.append('export_all', 'true');
+        
+        window.open('export_xbt_volumes.php?' + params.toString(), '_blank');
+        
+        // Close dropdown
+        document.getElementById('exportDropdown').classList.remove('show');
+    }
+}
+
+/**
+ * Export all data with current filters applied
+ */
+function exportAllWithFilters(format) {
+    // Get current filter values
+    const filters = {
+        border: document.getElementById('filterBorder').value,
+        commodity: document.getElementById('filterCommodity').value,
+        source: document.getElementById('filterSource').value,
+        destination: document.getElementById('filterDestination').value,
+        date: document.getElementById('filterDate').value,
+        status: document.getElementById('filterStatus').value,
+        data_source: document.getElementById('filterDataSource').value
+    };
+    
+    // Count how many filters are active
+    const activeFilters = Object.values(filters).filter(val => val.trim() !== '').length;
+    
+    let message = 'Export ';
+    if (activeFilters > 0) {
+        message += 'all data with current filters applied?';
+    } else {
+        message += 'ALL XBT volumes (no filters active)?';
+    }
+    message += ' This may take a moment for large datasets.';
+    
+    if (confirm(message)) {
+        const params = new URLSearchParams();
+        params.append('export', format);
+        params.append('export_all', 'true');
+        params.append('apply_filters', 'true');
+        
+        // Add filters to params
+        Object.keys(filters).forEach(key => {
+            if (filters[key]) {
+                params.append('filter_' + key, filters[key]);
+            }
+        });
+        
+        window.open('export_xbt_volumes.php?' + params.toString(), '_blank');
+        
+        // Close dropdown
+        document.getElementById('exportDropdown').classList.remove('show');
+    }
 }
 
 /**
@@ -987,23 +1471,6 @@ function confirmAction(action, ids) {
             alert('An error occurred while ' + action + ' items: ' + error.message);
         });
     }
-}
-
-/**
- * Get all selected volume IDs
- */
-function getSelectedVolumeIds() {
-    const selectedIds = [];
-    const checkboxes = document.querySelectorAll('table tbody input[type="checkbox"]:checked');
-    
-    checkboxes.forEach(checkbox => {
-        const volumeId = parseInt(checkbox.getAttribute('data-id'));
-        if (!isNaN(volumeId)) {
-            selectedIds.push(volumeId);
-        }
-    });
-    
-    return selectedIds;
 }
 
 // Modal management functions
@@ -1104,53 +1571,6 @@ function deleteSelected() {
     confirmAction('delete', ids);
 }
 
-/**
- * Initializes all event listeners for the XBT volumes table.
- */
-function initializeXBTVolumes() {
-    console.log("Initializing XBT Volumes functionality...");
-
-    // Initialize select all checkbox
-    const selectAllCheckbox = document.getElementById('select-all');
-    const itemCheckboxes = document.querySelectorAll('table tbody input[type="checkbox"][data-id]');
-
-    if (selectAllCheckbox && itemCheckboxes.length > 0) {
-        selectAllCheckbox.addEventListener('change', function() {
-            itemCheckboxes.forEach(checkbox => {
-                checkbox.checked = this.checked;
-            });
-        });
-
-        // Update select all when individual checkboxes change
-        itemCheckboxes.forEach(checkbox => {
-            checkbox.addEventListener('change', function() {
-                const allChecked = Array.from(itemCheckboxes).every(cb => cb.checked);
-                selectAllCheckbox.checked = allChecked;
-            });
-        });
-    }
-
-    // Close modal when clicking outside
-    const modal = document.getElementById('importModal');
-    if (modal) {
-        modal.addEventListener('click', function(event) {
-            if (event.target === modal) {
-                closeImportModal();
-            }
-        });
-    }
-}
-
-// Initialize when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
-    initializeXBTVolumes();
-    
-    // Update breadcrumb if the function exists
-    if (typeof updateBreadcrumb === 'function') {
-        updateBreadcrumb('Base', 'XBT Volumes');
-    }
-});
-
 // Keyboard support for closing modal
 document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
@@ -1159,4 +1579,33 @@ document.addEventListener('keydown', function(event) {
 });
 </script>
 
-<?php include '../admin/includes/footer.php'; ?>
+<?php 
+// Helper function to build filter parameters for URLs
+function getFilterParams($filters) {
+    $params = '';
+    if (!empty($filters['border'])) {
+        $params .= '&filter_border=' . urlencode($filters['border']);
+    }
+    if (!empty($filters['commodity'])) {
+        $params .= '&filter_commodity=' . urlencode($filters['commodity']);
+    }
+    if (!empty($filters['source'])) {
+        $params .= '&filter_source=' . urlencode($filters['source']);
+    }
+    if (!empty($filters['destination'])) {
+        $params .= '&filter_destination=' . urlencode($filters['destination']);
+    }
+    if (!empty($filters['date'])) {
+        $params .= '&filter_date=' . urlencode($filters['date']);
+    }
+    if (!empty($filters['status'])) {
+        $params .= '&filter_status=' . urlencode($filters['status']);
+    }
+    if (!empty($filters['data_source'])) {
+        $params .= '&filter_data_source=' . urlencode($filters['data_source']);
+    }
+    return $params;
+}
+
+include '../admin/includes/footer.php'; 
+?>
