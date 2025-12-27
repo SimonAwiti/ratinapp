@@ -957,10 +957,20 @@ if ($wholesale_result) {
                 </button>
                 <ul class="dropdown-menu" aria-labelledby="exportDropdown">
                     <li><a class="dropdown-item" href="#" onclick="exportSelected('excel')">
-                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export to Excel
+                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export Selected to Excel
                     </a></li>
                     <li><a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export to PDF
+                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export Selected to PDF
+                    </a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="#" onclick="exportAll('excel')">
+                        <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export All to Excel
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick="exportAll('pdf')">
+                        <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export All to PDF
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick="exportAll('csv')">
+                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export All to CSV
                     </a></li>
                 </ul>
             </div>
@@ -1369,6 +1379,62 @@ function exportSelected(format) {
     
     // Open export in new window
     window.open('export_market_prices.php?' + params.toString(), '_blank');
+}
+
+/**
+ * Export all data (without filters)
+ */
+function exportAll(format) {
+    if (confirm('Export ALL market prices? This may take a moment for large datasets.')) {
+        const params = new URLSearchParams();
+        params.append('export', format);
+        params.append('export_all', 'true');
+        
+        window.open('export_market_prices.php?' + params.toString(), '_blank');
+    }
+}
+
+/**
+ * Export all data with current filters applied
+ */
+function exportAllWithFilters(format) {
+    // Get current filter values
+    const filters = {
+        market: document.getElementById('filterMarket').value,
+        commodity: document.getElementById('filterCommodity').value,
+        date: document.getElementById('filterDate').value,
+        type: document.getElementById('filterType').value,
+        price: document.getElementById('filterPrice').value,
+        status: document.getElementById('filterStatus').value,
+        source: document.getElementById('filterSource').value
+    };
+    
+    // Count how many filters are active
+    const activeFilters = Object.values(filters).filter(val => val.trim() !== '').length;
+    
+    let message = 'Export ';
+    if (activeFilters > 0) {
+        message += 'all data with current filters applied?';
+    } else {
+        message += 'ALL market prices (no filters active)?';
+    }
+    message += ' This may take a moment for large datasets.';
+    
+    if (confirm(message)) {
+        const params = new URLSearchParams();
+        params.append('export', format);
+        params.append('export_all', 'true');
+        params.append('apply_filters', 'true');
+        
+        // Add filters to params
+        Object.keys(filters).forEach(key => {
+            if (filters[key]) {
+                params.append('filter_' + key, filters[key]);
+            }
+        });
+        
+        window.open('export_market_prices.php?' + params.toString(), '_blank');
+    }
 }
 
 /**
