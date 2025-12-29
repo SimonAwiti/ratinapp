@@ -487,7 +487,7 @@ $kenya_sources_count = $kenya_sources_row['total'];
             </div>
             <div>
                 <label for="itemsPerPage">Show:</label>
-                <select name="limit" class="form-select d-inline w-auto" onchange="this.form.submit()">
+                <select name="limit" id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
                     <option value="7" <?php echo ($itemsPerPage == 7) ? 'selected' : ''; ?>>7</option>
                     <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
                     <option value="20" <?php echo ($itemsPerPage == 20) ? 'selected' : ''; ?>>20</option>
@@ -570,6 +570,20 @@ function confirmDelete() {
         // Submit the delete form
         deleteForm.submit();
     }
+}
+
+function updateItemsPerPage(value) {
+    // Get current URL parameters
+    const url = new URL(window.location);
+    
+    // Update the limit parameter
+    url.searchParams.set('limit', value);
+    
+    // Reset to page 1 when changing items per page
+    url.searchParams.set('page', '1');
+    
+    // Navigate to the new URL
+    window.location.href = url.toString();
 }
 </script>
 
