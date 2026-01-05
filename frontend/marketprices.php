@@ -1262,10 +1262,7 @@ foreach ($markets as $market) {
                             <?php endif; ?>
                         </span>
                     </div>
-                    <button id="download-btn" style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                        Download
-                        <i class="fa fa-download"></i>
-                    </button>
+
                 </div>
 
                 <div id="table-view" class="table-responsive-container">
