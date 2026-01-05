@@ -3,6 +3,9 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
+// Start session at the VERY TOP
+session_start();
+
 // Database configuration
 include '../admin/includes/config.php';
 if (!$con) {
@@ -10,9 +13,39 @@ if (!$con) {
 }
 
 /**
+ * Get current user's display name based on session
+ */
+function getCurrentUserDisplayName() {
+    // Check if admin is logged in
+    if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true) {
+        if (isset($_SESSION['admin_name']) && !empty($_SESSION['admin_name'])) {
+            return htmlspecialchars($_SESSION['admin_name']);
+        } elseif (isset($_SESSION['admin_username']) && !empty($_SESSION['admin_username'])) {
+            return htmlspecialchars($_SESSION['admin_username']);
+        } else {
+            return "Administrator";
+        }
+    }
+    
+    // Check if regular user is logged in
+    if (isset($_SESSION['user_logged_in']) && $_SESSION['user_logged_in'] === true) {
+        if (isset($_SESSION['user_name']) && !empty($_SESSION['user_name'])) {
+            return htmlspecialchars($_SESSION['user_name']);
+        } elseif (isset($_SESSION['user_username']) && !empty($_SESSION['user_username'])) {
+            return htmlspecialchars($_SESSION['user_username']);
+        } else {
+            return "User";
+        }
+    }
+    
+    // If no one is logged in (shouldn't happen if pages are protected)
+    return "Guest";
+}
+
+/**
  * Build SQL query with filters
  */
-function buildMillerPricesQuery($filters = []) {
+function buildMillerPricesQuery($filters = [], $con) {
     $sql = "SELECT
                 mp.id,
                 mp.town AS market,
@@ -95,7 +128,7 @@ function buildMillerPricesQuery($filters = []) {
  * Fetch miller prices data with pagination
  */
 function getMillerPricesData($con, $limit = 10, $offset = 0, $filters = []) {
-    $sql = buildMillerPricesQuery($filters);
+    $sql = buildMillerPricesQuery($filters, $con);
     $sql .= " LIMIT $limit OFFSET $offset";
     
     $result = $con->query($sql);
@@ -118,7 +151,7 @@ function getMillerPricesData($con, $limit = 10, $offset = 0, $filters = []) {
  * Get total number of records for pagination
  */
 function getTotalMillerPriceRecords($con, $filters = []) {
-    $sql = buildMillerPricesQuery($filters);
+    $sql = buildMillerPricesQuery($filters, $con);
     $sql = "SELECT COUNT(*) as total FROM ($sql) as count_query";
     $result = $con->query($sql);
     if (!$result) {
@@ -402,6 +435,23 @@ if ($result) {
             color: var(--primary-color);
         }
         
+        .user-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 5px;
+        }
+        
+        .badge-admin {
+            background-color: #dc3545;
+            color: white;
+        }
+        
+        .badge-user {
+            background-color: #28a745;
+            color: white;
+        }
+        
         /* Main Content */
         .main-content {
             margin-left: 250px;
@@ -654,6 +704,23 @@ if ($result) {
             margin: 4px 0;
         }
         
+        /* User info bar */
+        .user-info-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .user-info-bar strong {
+            color: #333;
+        }
+        
         /* Responsive adjustments */
         @media (max-width: 992px) {
             .filter-grid {
@@ -726,12 +793,35 @@ if ($result) {
                 </ol>
             </nav>
             <div class="user-display">
-                <i class="fa fa-user-circle"></i> <span>Martin Kim</span>
+                <i class="fa fa-user-circle"></i> 
+                <span id="current-user-name"><?php echo getCurrentUserDisplayName(); ?></span>
+                <?php if (isset($_SESSION['admin_logged_in'])): ?>
+                    <span class="user-badge badge-admin">ADMIN</span>
+                <?php elseif (isset($_SESSION['user_logged_in'])): ?>
+                    <span class="user-badge badge-user">USER</span>
+                <?php endif; ?>
             </div>
         </div>
 
         <!-- Content -->
         <div class="main-content">
+            <!-- User Info Bar -->
+            <div class="user-info-bar">
+                <i class="fas fa-user-circle text-primary"></i>
+                <span>Logged in as: <strong><?php echo getCurrentUserDisplayName(); ?></strong></span>
+                <?php if (isset($_SESSION['admin_logged_in'])): ?>
+                    <span class="mx-2">•</span>
+                    <span>Role: <strong>Administrator</strong></span>
+                <?php elseif (isset($_SESSION['user_logged_in'])): ?>
+                    <span class="mx-2">•</span>
+                    <span>Role: <strong>User</strong></span>
+                    <?php if (isset($_SESSION['subscription_type'])): ?>
+                        <span class="mx-2">•</span>
+                        <span>Subscription: <strong><?php echo ucfirst($_SESSION['subscription_type']); ?></strong></span>
+                    <?php endif; ?>
+                <?php endif; ?>
+            </div>
+
             <!-- Filter Section -->
             <form id="filter-form" method="GET">
                 <div class="filter-section dashboard-card">
@@ -831,28 +921,6 @@ if ($result) {
                     </nav>
                 </div>
 
-                <!-- Toolbar -->
-                <div class="toolbar">
-                    <div class="toolbar-left">
-                        <button class="btn btn-primary">
-                            <i class="fas fa-ellipsis-h"></i> All Commodities
-                        </button>
-                        <button class="btn btn-outline">
-                            <i class="fas fa-seedling"></i> Cereals
-                        </button>
-                        <button class="btn btn-outline">
-                            <i class="fas fa-tint"></i> Oilseeds
-                        </button>
-                        <button class="btn btn-outline">
-                            <i class="fas fa-leaf"></i> Pulses
-                        </button>
-                    </div>
-                    <div class="toolbar-right">
-                        <button class="btn btn-outline">
-                            <i class="fas fa-download"></i> Download Data
-                        </button>
-                    </div>
-                </div>
 
                 <!-- Table View -->
                 <div id="table-view" class="table-container">
