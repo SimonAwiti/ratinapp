@@ -1,8 +1,56 @@
 <?php
 // market_prices_view.php
 
+// Start session at the VERY TOP
+session_start();
+
 // Include your database configuration file
 include '../admin/includes/config.php';
+
+// Function to get the current user's display name based on session
+function getCurrentUserDisplayName() {
+    // Check if admin is logged in
+    if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true) {
+        if (isset($_SESSION['admin_name']) && !empty($_SESSION['admin_name'])) {
+            return htmlspecialchars($_SESSION['admin_name']);
+        } elseif (isset($_SESSION['admin_username']) && !empty($_SESSION['admin_username'])) {
+            return htmlspecialchars($_SESSION['admin_username']);
+        } else {
+            return "Administrator";
+        }
+    }
+    
+    // Check if regular user is logged in
+    if (isset($_SESSION['user_logged_in']) && $_SESSION['user_logged_in'] === true) {
+        if (isset($_SESSION['user_name']) && !empty($_SESSION['user_name'])) {
+            return htmlspecialchars($_SESSION['user_name']);
+        } elseif (isset($_SESSION['user_username']) && !empty($_SESSION['user_username'])) {
+            return htmlspecialchars($_SESSION['user_username']);
+        } else {
+            return "User";
+        }
+    }
+    
+    // If no one is logged in (shouldn't happen if pages are protected)
+    return "Guest";
+}
+
+// Function to check if user has access to this page
+function checkAccess() {
+    // Allow both admin and regular users to access this page
+    if (!isset($_SESSION['admin_logged_in']) && !isset($_SESSION['user_logged_in'])) {
+        // Redirect to appropriate login page
+        if (strpos($_SERVER['PHP_SELF'], 'admin') !== false) {
+            header("Location: admin_login.php");
+        } else {
+            header("Location: user_login.php");
+        }
+        exit;
+    }
+}
+
+// Check access (optional - uncomment if you want to protect the page)
+// checkAccess();
 
 // Function to geocode market name to coordinates using OpenStreetMap Nominatim API
 function geocodeMarket($market, $country) {
@@ -1089,7 +1137,11 @@ foreach ($markets as $market) {
                 </ol>
             </nav>
             <div class="user-display">
-                <i class="fa fa-user-circle"></i> <span>Martin Kim</span>
+                <i class="fa fa-user-circle"></i> 
+                <span id="current-user-name"><?php echo getCurrentUserDisplayName(); ?></span>
+                <?php if (isset($_SESSION['admin_logged_in'])): ?>
+                    <span class="badge bg-danger ms-2" style="font-size: 10px;">ADMIN</span>
+                <?php endif; ?>
             </div>
         </div>
 
@@ -1201,7 +1253,14 @@ foreach ($markets as $market) {
 
                 <div style="padding: 16px 24px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between;">
                     <div style="display: flex; align-items: center; gap: 8px;">
-
+                        <span style="font-size: 12px; color: #666;">
+                            Logged in as: <strong><?php echo getCurrentUserDisplayName(); ?></strong>
+                            <?php if (isset($_SESSION['admin_logged_in'])): ?>
+                                (Administrator)
+                            <?php elseif (isset($_SESSION['user_logged_in'])): ?>
+                                (<?php echo isset($_SESSION['subscription_type']) ? ucfirst($_SESSION['subscription_type']) : 'User'; ?>)
+                            <?php endif; ?>
+                        </span>
                     </div>
                     <button id="download-btn" style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
                         Download
@@ -2139,7 +2198,6 @@ document.addEventListener('DOMContentLoaded', function() {
         // Submit the form
         form.submit();
     });
-
 
   // Rows per page selector
     document.getElementById('rows-per-page')?.addEventListener('change', function() {
