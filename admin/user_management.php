@@ -1356,23 +1356,7 @@ if ($today_notifications_result) {
             <?php endif; ?>
         </div>
         
-        <!-- Automation Instructions -->
-        <div class="automation-section">
-            <h3><i class="fas fa-robot"></i> Automation Setup</h3>
-            <p><strong>Email Notifications System:</strong> This system automatically sends emails for account status changes, subscription updates, and expiry notifications (4 days before subscription expires).</p>
-            
-            <p><strong>Cron Job Setup for Daily Expiry Notifications:</strong> Add this to your server's crontab to run daily at 9 AM:</p>
-            <div class="code-block">
-                <code>0 9 * * * /usr/bin/php /path/to/your/website/user_management.php?cron_expiry=1 > /dev/null 2>&1</code>
-            </div>
-            
-            <p>Or create a separate cron file and schedule it:</p>
-            <div class="code-block">
-                <code>0 9 * * * /usr/bin/php /path/to/your/website/cron_notifications.php > /dev/null 2>&1</code>
-            </div>
-        </div>
-    </div>
-    
+
     <!-- Add User Modal -->
     <div id="addUserModal" class="modal">
         <div class="modal-content">
