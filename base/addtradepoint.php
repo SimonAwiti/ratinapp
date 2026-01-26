@@ -504,7 +504,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/tradepoints_boilerplate.php'">×</button>
         
         <!-- Left Sidebar with Steps -->
         <div class="steps-sidebar">

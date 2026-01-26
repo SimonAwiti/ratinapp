@@ -23,7 +23,7 @@ if ($id > 0) {
 }
 
 if (!$market_data) {
-    echo "<script>alert('Market not found'); window.location.href='../base/commodities_boilerplate.php';</script>";
+    echo "<script>alert('Market not found'); window.location.href='../base/tradepoints_boilerplate.php';</script>";
     exit;
 }
 
@@ -122,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->errno) {
             $error_message = "MySQL Error: " . $stmt->error;
         } else {
-            echo "<script>alert('Market updated successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
+            echo "<script>alert('Market updated successfully'); window.location.href='../base/tradepoints_boilerplate.php';</script>";
             exit;
         }
     }
@@ -392,7 +392,7 @@ if (!empty($selected_commodities)) {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/tradepoints_boilerplate.php'">×</button>
         
         <h2>Edit Market</h2>
         <p>Update the market details below</p>

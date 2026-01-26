@@ -23,7 +23,7 @@ if ($id > 0) {
 }
 
 if (!$miller_data) {
-    echo "<script>alert('Miller not found'); window.location.href='../base/commodities_boilerplate.php';</script>";
+    echo "<script>alert('Miller not found'); window.location.href='../base/tradepoints_boilerplate.php';</script>";
     exit;
 }
 
@@ -92,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->errno) {
             $error_message = "MySQL Error: " . $stmt->error;
         } else {
-            echo "<script>alert('Miller updated successfully'); window.location.href='../base/commodities_boilerplate.php';</script>";
+            echo "<script>alert('Miller updated successfully'); window.location.href='../base/tradepoints_boilerplate.php';</script>";
             exit;
         }
     }
@@ -329,7 +329,7 @@ $current_currency = isset($currency_map[$miller_data['country']]) ? $currency_ma
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/tradepoints_boilerplate.php'">×</button>
         
         <h2>Edit Miller</h2>
         <p>Update the miller details below</p>

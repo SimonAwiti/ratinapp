@@ -5,7 +5,7 @@ include '../admin/includes/config.php'; // DB connection
 // Ensure an enumerator ID is provided for editing
 if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
     // Redirect back to the enumerators list if no valid ID is provided
-    header("Location: commodities_boilerplate.php");
+    header("Location: enumerator_boilerplate.php");
     exit;
 }
 
@@ -25,14 +25,14 @@ if ($stmt) {
 } else {
     error_log("Error preparing enumerator fetch statement: " . $con->error);
     $_SESSION['error_message'] = "Error fetching enumerator data.";
-    header("Location: commodities_boilerplate.php");
+    header("Location: enumerator_boilerplate.php");
     exit;
 }
 
 // If no enumerator found with that ID, redirect
 if (!$enumerator_data) {
     $_SESSION['error_message'] = "Enumerator not found.";
-    header("Location: commodities_boilerplate.php");
+    header("Location: enumerator_boilerplate.php");
     exit;
 }
 
@@ -138,7 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->bind_param("sssssssssi", $name, $email, $phone, $gender, $country, $county_district, $username, $password_hash, $tradepoints_json, $enumerator_id);
         if ($stmt->execute()) {
             $_SESSION['success_message'] = "Enumerator updated successfully!";
-            header("Location: commodities_boilerplate.php");
+            header("Location: enumerator_boilerplate.php");
             exit;
         } else {
             $error_message = "Error updating enumerator: " . $stmt->error;
@@ -449,7 +449,7 @@ $con->close();
 </head>
 <body>
 <div class="container">
-    <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+    <button class="close-btn" onclick="window.location.href='../base/enumerator_boilerplate.php'">×</button>
     
     <h2>Edit Enumerator: <?= htmlspecialchars($enumerator_data['name']) ?></h2>
     <p>Update the enumerator's details below</p>

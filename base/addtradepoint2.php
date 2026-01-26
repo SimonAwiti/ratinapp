@@ -915,7 +915,7 @@ if ($tradepoint_type == "Millers" && isset($_SESSION['miller_name'])) {
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='../base/commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='../base/tradepoints_boilerplate.php'">×</button>
         
         <!-- Left Sidebar with Steps -->
         <div class="steps-sidebar">

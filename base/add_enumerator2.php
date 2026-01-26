@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->execute();
 
 
-    header("Location: commodities_boilerplate.php");
+    header("Location: enumerator_boilerplate.php");
     exit;
 }
 
@@ -467,7 +467,7 @@ $js_tradepoints_data = json_encode($tradepoints);
 </head>
 <body>
     <div class="container">
-        <button class="close-btn" onclick="window.location.href='commodities_boilerplate.php'">×</button>
+        <button class="close-btn" onclick="window.location.href='enumerator_boilerplate.php'">×</button>
         
         <!-- Left Sidebar with Steps -->
         <div class="steps-sidebar">
