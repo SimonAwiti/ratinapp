@@ -326,7 +326,6 @@ if (isset($_POST['action'])) {
                 $phone = trim($_POST['phone']);
                 $subscription_type = $_POST['subscription_type'];
                 $status = $_POST['status']; // Allow admin to set status directly
-                $notes = isset($_POST['notes']) ? trim($_POST['notes']) : '';
                 
                 // Validation
                 if (empty($username) || empty($email) || empty($password) || empty($full_name) || empty($subscription_type)) {
@@ -355,9 +354,17 @@ if (isset($_POST['action'])) {
                 $approved_date = $status == 'active' ? date('Y-m-d H:i:s') : null;
                 $approved_by = $status == 'active' ? $admin_id : null;
                 
-                $insert_stmt = $con->prepare("INSERT INTO subscribed_users (username, email, password, full_name, company, phone, subscription_type, status, registration_date, approved_date, approved_by, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)");
+                // FIXED: Changed the parameter order and fixed bind_param
+                $insert_stmt = $con->prepare("INSERT INTO subscribed_users (username, email, password, full_name, company, phone, subscription_type, status, registration_date, approved_date, approved_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)");
                 if (!$insert_stmt) throw new Exception("Prepare failed: " . $con->error);
-                $insert_stmt->bind_param("sssssssssiss", $username, $email, $hashed_password, $full_name, $company, $phone, $subscription_type, $status, $approved_date, $approved_by, $notes);
+                
+                // FIXED: Changed to 10 parameters with correct types
+                if ($approved_date === null && $approved_by === null) {
+                    $insert_stmt->bind_param("ssssssssss", $username, $email, $hashed_password, $full_name, $company, $phone, $subscription_type, $status, $approved_date, $approved_by);
+                } else {
+                    // Bind as integer for approved_by when not null
+                    $insert_stmt->bind_param("sssssssssi", $username, $email, $hashed_password, $full_name, $company, $phone, $subscription_type, $status, $approved_date, $approved_by);
+                }
                 
                 if ($insert_stmt->execute()) {
                     $new_user_id = $insert_stmt->insert_id;
@@ -1418,13 +1425,7 @@ if ($today_notifications_result) {
                             </select>
                         </div>
                     </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group full-width">
-                            <label>Notes (Optional)</label>
-                            <textarea name="notes" placeholder="Add any notes about this user" rows="3"></textarea>
-                        </div>
-                    </div>
+
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" onclick="closeAddUserModal()">Cancel</button>
