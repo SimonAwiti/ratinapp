@@ -391,9 +391,7 @@ if ($dirName === 'base') {
         <a href="<?= $dataPath ?>xbtvol_boilerplate.php" class="nav-link <?= ($currentPage == 'xbtvol_boilerplate.php') ? 'active' : '' ?>">
             <i class="fa fa-exchange-alt"></i>
             <span>XBT Volumes</span>
-            <span class="badge-new">NEW</span>
         </a>
-
         <a href="<?= $dataPath ?>miller_price_boilerplate.php" class="nav-link <?= ($currentPage == 'miller_price_boilerplate.php') ? 'active' : '' ?>">
             <i class="fa fa-chart-bar"></i>
             <span>Miller Prices</span>
@@ -403,11 +401,17 @@ if ($dirName === 'base') {
             <span>Currency Rates</span>
         </a>
 
+                <a href="<?= $dataPath ?>market_submission_monitoring.php" class="nav-link <?= ($currentPage == 'market_submission_monitoring.php') ? 'active' : '' ?>">
+            <i class="fa fa-chart-line"></i>
+            <span>Submission monitor</span>
+            <!--span class="badge-new">NEW</span-->
+        </a>
+
         <!-- WEB Section -->
         <div class="section-header">WEB</div>
 
         <a href="https://beta.ratin.net/frontend/" class="nav-link" target="_blank">
-            <i class="fa fa-monitor"></i>
+            <i class="fa fa-globe-africa"></i>
             <span>WebSite</span>
         </a>
 
