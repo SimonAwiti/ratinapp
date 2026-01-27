@@ -1,6 +1,41 @@
 <?php
 session_start();
-// base/commodities_boilerplate.php
+
+// Initialize selected commodities in session if not exists
+if (!isset($_SESSION['selected_commodities'])) {
+    $_SESSION['selected_commodities'] = [];
+}
+
+// Handle selection updates via AJAX
+if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
+    $id = $_POST['id'];
+    $isSelected = $_POST['selected'] === 'true';
+    
+    if ($isSelected) {
+        if (!in_array($id, $_SESSION['selected_commodities'])) {
+            $_SESSION['selected_commodities'][] = $id;
+        }
+    } else {
+        $key = array_search($id, $_SESSION['selected_commodities']);
+        if ($key !== false) {
+            unset($_SESSION['selected_commodities'][$key]);
+            $_SESSION['selected_commodities'] = array_values($_SESSION['selected_commodities']); // Re-index
+        }
+    }
+    
+    // Clear all selections
+    if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
+        $_SESSION['selected_commodities'] = [];
+    }
+    
+    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_commodities'])]);
+    exit;
+}
+
+// Clear all selections if requested via GET
+if (isset($_GET['clear_selections'])) {
+    $_SESSION['selected_commodities'] = [];
+}
 
 // Include the configuration file first
 include '../admin/includes/config.php';
@@ -174,11 +209,6 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                 continue;
             }
             
-            // Optional: Add debugging (remove in production)
-            // echo "Debug Row $rowNumber - Units JSON: $units_json<br>";
-            // echo "Debug Row $rowNumber - Aliases JSON: $aliases_json<br>";
-            // echo "Debug Row $rowNumber - Countries JSON: $countries_json<br>";
-            
             // Check if commodity already exists
             $check_query = "SELECT id FROM commodities WHERE hs_code = ? AND commodity_name = ?";
             $check_stmt = $con->prepare($check_query);
@@ -304,7 +334,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
     $import_status = 'danger';
 }
 
-// --- Fetch all data for the table ---
+// --- Fetch all data for the table with filtering ---
 $query = "
     SELECT
         c.id,
@@ -317,14 +347,60 @@ $query = "
         commodities c
     JOIN
         commodity_categories cc ON c.category_id = cc.id
+    WHERE 1=1
 ";
-$result = $con->query($query);
-$commodities = array();
-if ($result) {
-    $commodities = $result->fetch_all(MYSQLI_ASSOC);
+
+// Apply filters from GET parameters (for server-side filtering)
+$filterConditions = [];
+$params = [];
+$types = '';
+
+if (isset($_GET['filter_id']) && !empty($_GET['filter_id'])) {
+    $filterConditions[] = "c.id = ?";
+    $params[] = $_GET['filter_id'];
+    $types .= 's';
 }
 
-// Pagination and Filtering Logic
+if (isset($_GET['filter_hs_code']) && !empty($_GET['filter_hs_code'])) {
+    $filterConditions[] = "c.hs_code LIKE ?";
+    $params[] = '%' . $_GET['filter_hs_code'] . '%';
+    $types .= 's';
+}
+
+if (isset($_GET['filter_category']) && !empty($_GET['filter_category'])) {
+    $filterConditions[] = "cc.name LIKE ?";
+    $params[] = '%' . $_GET['filter_category'] . '%';
+    $types .= 's';
+}
+
+if (isset($_GET['filter_commodity']) && !empty($_GET['filter_commodity'])) {
+    $filterConditions[] = "c.commodity_name LIKE ?";
+    $params[] = '%' . $_GET['filter_commodity'] . '%';
+    $types .= 's';
+}
+
+if (isset($_GET['filter_variety']) && !empty($_GET['filter_variety'])) {
+    $filterConditions[] = "c.variety LIKE ?";
+    $params[] = '%' . $_GET['filter_variety'] . '%';
+    $types .= 's';
+}
+
+if (!empty($filterConditions)) {
+    $query .= " AND " . implode(" AND ", $filterConditions);
+}
+
+$query .= " ORDER BY c.id";
+
+// Prepare and execute query with filters
+$stmt = $con->prepare($query);
+if (!empty($params)) {
+    $stmt->bind_param($types, ...$params);
+}
+$stmt->execute();
+$result = $stmt->get_result();
+$commodities = $result->fetch_all(MYSQLI_ASSOC);
+
+// Pagination Logic (AFTER filtering)
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
 $totalItems = count($commodities);
 $totalPages = ceil($totalItems / $itemsPerPage);
@@ -382,6 +458,7 @@ if ($oil_seeds_result) {
         margin-bottom: 15px;
         display: flex;
         gap: 10px;
+        flex-wrap: wrap;
     }
     .btn-add-new {
         background-color: rgba(180, 80, 50, 1);
@@ -393,14 +470,21 @@ if ($oil_seeds_result) {
     .btn-add-new:hover {
         background-color: darkred;
     }
-    .btn-delete, .btn-export, .btn-import, .btn-bulk-export {
+    .btn-delete, .btn-export, .btn-import, .btn-bulk-export, .btn-clear-selections {
         background-color: white;
         color: black;
         border: 1px solid #ddd;
         padding: 8px 16px;
     }
-    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover {
+    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover, .btn-clear-selections:hover {
         background-color: #f8f9fa;
+    }
+    .btn-clear-selections {
+        background-color: #ffc107;
+        color: black;
+    }
+    .btn-clear-selections:hover {
+        background-color: #e0a800;
     }
     .btn-bulk-export {
         background-color: #17a2b8;
@@ -563,38 +647,43 @@ if ($oil_seeds_result) {
     .download-template:hover {
         text-decoration: underline;
     }
-/* Compact table rows */
-.table {
-    font-size: 0.875rem;
-}
-
-.table thead th {
-    padding: 0.5rem;
-    vertical-align: middle;
-    line-height: 1.2;
-}
-
-.table tbody td {
-    padding: 0.4rem 0.5rem;
-    vertical-align: middle;
-    line-height: 1.3;
-}
-
-.filter-row input.filter-input {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.85rem;
-    height: 28px;
-}
-
-.image-preview {
-    width: 30px;
-    height: 30px;
-}
-
-.btn-sm {
-    padding: 0.2rem 0.4rem;
-    font-size: 0.8rem;
-}
+    /* Compact table rows */
+    .table {
+        font-size: 0.875rem;
+    }
+    .table thead th {
+        padding: 0.5rem;
+        vertical-align: middle;
+        line-height: 1.2;
+    }
+    .table tbody td {
+        padding: 0.4rem 0.5rem;
+        vertical-align: middle;
+        line-height: 1.3;
+    }
+    .filter-row input.filter-input {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.85rem;
+        height: 28px;
+    }
+    .image-preview {
+        width: 30px;
+        height: 30px;
+    }
+    .btn-sm {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.8rem;
+    }
+    .selected-count {
+        display: inline-block;
+        background-color: rgba(180, 80, 50, 0.1);
+        color: rgba(180, 80, 50, 1);
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        margin-left: 5px;
+        font-weight: bold;
+    }
 </style>
 
 <div class="stats-section">
@@ -653,6 +742,14 @@ if ($oil_seeds_result) {
             <button class="btn btn-delete" onclick="deleteSelected()">
                 <i class="fas fa-trash" style="margin-right: 3px;"></i>
                 Delete
+                <?php if (count($_SESSION['selected_commodities']) > 0): ?>
+                    <span class="selected-count"><?php echo count($_SESSION['selected_commodities']); ?></span>
+                <?php endif; ?>
+            </button>
+
+            <button class="btn btn-clear-selections" onclick="clearAllSelections()">
+                <i class="fas fa-times-circle" style="margin-right: 3px;"></i>
+                Clear Selections
             </button>
 
             <form method="POST" action="export_current_page_commodities.php" style="display: inline;">
@@ -689,11 +786,31 @@ if ($oil_seeds_result) {
                 </tr>
                 <tr class="filter-row" style="background-color: white !important; color: black !important;">
                     <th></th>
-                    <th><input type="text" class="filter-input" id="filterId" placeholder="Filter ID"></th>
-                    <th><input type="text" class="filter-input" id="filterHsCode" placeholder="Filter HS Code"></th>
-                    <th><input type="text" class="filter-input" id="filterCategory" placeholder="Filter Category"></th>
-                    <th><input type="text" class="filter-input" id="filterCommodity" placeholder="Filter Commodity"></th>
-                    <th><input type="text" class="filter-input" id="filterVariety" placeholder="Filter Variety"></th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterId" placeholder="Filter ID"
+                               value="<?php echo isset($_GET['filter_id']) ? htmlspecialchars($_GET['filter_id']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterHsCode" placeholder="Filter HS Code"
+                               value="<?php echo isset($_GET['filter_hs_code']) ? htmlspecialchars($_GET['filter_hs_code']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterCategory" placeholder="Filter Category"
+                               value="<?php echo isset($_GET['filter_category']) ? htmlspecialchars($_GET['filter_category']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterCommodity" placeholder="Filter Commodity"
+                               value="<?php echo isset($_GET['filter_commodity']) ? htmlspecialchars($_GET['filter_commodity']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterVariety" placeholder="Filter Variety"
+                               value="<?php echo isset($_GET['filter_variety']) ? htmlspecialchars($_GET['filter_variety']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
                     <th></th>
                     <th></th>
                 </tr>
@@ -702,7 +819,11 @@ if ($oil_seeds_result) {
                 <?php foreach ($commodities_paged as $commodity): ?>
                     <tr>
                         <td>
-                            <input type="checkbox" class="row-checkbox" value="<?php echo htmlspecialchars($commodity['id']); ?>">
+                            <input type="checkbox" 
+                                   class="row-checkbox" 
+                                   value="<?php echo htmlspecialchars($commodity['id']); ?>"
+                                   <?php echo in_array($commodity['id'], $_SESSION['selected_commodities']) ? 'checked' : ''; ?>
+                                   onchange="updateSelection(this, <?php echo $commodity['id']; ?>)">
                         </td>
                         <td><?php echo htmlspecialchars($commodity['id']); ?></td>
                         <td><?php echo htmlspecialchars($commodity['hs_code']); ?></td>
@@ -720,7 +841,6 @@ if ($oil_seeds_result) {
                             <?php endif; ?>
                         </td>
                         <td>
-                            <!-- FIXED: Added action buttons to match the column header -->
                             <div class="btn-group" role="group">
                                 <a href="edit_commodity.php?id=<?php echo $commodity['id']; ?>" class="btn btn-sm btn-primary">
                                     <i class="fas fa-edit"></i>
@@ -735,6 +855,9 @@ if ($oil_seeds_result) {
         <div class="d-flex justify-content-between align-items-center">
             <div>
                 Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
+                <?php if (count($_SESSION['selected_commodities']) > 0): ?>
+                    <span class="selected-count"><?php echo count($_SESSION['selected_commodities']); ?> selected across all pages</span>
+                <?php endif; ?>
             </div>
             <div>
                 <label for="itemsPerPage">Show:</label>
@@ -749,15 +872,15 @@ if ($oil_seeds_result) {
             <nav>
                 <ul class="pagination mb-0">
                     <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage; ?>">Prev</a>
+                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $itemsPerPage); ?>">Prev</a>
                     </li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
                         <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
-                            <a class="page-link" href="?page=<?php echo $i; ?>&limit=<?php echo $itemsPerPage; ?>"><?php echo $i; ?></a>
+                            <a class="page-link" href="<?php echo getPageUrl($i, $itemsPerPage); ?>"><?php echo $i; ?></a>
                         </li>
                     <?php endfor; ?>
                     <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage; ?>">Next</a>
+                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : getPageUrl($page + 1, $itemsPerPage); ?>">Next</a>
                     </li>
                 </ul>
             </nav>
@@ -829,21 +952,31 @@ if ($oil_seeds_result) {
     </div>
 </div>
 
+<?php
+// Helper function to generate page URLs with filters
+function getPageUrl($pageNum, $itemsPerPage) {
+    $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
+    
+    // Add filter parameters if they exist
+    $filterParams = ['filter_id', 'filter_hs_code', 'filter_category', 'filter_commodity', 'filter_variety'];
+    foreach ($filterParams as $param) {
+        if (isset($_GET[$param]) && !empty($_GET[$param])) {
+            $url .= '&' . $param . '=' . urlencode($_GET[$param]);
+        }
+    }
+    
+    return $url;
+}
+?>
+
 <script>
 document.addEventListener("DOMContentLoaded", function() {
-    // Initialize filter functionality
+    // Initialize filter inputs with current values
     const filterInputs = document.querySelectorAll('.filter-input');
-    filterInputs.forEach(input => {
-        input.addEventListener('keyup', applyFilters);
-    });
-
-    // Initialize select all checkbox
-    document.getElementById('selectAll').addEventListener('change', function() {
-        document.querySelectorAll('.row-checkbox').forEach(checkbox => {
-            checkbox.checked = this.checked;
-        });
-    });
-
+    
+    // Initialize select all checkbox based on current page selections
+    updateSelectAllCheckbox();
+    
     // Update breadcrumb
     if (typeof updateBreadcrumb === 'function') {
         updateBreadcrumb('Base', 'Commodities');
@@ -856,28 +989,65 @@ document.addEventListener("DOMContentLoaded", function() {
     <?php endif; ?>
 });
 
+// Update selection function
+function updateSelection(checkbox, id) {
+    const isSelected = checkbox.checked;
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=update_selection&id=${id}&selected=${isSelected}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('Selection updated:', data);
+        updateSelectAllCheckbox();
+        updateSelectionCount();
+    })
+    .catch(error => console.error('Error updating selection:', error));
+}
+
+function updateSelectionCount() {
+    // This would refresh the selection count display
+    // In a real implementation, you might update a counter on the page
+    console.log('Selection count updated');
+}
+
 function applyFilters() {
     const filters = {
-        id: document.getElementById('filterId').value.toLowerCase(),
-        hsCode: document.getElementById('filterHsCode').value.toLowerCase(),
-        category: document.getElementById('filterCategory').value.toLowerCase(),
-        commodity: document.getElementById('filterCommodity').value.toLowerCase(),
-        variety: document.getElementById('filterVariety').value.toLowerCase()
+        id: document.getElementById('filterId').value,
+        hsCode: document.getElementById('filterHsCode').value,
+        category: document.getElementById('filterCategory').value,
+        commodity: document.getElementById('filterCommodity').value,
+        variety: document.getElementById('filterVariety').value
     };
 
-    const rows = document.querySelectorAll('#commodityTable tr');
-    rows.forEach(row => {
-        const cells = row.querySelectorAll('td');
-        // FIXED: Corrected cell index mapping to match table structure
-        const matches = 
-            cells[1].textContent.toLowerCase().includes(filters.id) &&
-            cells[2].textContent.toLowerCase().includes(filters.hsCode) &&
-            cells[3].textContent.toLowerCase().includes(filters.category) &&
-            cells[4].textContent.toLowerCase().includes(filters.commodity) &&
-            cells[5].textContent.toLowerCase().includes(filters.variety);
-        
-        row.style.display = matches ? '' : 'none';
-    });
+    // Build URL with filter parameters
+    const url = new URL(window.location);
+    
+    // Set filter parameters
+    if (filters.id) url.searchParams.set('filter_id', filters.id);
+    else url.searchParams.delete('filter_id');
+    
+    if (filters.hsCode) url.searchParams.set('filter_hs_code', filters.hsCode);
+    else url.searchParams.delete('filter_hs_code');
+    
+    if (filters.category) url.searchParams.set('filter_category', filters.category);
+    else url.searchParams.delete('filter_category');
+    
+    if (filters.commodity) url.searchParams.set('filter_commodity', filters.commodity);
+    else url.searchParams.delete('filter_commodity');
+    
+    if (filters.variety) url.searchParams.set('filter_variety', filters.variety);
+    else url.searchParams.delete('filter_variety');
+    
+    // Reset to page 1 when filtering
+    url.searchParams.set('page', '1');
+    
+    // Navigate to filtered URL
+    window.location.href = url.toString();
 }
 
 function updateItemsPerPage(value) {
@@ -885,6 +1055,63 @@ function updateItemsPerPage(value) {
     url.searchParams.set('limit', value);
     url.searchParams.set('page', '1');
     window.location.href = url.toString();
+}
+
+function updateSelectAllCheckbox() {
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const selectAll = document.getElementById('selectAll');
+    
+    if (checkboxes.length === 0) {
+        selectAll.checked = false;
+        return;
+    }
+    
+    // Check if all checkboxes on current page are checked
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+    
+    selectAll.checked = allChecked;
+    selectAll.indeterminate = !allChecked && someChecked;
+}
+
+document.getElementById('selectAll').addEventListener('change', function() {
+    const isChecked = this.checked;
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    
+    // Update all checkboxes on current page
+    checkboxes.forEach(checkbox => {
+        if (checkbox.checked !== isChecked) {
+            checkbox.checked = isChecked;
+            // Trigger the update for each checkbox
+            if (checkbox.onchange) {
+                checkbox.onchange();
+            }
+        }
+    });
+    
+    // Clear all selections if unchecking
+    if (!isChecked) {
+        clearAllSelectionsSilent();
+    }
+});
+
+function clearAllSelections() {
+    if (confirm('Clear all selections across all pages?')) {
+        clearAllSelectionsSilent();
+        alert('All selections cleared.');
+        location.reload();
+    }
+}
+
+function clearAllSelectionsSilent() {
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'action=update_selection&clear_all=true'
+    })
+    .catch(error => console.error('Error clearing selections:', error));
 }
 
 function showImageModal(imageUrl, commodityName) {
@@ -896,21 +1123,22 @@ function showImageModal(imageUrl, commodityName) {
 }
 
 function deleteSelected() {
-    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
-    if (checkedBoxes.length === 0) {
+    // Get count from session (across all pages)
+    const selectedCount = <?php echo count($_SESSION['selected_commodities']); ?>;
+    
+    if (selectedCount === 0) {
         alert('Please select at least one commodity to delete.');
         return;
     }
 
-    if (confirm('Are you sure you want to delete ' + checkedBoxes.length + ' selected commodity(ies)?')) {
-        const ids = Array.from(checkedBoxes).map(cb => cb.value);
-
+    if (confirm('Are you sure you want to delete ' + selectedCount + ' selected commodity(ies) across all pages?')) {
+        // Pass all selected IDs from session
         fetch('delete_commodity.php', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ ids: ids })
+            body: JSON.stringify({ ids: <?php echo json_encode($_SESSION['selected_commodities']); ?> })
         })
         .then(response => {
             if (!response.ok) throw new Error('Network error');
@@ -919,34 +1147,8 @@ function deleteSelected() {
         .then(data => {
             if (data.success) {
                 alert(data.message);
-                location.reload();
-            } else {
-                alert('Error: ' + data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error:', error);
-            alert('Request failed: ' + error.message);
-        });
-    }
-}
-
-function deleteSingleCommodity(id) {
-    if (confirm('Are you sure you want to delete this commodity?')) {
-        fetch('delete_commodity.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ids: [id] })
-        })
-        .then(response => {
-            if (!response.ok) throw new Error('Network error');
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                alert(data.message);
+                // Clear selections after deletion
+                clearAllSelectionsSilent();
                 location.reload();
             } else {
                 alert('Error: ' + data.message);
@@ -960,13 +1162,12 @@ function deleteSingleCommodity(id) {
 }
 
 function exportSelected(format) {
-    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
-    if (checkedBoxes.length === 0) {
+    const selectedCount = <?php echo count($_SESSION['selected_commodities']); ?>;
+    
+    if (selectedCount === 0) {
         alert('Please select at least one commodity to export.');
         return;
     }
-    
-    const ids = Array.from(checkedBoxes).map(cb => cb.value);
     
     // Create a form to submit the export request
     const form = document.createElement('form');
@@ -980,24 +1181,14 @@ function exportSelected(format) {
     formatInput.value = format;
     form.appendChild(formatInput);
     
-    // Add selected IDs
-    ids.forEach(id => {
-        const idInput = document.createElement('input');
-        idInput.type = 'hidden';
-        idInput.name = 'selected_ids[]';
-        idInput.value = id;
-        form.appendChild(idInput);
-    });
-    
-    // Add CSRF token if available (you might want to add this for security)
-    const csrfToken = document.querySelector('meta[name="csrf-token"]');
-    if (csrfToken) {
-        const tokenInput = document.createElement('input');
-        tokenInput.type = 'hidden';
-        tokenInput.name = 'csrf_token';
-        tokenInput.value = csrfToken.getAttribute('content');
-        form.appendChild(tokenInput);
-    }
+    // Add selected IDs from session
+    <?php foreach ($_SESSION['selected_commodities'] as $id): ?>
+        const idInput<?php echo $id; ?> = document.createElement('input');
+        idInput<?php echo $id; ?>.type = 'hidden';
+        idInput<?php echo $id; ?>.name = 'selected_ids[]';
+        idInput<?php echo $id; ?>.value = '<?php echo $id; ?>';
+        form.appendChild(idInput<?php echo $id; ?>);
+    <?php endforeach; ?>
     
     // Submit the form
     document.body.appendChild(form);
