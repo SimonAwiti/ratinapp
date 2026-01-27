@@ -64,10 +64,6 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
         while (($data = fgetcsv($handle, 1000, ","))) {
             $rowNumber++;
             
-            // Debug: Log the raw row data
-            // Uncomment this line to see what's in each row
-            //error_log("Row $rowNumber data: " . print_r($data, true));
-            
             // Skip completely empty rows
             if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
                 continue; // Skip empty rows without counting as errors
@@ -267,8 +263,9 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                 variety, 
                 units, 
                 commodity_alias, 
-                country
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)";
+                country,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())";
             
             $insert_stmt = $con->prepare($insert_query);
             if (!$insert_stmt) {
@@ -334,7 +331,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
     $import_status = 'danger';
 }
 
-// --- Fetch all data for the table with filtering ---
+// --- Fetch all data for the table with filtering and sorting ---
 $query = "
     SELECT
         c.id,
@@ -342,7 +339,8 @@ $query = "
         cc.name AS category,
         c.commodity_name,
         c.variety,
-        c.image_url
+        c.image_url,
+        c.created_at
     FROM
         commodities c
     JOIN
@@ -389,9 +387,28 @@ if (!empty($filterConditions)) {
     $query .= " AND " . implode(" AND ", $filterConditions);
 }
 
-$query .= " ORDER BY c.id";
+// Apply sorting
+$sortable_columns = ['id', 'hs_code', 'category', 'commodity_name', 'variety', 'created_at'];
+$default_sort_column = 'id';
+$default_sort_order = 'DESC';
 
-// Prepare and execute query with filters
+$sort_column = isset($_GET['sort']) && in_array($_GET['sort'], $sortable_columns) ? $_GET['sort'] : $default_sort_column;
+$sort_order = isset($_GET['order']) && in_array(strtoupper($_GET['order']), ['ASC', 'DESC']) ? strtoupper($_GET['order']) : $default_sort_order;
+
+// Map column names for database
+$db_column_map = [
+    'id' => 'c.id',
+    'hs_code' => 'c.hs_code',
+    'category' => 'cc.name',
+    'commodity_name' => 'c.commodity_name',
+    'variety' => 'c.variety',
+    'created_at' => 'c.created_at'
+];
+
+$db_sort_column = isset($db_column_map[$sort_column]) ? $db_column_map[$sort_column] : $db_column_map[$default_sort_column];
+$query .= " ORDER BY $db_sort_column $sort_order";
+
+// Prepare and execute query with filters and sorting
 $stmt = $con->prepare($query);
 if (!empty($params)) {
     $stmt->bind_param($types, ...$params);
@@ -400,7 +417,7 @@ $stmt->execute();
 $result = $stmt->get_result();
 $commodities = $result->fetch_all(MYSQLI_ASSOC);
 
-// Pagination Logic (AFTER filtering)
+// Pagination Logic (AFTER filtering and sorting)
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
 $totalItems = count($commodities);
 $totalPages = ceil($totalItems / $itemsPerPage);
@@ -684,6 +701,36 @@ if ($oil_seeds_result) {
         margin-left: 5px;
         font-weight: bold;
     }
+    /* Sorting styles */
+    .sortable {
+        cursor: pointer;
+        position: relative;
+        user-select: none;
+    }
+    .sortable:hover {
+        background-color: #f0f0f0;
+    }
+    .sort-icon {
+        display: inline-block;
+        margin-left: 5px;
+        font-size: 0.8em;
+        opacity: 0.7;
+    }
+    .sort-asc .sort-icon::after {
+        content: "↑";
+    }
+    .sort-desc .sort-icon::after {
+        content: "↓";
+    }
+    .sortable.sort-asc,
+    .sortable.sort-desc {
+        background-color: #e9ecef;
+        font-weight: bold;
+    }
+    .date-added {
+        font-size: 0.8em;
+        color: #6c757d;
+    }
 </style>
 
 <div class="stats-section">
@@ -755,6 +802,8 @@ if ($oil_seeds_result) {
             <form method="POST" action="export_current_page_commodities.php" style="display: inline;">
                 <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
                 <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
+                <input type="hidden" name="sort" value="<?php echo $sort_column; ?>">
+                <input type="hidden" name="order" value="<?php echo $sort_order; ?>">
                 <button type="submit" class="btn-export">
                     <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
                 </button>
@@ -776,12 +825,31 @@ if ($oil_seeds_result) {
             <thead>
                 <tr style="background-color: #d3d3d3 !important; color: black !important;">
                     <th><input type="checkbox" id="selectAll"></th>
-                    <th>ID</th>
-                    <th>HS Code</th>
-                    <th>Category</th>
-                    <th>Commodity</th>
-                    <th>Variety</th>
+                    <th class="sortable <?php echo getSortClass('id'); ?>" onclick="sortTable('id')">
+                        ID
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('hs_code'); ?>" onclick="sortTable('hs_code')">
+                        HS Code
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('category'); ?>" onclick="sortTable('category')">
+                        Category
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('commodity_name'); ?>" onclick="sortTable('commodity_name')">
+                        Commodity
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('variety'); ?>" onclick="sortTable('variety')">
+                        Variety
+                        <span class="sort-icon"></span>
+                    </th>
                     <th>Image</th>
+                    <th class="sortable <?php echo getSortClass('created_at'); ?>" onclick="sortTable('created_at')">
+                        Date Added
+                        <span class="sort-icon"></span>
+                    </th>
                     <th>Actions</th>
                 </tr>
                 <tr class="filter-row" style="background-color: white !important; color: black !important;">
@@ -812,6 +880,11 @@ if ($oil_seeds_result) {
                                onkeyup="applyFilters()">
                     </th>
                     <th></th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterDate" placeholder="YYYY-MM-DD"
+                               value="<?php echo isset($_GET['filter_date']) ? htmlspecialchars($_GET['filter_date']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
                     <th></th>
                 </tr>
             </thead>
@@ -840,6 +913,15 @@ if ($oil_seeds_result) {
                                 <span class="no-image">No Image</span>
                             <?php endif; ?>
                         </td>
+                        <td class="date-added">
+                            <?php 
+                            if (!empty($commodity['created_at'])) {
+                                echo date('Y-m-d', strtotime($commodity['created_at']));
+                            } else {
+                                echo 'N/A';
+                            }
+                            ?>
+                        </td>
                         <td>
                             <div class="btn-group" role="group">
                                 <a href="edit_commodity.php?id=<?php echo $commodity['id']; ?>" class="btn btn-sm btn-primary">
@@ -858,6 +940,9 @@ if ($oil_seeds_result) {
                 <?php if (count($_SESSION['selected_commodities']) > 0): ?>
                     <span class="selected-count"><?php echo count($_SESSION['selected_commodities']); ?> selected across all pages</span>
                 <?php endif; ?>
+                <?php if (!empty($sort_column)): ?>
+                    <span class="text-muted ms-2">Sorted by: <?php echo ucfirst(str_replace('_', ' ', $sort_column)); ?> (<?php echo $sort_order; ?>)</span>
+                <?php endif; ?>
             </div>
             <div>
                 <label for="itemsPerPage">Show:</label>
@@ -872,15 +957,15 @@ if ($oil_seeds_result) {
             <nav>
                 <ul class="pagination mb-0">
                     <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $itemsPerPage); ?>">Prev</a>
+                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $itemsPerPage, $sort_column, $sort_order); ?>">Prev</a>
                     </li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
                         <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
-                            <a class="page-link" href="<?php echo getPageUrl($i, $itemsPerPage); ?>"><?php echo $i; ?></a>
+                            <a class="page-link" href="<?php echo getPageUrl($i, $itemsPerPage, $sort_column, $sort_order); ?>"><?php echo $i; ?></a>
                         </li>
                     <?php endfor; ?>
                     <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : getPageUrl($page + 1, $itemsPerPage); ?>">Next</a>
+                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : getPageUrl($page + 1, $itemsPerPage, $sort_column, $sort_order); ?>">Next</a>
                     </li>
                 </ul>
             </nav>
@@ -953,12 +1038,20 @@ if ($oil_seeds_result) {
 </div>
 
 <?php
-// Helper function to generate page URLs with filters
-function getPageUrl($pageNum, $itemsPerPage) {
+// Helper function to generate page URLs with filters and sorting
+function getPageUrl($pageNum, $itemsPerPage, $sortColumn = null, $sortOrder = null) {
     $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
     
+    // Add sort parameters if provided
+    if ($sortColumn) {
+        $url .= '&sort=' . urlencode($sortColumn);
+    }
+    if ($sortOrder) {
+        $url .= '&order=' . urlencode($sortOrder);
+    }
+    
     // Add filter parameters if they exist
-    $filterParams = ['filter_id', 'filter_hs_code', 'filter_category', 'filter_commodity', 'filter_variety'];
+    $filterParams = ['filter_id', 'filter_hs_code', 'filter_category', 'filter_commodity', 'filter_variety', 'filter_date'];
     foreach ($filterParams as $param) {
         if (isset($_GET[$param]) && !empty($_GET[$param])) {
             $url .= '&' . $param . '=' . urlencode($_GET[$param]);
@@ -966,6 +1059,17 @@ function getPageUrl($pageNum, $itemsPerPage) {
     }
     
     return $url;
+}
+
+// Helper function to get sort CSS class
+function getSortClass($column) {
+    $current_sort = isset($_GET['sort']) ? $_GET['sort'] : 'id';
+    $current_order = isset($_GET['order']) ? strtoupper($_GET['order']) : 'DESC';
+    
+    if ($current_sort === $column) {
+        return $current_order === 'ASC' ? 'sort-asc' : 'sort-desc';
+    }
+    return '';
 }
 ?>
 
@@ -1015,13 +1119,36 @@ function updateSelectionCount() {
     console.log('Selection count updated');
 }
 
+function sortTable(column) {
+    const url = new URL(window.location);
+    const currentSort = url.searchParams.get('sort');
+    const currentOrder = url.searchParams.get('order');
+    
+    // Toggle order if clicking the same column
+    if (currentSort === column) {
+        const newOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
+        url.searchParams.set('order', newOrder);
+    } else {
+        // New column, default to DESC for ID and created_at, ASC for others
+        const defaultOrder = (column === 'id' || column === 'created_at') ? 'DESC' : 'ASC';
+        url.searchParams.set('sort', column);
+        url.searchParams.set('order', defaultOrder);
+    }
+    
+    // Reset to page 1 when sorting
+    url.searchParams.set('page', '1');
+    
+    window.location.href = url.toString();
+}
+
 function applyFilters() {
     const filters = {
         id: document.getElementById('filterId').value,
         hsCode: document.getElementById('filterHsCode').value,
         category: document.getElementById('filterCategory').value,
         commodity: document.getElementById('filterCommodity').value,
-        variety: document.getElementById('filterVariety').value
+        variety: document.getElementById('filterVariety').value,
+        date: document.getElementById('filterDate').value
     };
 
     // Build URL with filter parameters
@@ -1042,6 +1169,9 @@ function applyFilters() {
     
     if (filters.variety) url.searchParams.set('filter_variety', filters.variety);
     else url.searchParams.delete('filter_variety');
+    
+    if (filters.date) url.searchParams.set('filter_date', filters.date);
+    else url.searchParams.delete('filter_date');
     
     // Reset to page 1 when filtering
     url.searchParams.set('page', '1');
@@ -1156,7 +1286,7 @@ function deleteSelected() {
         })
         .catch(error => {
             console.error('Fetch error:', error);
-            alert('Request failed: ' + error.message);
+            alert('Request failed: ' +error.message);
         });
     }
 }
@@ -1180,6 +1310,19 @@ function exportSelected(format) {
     formatInput.name = 'export_format';
     formatInput.value = format;
     form.appendChild(formatInput);
+    
+    // Add sort parameters
+    const sortInput = document.createElement('input');
+    sortInput.type = 'hidden';
+    sortInput.name = 'sort';
+    sortInput.value = '<?php echo $sort_column; ?>';
+    form.appendChild(sortInput);
+    
+    const orderInput = document.createElement('input');
+    orderInput.type = 'hidden';
+    orderInput.name = 'order';
+    orderInput.value = '<?php echo $sort_order; ?>';
+    form.appendChild(orderInput);
     
     // Add selected IDs from session
     <?php foreach ($_SESSION['selected_commodities'] as $id): ?>
