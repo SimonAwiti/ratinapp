@@ -1,5 +1,41 @@
 <?php
-// base/tradepoints_boilerplate.php
+session_start();
+
+// Initialize selected tradepoints in session if not exists
+if (!isset($_SESSION['selected_tradepoints'])) {
+    $_SESSION['selected_tradepoints'] = [];
+}
+
+// Handle selection updates via AJAX
+if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
+    $id = $_POST['id'];
+    $isSelected = $_POST['selected'] === 'true';
+    
+    if ($isSelected) {
+        if (!in_array($id, $_SESSION['selected_tradepoints'])) {
+            $_SESSION['selected_tradepoints'][] = $id;
+        }
+    } else {
+        $key = array_search($id, $_SESSION['selected_tradepoints']);
+        if ($key !== false) {
+            unset($_SESSION['selected_tradepoints'][$key]);
+            $_SESSION['selected_tradepoints'] = array_values($_SESSION['selected_tradepoints']); // Re-index
+        }
+    }
+    
+    // Clear all selections
+    if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
+        $_SESSION['selected_tradepoints'] = [];
+    }
+    
+    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_tradepoints'])]);
+    exit;
+}
+
+// Clear all selections if requested via GET
+if (isset($_GET['clear_selections'])) {
+    $_SESSION['selected_tradepoints'] = [];
+}
 
 // Include the configuration file first
 include '../admin/includes/config.php';
@@ -98,6 +134,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     $primary_commodities = isset($data[9]) ? trim($data[9]) : '';
                     $additional_datasource = isset($data[10]) ? trim($data[10]) : '';
                     $image_urls = ''; // Set empty image_urls for import
+                    $created_at = date('Y-m-d H:i:s'); // Add creation timestamp
                     
                     // Check if market exists
                     $check_query = "SELECT id FROM markets WHERE market_name = ?";
@@ -120,7 +157,8 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                                 currency = ?, 
                                 primary_commodity = ?, 
                                 additional_datasource = ?,
-                                image_urls = ?
+                                image_urls = ?,
+                                created_at = ?
                                 WHERE market_name = ?";
                             
                             $update_stmt = $con->prepare($update_query);
@@ -131,7 +169,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                             }
                             
                             $update_stmt->bind_param(
-                                'ssssdddsssss',
+                                'ssssdddssssss',
                                 $category,
                                 $type,
                                 $country,
@@ -143,6 +181,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                                 $primary_commodities,
                                 $additional_datasource,
                                 $image_urls,
+                                $created_at,
                                 $market_name
                             );
                             
@@ -174,8 +213,9 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                         primary_commodity, 
                         additional_datasource,
                         image_urls,
-                        tradepoint
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Markets')";
+                        tradepoint,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Markets', ?)";
                     
                     $insert_stmt = $con->prepare($insert_query);
                     if (!$insert_stmt) {
@@ -185,7 +225,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     }
                     
                     $insert_stmt->bind_param(
-                        'ssssdddsssss',
+                        'ssssdddssssss',
                         $market_name,
                         $category,
                         $type,
@@ -197,7 +237,8 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                         $currency,
                         $primary_commodities,
                         $additional_datasource,
-                        $image_urls
+                        $image_urls,
+                        $created_at
                     );
                     
                     if ($insert_stmt->execute()) {
@@ -232,6 +273,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     $country = trim($data[1]);
                     $county_district = trim($data[2]);
                     $millers_csv = isset($data[3]) ? trim($data[3]) : '';
+                    $created_at = date('Y-m-d H:i:s'); // Add creation timestamp
                     
                     // Process millers (comma-separated, max 2)
                     $millers_array = [];
@@ -269,7 +311,8 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                                 country = ?, 
                                 county_district = ?, 
                                 miller = ?,
-                                currency = ?
+                                currency = ?,
+                                created_at = ?
                                 WHERE miller_name = ?";
                             
                             $update_stmt = $con->prepare($update_query);
@@ -280,11 +323,12 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                             }
                             
                             $update_stmt->bind_param(
-                                'sssss',
+                                'ssssss',
                                 $country,
                                 $county_district,
                                 $millers_json,
                                 $currency,
+                                $created_at,
                                 $miller_name
                             );
                             
@@ -309,8 +353,9 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                         county_district, 
                         miller,
                         currency,
-                        tradepoint
-                    ) VALUES (?, ?, ?, ?, ?, 'Millers')";
+                        tradepoint,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, 'Millers', ?)";
                     
                     $insert_stmt = $con->prepare($insert_query);
                     if (!$insert_stmt) {
@@ -320,12 +365,13 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     }
                     
                     $insert_stmt->bind_param(
-                        'sssss',
+                        'ssssss',
                         $miller_name,
                         $country,
                         $county_district,
                         $millers_json,
-                        $currency
+                        $currency,
+                        $created_at
                     );
                     
                     if ($insert_stmt->execute()) {
@@ -371,6 +417,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     $county = trim($data[2]);
                     $longitude = floatval(trim($data[3]));
                     $latitude = floatval(trim($data[4]));
+                    $created_at = date('Y-m-d H:i:s'); // Add creation timestamp
                     
                     // Check if border point exists
                     $check_query = "SELECT id FROM border_points WHERE name = ?";
@@ -386,7 +433,8 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                                 country = ?, 
                                 county = ?, 
                                 longitude = ?, 
-                                latitude = ? 
+                                latitude = ?,
+                                created_at = ?
                                 WHERE name = ?";
                             
                             $update_stmt = $con->prepare($update_query);
@@ -397,11 +445,12 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                             }
                             
                             $update_stmt->bind_param(
-                                'ssdds',
+                                'ssddss',
                                 $country,
                                 $county,
                                 $longitude,
                                 $latitude,
+                                $created_at,
                                 $name
                             );
                             
@@ -426,8 +475,9 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                         county, 
                         longitude, 
                         latitude,
-                        tradepoint
-                    ) VALUES (?, ?, ?, ?, ?, 'Border Points')";
+                        tradepoint,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, 'Border Points', ?)";
                     
                     $insert_stmt = $con->prepare($insert_query);
                     if (!$insert_stmt) {
@@ -437,12 +487,13 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     }
                     
                     $insert_stmt->bind_param(
-                        'sssdd',
+                        'sssdds',
                         $name,
                         $country,
                         $county,
                         $longitude,
-                        $latitude
+                        $latitude,
+                        $created_at
                     );
                     
                     if ($insert_stmt->execute()) {
@@ -556,14 +607,15 @@ function getCurrencyFromCountry($country) {
     return 'USD';
 }
 
-// --- Fetch all data for the table ---
-$query = "
+// --- Fetch all data for the table with filtering and sorting ---
+$base_query = "
     SELECT
         id,
         market_name AS name,
         'Markets' AS tradepoint_type,
         country AS admin0,
-        county_district AS admin1
+        county_district AS admin1,
+        created_at
     FROM markets
     
     UNION ALL
@@ -573,7 +625,8 @@ $query = "
         name AS name,
         'Border Points' AS tradepoint_type,
         country AS admin0,
-        county AS admin1
+        county AS admin1,
+        created_at
     FROM border_points
     
     UNION ALL
@@ -583,18 +636,76 @@ $query = "
         miller_name AS name,
         'Millers' AS tradepoint_type,
         country AS admin0,
-        county_district AS admin1
+        county_district AS admin1,
+        created_at
     FROM miller_details
-    
-    ORDER BY name ASC
 ";
-$result = $con->query($query);
-$tradepoints = array();
-if ($result) {
-    $tradepoints = $result->fetch_all(MYSQLI_ASSOC);
+
+// Apply filters from GET parameters (for server-side filtering)
+$filterConditions = [];
+$params = [];
+$types = '';
+
+if (isset($_GET['filter_name']) && !empty($_GET['filter_name'])) {
+    $filterConditions[] = "name LIKE ?";
+    $params[] = '%' . $_GET['filter_name'] . '%';
+    $types .= 's';
 }
 
-// Pagination and Filtering Logic
+if (isset($_GET['filter_type']) && !empty($_GET['filter_type'])) {
+    $filterConditions[] = "tradepoint_type LIKE ?";
+    $params[] = '%' . $_GET['filter_type'] . '%';
+    $types .= 's';
+}
+
+if (isset($_GET['filter_country']) && !empty($_GET['filter_country'])) {
+    $filterConditions[] = "admin0 LIKE ?";
+    $params[] = '%' . $_GET['filter_country'] . '%';
+    $types .= 's';
+}
+
+if (isset($_GET['filter_region']) && !empty($_GET['filter_region'])) {
+    $filterConditions[] = "admin1 LIKE ?";
+    $params[] = '%' . $_GET['filter_region'] . '%';
+    $types .= 's';
+}
+
+// Build the query with filters
+$query = "SELECT * FROM ($base_query) AS combined WHERE 1=1";
+if (!empty($filterConditions)) {
+    $query .= " AND " . implode(" AND ", $filterConditions);
+}
+
+// Apply sorting
+$sortable_columns = ['id', 'name', 'tradepoint_type', 'admin0', 'admin1', 'created_at'];
+$default_sort_column = 'name';
+$default_sort_order = 'ASC';
+
+$sort_column = isset($_GET['sort']) && in_array($_GET['sort'], $sortable_columns) ? $_GET['sort'] : $default_sort_column;
+$sort_order = isset($_GET['order']) && in_array(strtoupper($_GET['order']), ['ASC', 'DESC']) ? strtoupper($_GET['order']) : $default_sort_order;
+
+$query .= " ORDER BY $sort_column $sort_order";
+
+// Prepare and execute query with filters and sorting
+if (!empty($params)) {
+    $stmt = $con->prepare($query);
+    if ($stmt) {
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $tradepoints = $result->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+    } else {
+        // Fallback if prepare fails
+        $result = $con->query($query);
+        $tradepoints = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
+    }
+} else {
+    $result = $con->query($query);
+    $tradepoints = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
+}
+
+// Pagination Logic (AFTER filtering and sorting)
 $itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
 $totalItems = count($tradepoints);
 $totalPages = ceil($totalItems / $itemsPerPage);
@@ -645,6 +756,7 @@ $millers_count = $millers_row['total'];
         margin-bottom: 15px;
         display: flex;
         gap: 10px;
+        flex-wrap: wrap;
     }
     .btn-add-new {
         background-color: rgba(180, 80, 50, 1);
@@ -656,14 +768,21 @@ $millers_count = $millers_row['total'];
     .btn-add-new:hover {
         background-color: darkred;
     }
-    .btn-delete, .btn-export, .btn-import, .btn-bulk-export {
+    .btn-delete, .btn-export, .btn-import, .btn-bulk-export, .btn-clear-selections {
         background-color: white;
         color: black;
         border: 1px solid #ddd;
         padding: 8px 16px;
     }
-    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover {
+    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover, .btn-clear-selections:hover {
         background-color: #f8f9fa;
+    }
+    .btn-clear-selections {
+        background-color: #ffc107;
+        color: black;
+    }
+    .btn-clear-selections:hover {
+        background-color: #e0a800;
     }
     .btn-bulk-export {
         background-color: #17a2b8;
@@ -842,6 +961,46 @@ $millers_count = $millers_row['total'];
     .alert {
         margin-bottom: 20px;
     }
+    .selected-count {
+        display: inline-block;
+        background-color: rgba(180, 80, 50, 0.1);
+        color: rgba(180, 80, 50, 1);
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        margin-left: 5px;
+        font-weight: bold;
+    }
+    /* Sorting styles */
+    .sortable {
+        cursor: pointer;
+        position: relative;
+        user-select: none;
+    }
+    .sortable:hover {
+        background-color: #f0f0f0;
+    }
+    .sort-icon {
+        display: inline-block;
+        margin-left: 5px;
+        font-size: 0.8em;
+        opacity: 0.7;
+    }
+    .sort-asc .sort-icon::after {
+        content: "↑";
+    }
+    .sort-desc .sort-icon::after {
+        content: "↓";
+    }
+    .sortable.sort-asc,
+    .sortable.sort-desc {
+        background-color: #e9ecef;
+        font-weight: bold;
+    }
+    .date-added {
+        font-size: 0.8em;
+        color: #6c757d;
+    }
 </style>
 
 <div class="stats-section">
@@ -902,11 +1061,21 @@ if (isset($import_message)): ?>
             <button class="btn btn-delete" onclick="deleteSelected()">
                 <i class="fas fa-trash" style="margin-right: 3px;"></i>
                 Delete
+                <?php if (count($_SESSION['selected_tradepoints']) > 0): ?>
+                    <span class="selected-count"><?php echo count($_SESSION['selected_tradepoints']); ?></span>
+                <?php endif; ?>
+            </button>
+
+            <button class="btn btn-clear-selections" onclick="clearAllSelections()">
+                <i class="fas fa-times-circle" style="margin-right: 3px;"></i>
+                Clear Selections
             </button>
 
             <form method="POST" action="export_current_page_tradepoints.php" style="display: inline;">
                 <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
                 <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
+                <input type="hidden" name="sort" value="<?php echo $sort_column; ?>">
+                <input type="hidden" name="order" value="<?php echo $sort_order; ?>">
                 <button type="submit" class="btn-export">
                     <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
                 </button>
@@ -928,25 +1097,63 @@ if (isset($import_message)): ?>
             <thead>
                 <tr style="background-color: #d3d3d3 !important; color: black !important;">
                     <th><input type="checkbox" id="selectAll"></th>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Country</th>
-                    <th>Region</th>
+                    <th class="sortable <?php echo getSortClass('id'); ?>" onclick="sortTable('id')">
+                        ID
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('name'); ?>" onclick="sortTable('name')">
+                        Name
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('tradepoint_type'); ?>" onclick="sortTable('tradepoint_type')">
+                        Type
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('admin0'); ?>" onclick="sortTable('admin0')">
+                        Country
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('admin1'); ?>" onclick="sortTable('admin1')">
+                        Region
+                        <span class="sort-icon"></span>
+                    </th>
+                    <th class="sortable <?php echo getSortClass('created_at'); ?>" onclick="sortTable('created_at')">
+                        Date Added
+                        <span class="sort-icon"></span>
+                    </th>
                     <th>Actions</th>
                 </tr>
                 <tr class="filter-row" style="background-color: white !important; color: black !important;">
                     <th></th>
-                    <th><input type="text" class="filter-input" id="filterName" placeholder="Filter Name"></th>
-                    <th><input type="text" class="filter-input" id="filterType" placeholder="Filter Type"></th>
-                    <th><input type="text" class="filter-input" id="filterCountry" placeholder="Filter Country"></th>
-                    <th><input type="text" class="filter-input" id="filterRegion" placeholder="Filter Region"></th>
+                    <th></th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterName" placeholder="Filter Name"
+                               value="<?php echo isset($_GET['filter_name']) ? htmlspecialchars($_GET['filter_name']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterType" placeholder="Filter Type"
+                               value="<?php echo isset($_GET['filter_type']) ? htmlspecialchars($_GET['filter_type']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterCountry" placeholder="Filter Country"
+                               value="<?php echo isset($_GET['filter_country']) ? htmlspecialchars($_GET['filter_country']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
+                    <th>
+                        <input type="text" class="filter-input" id="filterRegion" placeholder="Filter Region"
+                               value="<?php echo isset($_GET['filter_region']) ? htmlspecialchars($_GET['filter_region']) : ''; ?>"
+                               onkeyup="applyFilters()">
+                    </th>
+                    <th></th>
                     <th></th>
                 </tr>
             </thead>
             <tbody id="tradepointTable">
                 <?php if (empty($tradepoints_paged)): ?>
                     <tr>
-                        <td colspan="6" style="text-align: center; padding: 40px; color: #666;">
+                        <td colspan="8" style="text-align: center; padding: 40px; color: #666;">
                             <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; display: block; color: #ccc;"></i>
                             No tradepoints found.
                         </td>
@@ -955,8 +1162,13 @@ if (isset($import_message)): ?>
                     <?php foreach ($tradepoints_paged as $tradepoint): ?>
                         <tr>
                             <td>
-                                <input type="checkbox" class="row-checkbox" value="<?php echo htmlspecialchars($tradepoint['id']); ?>">
+                                <input type="checkbox" 
+                                       class="row-checkbox" 
+                                       value="<?php echo htmlspecialchars($tradepoint['id']); ?>"
+                                       <?php echo in_array($tradepoint['id'], $_SESSION['selected_tradepoints']) ? 'checked' : ''; ?>
+                                       onchange="updateSelection(this, <?php echo $tradepoint['id']; ?>)">
                             </td>
+                            <td><?php echo htmlspecialchars($tradepoint['id']); ?></td>
                             <td><?php echo htmlspecialchars($tradepoint['name']); ?></td>
                             <td>
                                 <?php 
@@ -973,6 +1185,15 @@ if (isset($import_message)): ?>
                             </td>
                             <td><?php echo htmlspecialchars($tradepoint['admin0']); ?></td>
                             <td><?php echo htmlspecialchars($tradepoint['admin1']); ?></td>
+                            <td class="date-added">
+                                <?php 
+                                if (!empty($tradepoint['created_at'])) {
+                                    echo date('Y-m-d', strtotime($tradepoint['created_at']));
+                                } else {
+                                    echo 'N/A';
+                                }
+                                ?>
+                            </td>
                             <td>
                                 <?php
                                 $editPage = '';
@@ -1003,6 +1224,12 @@ if (isset($import_message)): ?>
         <div class="d-flex justify-content-between align-items-center">
             <div>
                 Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
+                <?php if (count($_SESSION['selected_tradepoints']) > 0): ?>
+                    <span class="selected-count"><?php echo count($_SESSION['selected_tradepoints']); ?> selected across all pages</span>
+                <?php endif; ?>
+                <?php if (!empty($sort_column)): ?>
+                    <span class="text-muted ms-2">Sorted by: <?php echo ucfirst(str_replace('_', ' ', $sort_column)); ?> (<?php echo $sort_order; ?>)</span>
+                <?php endif; ?>
             </div>
             <div>
                 <label for="itemsPerPage">Show:</label>
@@ -1016,15 +1243,15 @@ if (isset($import_message)): ?>
             <nav>
                 <ul class="pagination mb-0">
                     <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : '?page=' . ($page - 1) . '&limit=' . $itemsPerPage; ?>">Prev</a>
+                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $itemsPerPage, $sort_column, $sort_order); ?>">Prev</a>
                     </li>
                     <?php for ($i = 1; $i <= $totalPages; $i++): ?>
                         <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
-                            <a class="page-link" href="?page=<?php echo $i; ?>&limit=<?php echo $itemsPerPage; ?>"><?php echo $i; ?></a>
+                            <a class="page-link" href="<?php echo getPageUrl($i, $itemsPerPage, $sort_column, $sort_order); ?>"><?php echo $i; ?></a>
                         </li>
                     <?php endfor; ?>
                     <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : '?page=' . ($page + 1) . '&limit=' . $itemsPerPage; ?>">Next</a>
+                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : getPageUrl($page + 1, $itemsPerPage, $sort_column, $sort_order); ?>">Next</a>
                     </li>
                 </ul>
             </nav>
@@ -1134,21 +1361,47 @@ if (isset($import_message)): ?>
     </div>
 </div>
 
+<?php
+// Helper function to generate page URLs with filters and sorting
+function getPageUrl($pageNum, $itemsPerPage, $sortColumn = null, $sortOrder = null) {
+    $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
+    
+    // Add sort parameters if provided
+    if ($sortColumn) {
+        $url .= '&sort=' . urlencode($sortColumn);
+    }
+    if ($sortOrder) {
+        $url .= '&order=' . urlencode($sortOrder);
+    }
+    
+    // Add filter parameters if they exist
+    $filterParams = ['filter_name', 'filter_type', 'filter_country', 'filter_region'];
+    foreach ($filterParams as $param) {
+        if (isset($_GET[$param]) && !empty($_GET[$param])) {
+            $url .= '&' . $param . '=' . urlencode($_GET[$param]);
+        }
+    }
+    
+    return $url;
+}
+
+// Helper function to get sort CSS class
+function getSortClass($column) {
+    $current_sort = isset($_GET['sort']) ? $_GET['sort'] : 'name';
+    $current_order = isset($_GET['order']) ? strtoupper($_GET['order']) : 'ASC';
+    
+    if ($current_sort === $column) {
+        return $current_order === 'ASC' ? 'sort-asc' : 'sort-desc';
+    }
+    return '';
+}
+?>
+
 <script>
 document.addEventListener("DOMContentLoaded", function() {
-    // Initialize filter functionality
-    const filterInputs = document.querySelectorAll('.filter-input');
-    filterInputs.forEach(input => {
-        input.addEventListener('keyup', applyFilters);
-    });
-
-    // Initialize select all checkbox
-    document.getElementById('selectAll').addEventListener('change', function() {
-        document.querySelectorAll('.row-checkbox').forEach(checkbox => {
-            checkbox.checked = this.checked;
-        });
-    });
-
+    // Initialize select all checkbox based on current page selections
+    updateSelectAllCheckbox();
+    
     // Update breadcrumb
     if (typeof updateBreadcrumb === 'function') {
         updateBreadcrumb('Base', 'Tradepoints');
@@ -1181,25 +1434,82 @@ document.addEventListener("DOMContentLoaded", function() {
     <?php endif; ?>
 });
 
+// Update selection function
+function updateSelection(checkbox, id) {
+    const isSelected = checkbox.checked;
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=update_selection&id=${id}&selected=${isSelected}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('Selection updated:', data);
+        updateSelectAllCheckbox();
+        updateSelectionCount();
+    })
+    .catch(error => console.error('Error updating selection:', error));
+}
+
+function updateSelectionCount() {
+    // This would refresh the selection count display
+    console.log('Selection count updated');
+}
+
+function sortTable(column) {
+    const url = new URL(window.location);
+    const currentSort = url.searchParams.get('sort');
+    const currentOrder = url.searchParams.get('order');
+    
+    // Toggle order if clicking the same column
+    if (currentSort === column) {
+        const newOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
+        url.searchParams.set('order', newOrder);
+    } else {
+        // New column, default to ASC for most, DESC for ID and created_at
+        const defaultOrder = (column === 'id' || column === 'created_at') ? 'DESC' : 'ASC';
+        url.searchParams.set('sort', column);
+        url.searchParams.set('order', defaultOrder);
+    }
+    
+    // Reset to page 1 when sorting
+    url.searchParams.set('page', '1');
+    
+    window.location.href = url.toString();
+}
+
 function applyFilters() {
     const filters = {
-        name: document.getElementById('filterName').value.toLowerCase(),
-        type: document.getElementById('filterType').value.toLowerCase(),
-        country: document.getElementById('filterCountry').value.toLowerCase(),
-        region: document.getElementById('filterRegion').value.toLowerCase()
+        name: document.getElementById('filterName').value,
+        type: document.getElementById('filterType').value,
+        country: document.getElementById('filterCountry').value,
+        region: document.getElementById('filterRegion').value
     };
 
-    const rows = document.querySelectorAll('#tradepointTable tr');
-    rows.forEach(row => {
-        const cells = row.querySelectorAll('td');
-        const matches = 
-            cells[1].textContent.toLowerCase().includes(filters.name) &&
-            cells[2].textContent.toLowerCase().includes(filters.type) &&
-            cells[3].textContent.toLowerCase().includes(filters.country) &&
-            cells[4].textContent.toLowerCase().includes(filters.region);
-        
-        row.style.display = matches ? '' : 'none';
-    });
+    // Build URL with filter parameters
+    const url = new URL(window.location);
+    
+    // Set filter parameters
+    if (filters.name) url.searchParams.set('filter_name', filters.name);
+    else url.searchParams.delete('filter_name');
+    
+    if (filters.type) url.searchParams.set('filter_type', filters.type);
+    else url.searchParams.delete('filter_type');
+    
+    if (filters.country) url.searchParams.set('filter_country', filters.country);
+    else url.searchParams.delete('filter_country');
+    
+    if (filters.region) url.searchParams.set('filter_region', filters.region);
+    else url.searchParams.delete('filter_region');
+    
+    // Reset to page 1 when filtering
+    url.searchParams.set('page', '1');
+    
+    // Navigate to filtered URL
+    window.location.href = url.toString();
 }
 
 function updateItemsPerPage(value) {
@@ -1209,22 +1519,80 @@ function updateItemsPerPage(value) {
     window.location.href = url.toString();
 }
 
+function updateSelectAllCheckbox() {
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const selectAll = document.getElementById('selectAll');
+    
+    if (checkboxes.length === 0) {
+        selectAll.checked = false;
+        return;
+    }
+    
+    // Check if all checkboxes on current page are checked
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+    
+    selectAll.checked = allChecked;
+    selectAll.indeterminate = !allChecked && someChecked;
+}
+
+document.getElementById('selectAll').addEventListener('change', function() {
+    const isChecked = this.checked;
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    
+    // Update all checkboxes on current page
+    checkboxes.forEach(checkbox => {
+        if (checkbox.checked !== isChecked) {
+            checkbox.checked = isChecked;
+            // Trigger the update for each checkbox
+            if (checkbox.onchange) {
+                checkbox.onchange();
+            }
+        }
+    });
+    
+    // Clear all selections if unchecking
+    if (!isChecked) {
+        clearAllSelectionsSilent();
+    }
+});
+
+function clearAllSelections() {
+    if (confirm('Clear all selections across all pages?')) {
+        clearAllSelectionsSilent();
+        alert('All selections cleared.');
+        location.reload();
+    }
+}
+
+function clearAllSelectionsSilent() {
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'action=update_selection&clear_all=true'
+    })
+    .catch(error => console.error('Error clearing selections:', error));
+}
+
 function deleteSelected() {
-    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
-    if (checkedBoxes.length === 0) {
+    // Get count from session (across all pages)
+    const selectedCount = <?php echo count($_SESSION['selected_tradepoints']); ?>;
+    
+    if (selectedCount === 0) {
         alert('Please select at least one tradepoint to delete.');
         return;
     }
 
-    if (confirm('Are you sure you want to delete ' + checkedBoxes.length + ' selected tradepoint(s)?')) {
-        const ids = Array.from(checkedBoxes).map(cb => cb.value);
-
+    if (confirm('Are you sure you want to delete ' + selectedCount + ' selected tradepoint(s) across all pages?')) {
+        // Pass all selected IDs from session
         fetch('delete_tradepoint.php', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ ids: ids })
+            body: JSON.stringify({ ids: <?php echo json_encode($_SESSION['selected_tradepoints']); ?> })
         })
         .then(response => {
             if (!response.ok) throw new Error('Network error');
@@ -1233,6 +1601,8 @@ function deleteSelected() {
         .then(data => {
             if (data.success) {
                 alert(data.message);
+                // Clear selections after deletion
+                clearAllSelectionsSilent();
                 location.reload();
             } else {
                 alert('Error: ' + data.message);
@@ -1246,13 +1616,12 @@ function deleteSelected() {
 }
 
 function exportSelected(format) {
-    const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
-    if (checkedBoxes.length === 0) {
+    const selectedCount = <?php echo count($_SESSION['selected_tradepoints']); ?>;
+    
+    if (selectedCount === 0) {
         alert('Please select at least one tradepoint to export.');
         return;
     }
-    
-    const ids = Array.from(checkedBoxes).map(cb => cb.value);
     
     // Create a form to submit the export request
     const form = document.createElement('form');
@@ -1266,14 +1635,27 @@ function exportSelected(format) {
     formatInput.value = format;
     form.appendChild(formatInput);
     
-    // Add selected IDs
-    ids.forEach(id => {
-        const idInput = document.createElement('input');
-        idInput.type = 'hidden';
-        idInput.name = 'selected_ids[]';
-        idInput.value = id;
-        form.appendChild(idInput);
-    });
+    // Add sort parameters
+    const sortInput = document.createElement('input');
+    sortInput.type = 'hidden';
+    sortInput.name = 'sort';
+    sortInput.value = '<?php echo $sort_column; ?>';
+    form.appendChild(sortInput);
+    
+    const orderInput = document.createElement('input');
+    orderInput.type = 'hidden';
+    orderInput.name = 'order';
+    orderInput.value = '<?php echo $sort_order; ?>';
+    form.appendChild(orderInput);
+    
+    // Add selected IDs from session
+    <?php foreach ($_SESSION['selected_tradepoints'] as $id): ?>
+        const idInput<?php echo $id; ?> = document.createElement('input');
+        idInput<?php echo $id; ?>.type = 'hidden';
+        idInput<?php echo $id; ?>.name = 'selected_ids[]';
+        idInput<?php echo $id; ?>.value = '<?php echo $id; ?>';
+        form.appendChild(idInput<?php echo $id; ?>);
+    <?php endforeach; ?>
     
     // Submit the form
     document.body.appendChild(form);
