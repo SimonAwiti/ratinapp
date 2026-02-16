@@ -410,7 +410,7 @@ if ($dirName === 'base') {
         <!-- WEB Section -->
         <div class="section-header">WEB</div>
 
-        <a href="https://beta.ratin.net/frontend/" class="nav-link" target="_blank">
+        <a href="https://ratin.net/home/" class="nav-link" target="_blank">
             <i class="fa fa-globe-africa"></i>
             <span>WebSite</span>
         </a>
