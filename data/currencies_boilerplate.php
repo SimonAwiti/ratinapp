@@ -1,5 +1,42 @@
 <?php
 // base/currencyrates_boilerplate.php
+session_start();
+
+// Initialize selected currencies in session if not exists
+if (!isset($_SESSION['selected_currencies'])) {
+    $_SESSION['selected_currencies'] = [];
+}
+
+// Handle selection updates via AJAX
+if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
+    $id = $_POST['id'];
+    $isSelected = $_POST['selected'] === 'true';
+    
+    if ($isSelected) {
+        if (!in_array($id, $_SESSION['selected_currencies'])) {
+            $_SESSION['selected_currencies'][] = $id;
+        }
+    } else {
+        $key = array_search($id, $_SESSION['selected_currencies']);
+        if ($key !== false) {
+            unset($_SESSION['selected_currencies'][$key]);
+            $_SESSION['selected_currencies'] = array_values($_SESSION['selected_currencies']);
+        }
+    }
+    
+    // Clear all selections
+    if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
+        $_SESSION['selected_currencies'] = [];
+    }
+    
+    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_currencies'])]);
+    exit;
+}
+
+// Clear all selections if requested via GET
+if (isset($_GET['clear_selections'])) {
+    $_SESSION['selected_currencies'] = [];
+}
 
 // Include the configuration file first
 include '../admin/includes/config.php';
@@ -194,81 +231,122 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
     $import_status = 'danger';
 }
 
-// Function to fetch currency rates data from the database WITH SEARCH
-function getCurrencyRatesData($con, $limit = 10, $offset = 0, $search = '') {
-    $sql = "SELECT
-                cr.id,
-                cr.country,
-                cr.currency_code,
-                cr.exchange_rate,
-                cr.effective_date
-            FROM
-                currencies cr";
-    
-    // Add search condition if provided
-    if (!empty($search)) {
-        $sql .= " WHERE cr.country LIKE '%$search%' OR cr.currency_code LIKE '%$search%'";
-    }
-    
-    $sql .= " ORDER BY cr.effective_date DESC, cr.country ASC LIMIT $limit OFFSET $offset";
+// --- Fetch all data for the table with filtering and sorting ---
+$query = "
+    SELECT
+        cr.id,
+        cr.country,
+        cr.currency_code,
+        cr.exchange_rate,
+        cr.effective_date,
+        cr.date_created
+    FROM
+        currencies cr
+    WHERE 1=1
+";
 
-    $result = $con->query($sql);
-    $data = [];
-    if ($result) {
-        if ($result->num_rows > 0) {
-            while ($row = $result->fetch_assoc()) {
-                $data[] = $row;
-            }
-        }
-        $result->free();
-    } else {
-        error_log("Error fetching currency rates data: " . $con->error);
-    }
-    return $data;
+// Apply filters from GET parameters
+$filterConditions = [];
+$params = [];
+$types = '';
+
+if (isset($_GET['filter_id']) && !empty($_GET['filter_id'])) {
+    $filterConditions[] = "cr.id = ?";
+    $params[] = $_GET['filter_id'];
+    $types .= 'i';
 }
 
-function getTotalCurrencyRecords($con, $search = '') {
-    $sql = "SELECT count(*) as total FROM currencies";
-    
-    // Add search condition if provided
-    if (!empty($search)) {
-        $sql .= " WHERE country LIKE '%$search%' OR currency_code LIKE '%$search%'";
-    }
-    
-    $result = $con->query($sql);
-    if ($result) {
-        $row = $result->fetch_assoc();
-        return $row['total'];
-    }
-    return 0;
+if (isset($_GET['filter_country']) && !empty($_GET['filter_country'])) {
+    $filterConditions[] = "cr.country LIKE ?";
+    $params[] = '%' . $_GET['filter_country'] . '%';
+    $types .= 's';
 }
 
-// Get search parameter
-$search = isset($_GET['search']) ? trim($_GET['search']) : '';
-
-// Set pagination parameters
-$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 10;
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-$offset = ($page - 1) * $limit;
-
-// Validate limit options
-$allowed_limits = [10, 25, 50, 100];
-if (!in_array($limit, $allowed_limits)) {
-    $limit = 10;
+if (isset($_GET['filter_currency']) && !empty($_GET['filter_currency'])) {
+    $filterConditions[] = "cr.currency_code LIKE ?";
+    $params[] = '%' . $_GET['filter_currency'] . '%';
+    $types .= 's';
 }
 
-// Get total number of records
-$total_records = getTotalCurrencyRecords($con, $search);
+if (isset($_GET['filter_rate']) && !empty($_GET['filter_rate'])) {
+    $filterConditions[] = "cr.exchange_rate LIKE ?";
+    $params[] = '%' . $_GET['filter_rate'] . '%';
+    $types .= 's';
+}
 
-// Fetch currency rates data
-$currency_rates_data = getCurrencyRatesData($con, $limit, $offset, $search);
+if (isset($_GET['filter_date']) && !empty($_GET['filter_date'])) {
+    $filterConditions[] = "cr.effective_date LIKE ?";
+    $params[] = '%' . $_GET['filter_date'] . '%';
+    $types .= 's';
+}
 
-// Calculate total pages
-$total_pages = ceil($total_records / $limit);
+if (!empty($filterConditions)) {
+    $query .= " AND " . implode(" AND ", $filterConditions);
+}
 
-// Function to format exchange rate
-function formatExchangeRate($rate) {
-    return number_format($rate, 4);
+// Apply sorting
+$sortable_columns = ['id', 'country', 'currency_code', 'exchange_rate', 'effective_date', 'date_created'];
+$default_sort_column = 'effective_date';
+$default_sort_order = 'DESC';
+
+$sort_column = isset($_GET['sort']) && in_array($_GET['sort'], $sortable_columns) ? $_GET['sort'] : $default_sort_column;
+$sort_order = isset($_GET['order']) && in_array(strtoupper($_GET['order']), ['ASC', 'DESC']) ? strtoupper($_GET['order']) : $default_sort_order;
+
+// Map column names for database
+$db_column_map = [
+    'id' => 'cr.id',
+    'country' => 'cr.country',
+    'currency_code' => 'cr.currency_code',
+    'exchange_rate' => 'cr.exchange_rate',
+    'effective_date' => 'cr.effective_date',
+    'date_created' => 'cr.date_created'
+];
+
+$db_sort_column = isset($db_column_map[$sort_column]) ? $db_column_map[$sort_column] : $db_column_map[$default_sort_column];
+$query .= " ORDER BY $db_sort_column $sort_order";
+
+// Prepare and execute query with filters and sorting
+$stmt = $con->prepare($query);
+if (!empty($params)) {
+    $stmt->bind_param($types, ...$params);
+}
+$stmt->execute();
+$result = $stmt->get_result();
+$all_currencies = $result->fetch_all(MYSQLI_ASSOC);
+
+// Pagination Logic
+$itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 10;
+$totalItems = count($all_currencies);
+$totalPages = ceil($totalItems / $itemsPerPage);
+$page = isset($_GET['page']) ? max(1, min($totalPages, intval($_GET['page']))) : 1;
+$startIndex = ($page - 1) * $itemsPerPage;
+
+$currencies_paged = array_slice($all_currencies, $startIndex, $itemsPerPage);
+
+// --- Fetch counts for summary boxes ---
+$total_currencies_query = "SELECT COUNT(*) AS total FROM currencies";
+$total_currencies_result = $con->query($total_currencies_query);
+$total_currencies = 0;
+if ($total_currencies_result) {
+    $row = $total_currencies_result->fetch_assoc();
+    $total_currencies = $row['total'];
+}
+
+// Get unique countries count
+$unique_countries_query = "SELECT COUNT(DISTINCT country) AS total FROM currencies";
+$unique_countries_result = $con->query($unique_countries_query);
+$unique_countries = 0;
+if ($unique_countries_result) {
+    $row = $unique_countries_result->fetch_assoc();
+    $unique_countries = $row['total'];
+}
+
+// Get latest update date
+$latest_update_query = "SELECT MAX(effective_date) AS latest FROM currencies";
+$latest_update_result = $con->query($latest_update_query);
+$latest_update = 'N/A';
+if ($latest_update_result && $row = $latest_update_result->fetch_assoc()) {
+    $latest_update = $row['latest'] ? date('Y-m-d', strtotime($row['latest'])) : 'N/A';
 }
 ?>
 
@@ -298,7 +376,7 @@ function formatExchangeRate($rate) {
         gap: 12px;
         flex-wrap: wrap;
     }
-    .toolbar button {
+    .toolbar button, .toolbar .primary {
         padding: 12px 20px;
         font-size: 16px;
         border: none;
@@ -309,6 +387,46 @@ function formatExchangeRate($rate) {
     .toolbar .primary {
         background-color: rgba(180, 80, 50, 1);
         color: white;
+        text-decoration: none;
+        display: inline-block;
+        line-height: normal;
+    }
+    .btn-add-new {
+        background-color: rgba(180, 80, 50, 1);
+        color: white;
+        padding: 10px 20px;
+        font-size: 16px;
+        border: none;
+        border-radius: 8px;
+        text-decoration: none;
+        display: inline-block;
+    }
+    .btn-add-new:hover {
+        background-color: darkred;
+    }
+    .btn-delete, .btn-export, .btn-import, .btn-bulk-export, .btn-clear-selections {
+        background-color: white;
+        color: black;
+        border: 1px solid #ddd;
+        padding: 8px 16px;
+        border-radius: 8px;
+    }
+    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover, .btn-clear-selections:hover {
+        background-color: #f8f9fa;
+    }
+    .btn-clear-selections {
+        background-color: #ffc107;
+        color: black;
+    }
+    .btn-clear-selections:hover {
+        background-color: #e0a800;
+    }
+    .btn-bulk-export {
+        background-color: #17a2b8;
+        color: white;
+    }
+    .btn-bulk-export:hover {
+        background-color: #138496;
     }
     .search-box {
         display: flex;
@@ -345,10 +463,11 @@ function formatExchangeRate($rate) {
         padding: 12px;
         border-bottom: 1px solid #eee;
         text-align: left;
-        vertical-align: top;
+        vertical-align: middle;
     }
     table th {
         background-color: #f1f1f1;
+        font-weight: 600;
     }
     table tr:nth-child(even) {
         background-color: #fafafa;
@@ -398,15 +517,7 @@ function formatExchangeRate($rate) {
         margin-bottom: 15px;
         display: flex;
         gap: 10px;
-    }
-    .btn-import, .btn-export {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-        padding: 8px 16px;
-    }
-    .btn-import:hover, .btn-export:hover {
-        background-color: #f8f9fa;
+        flex-wrap: wrap;
     }
     .dropdown-menu {
         min-width: 120px;
@@ -437,121 +548,296 @@ function formatExchangeRate($rate) {
         margin-bottom: 20px;
     }
     .filter-row {
-        background-color: white;
+        background-color: #f8f9fa;
     }
     .filter-input {
         width: 100%;
-        border: none;
+        border: 1px solid #ddd;
         background: white;
         padding: 5px;
-        border-radius: 5px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        border-radius: 4px;
+        font-size: 0.85rem;
     }
     .filter-input:focus {
         outline: none;
+        border-color: rgba(180, 80, 50, 0.5);
+        box-shadow: 0 0 3px rgba(180, 80, 50, 0.3);
+    }
+    .selected-count {
+        display: inline-block;
+        background-color: rgba(180, 80, 50, 0.1);
+        color: rgba(180, 80, 50, 1);
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        margin-left: 5px;
+        font-weight: bold;
+    }
+    .sortable {
+        cursor: pointer;
+        position: relative;
+        user-select: none;
+    }
+    .sortable:hover {
+        background-color: #e0e0e0;
+    }
+    .sort-icon {
+        display: inline-block;
+        margin-left: 5px;
+        font-size: 0.8em;
+        opacity: 0.7;
+    }
+    .sort-asc .sort-icon::after {
+        content: "↑";
+    }
+    .sort-desc .sort-icon::after {
+        content: "↓";
+    }
+    .sortable.sort-asc,
+    .sortable.sort-desc {
+        background-color: #d4d4d4;
+        font-weight: bold;
+    }
+    .stats-container {
+        display: flex;
+        gap: 15px;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: nowrap;
+        width: 87%;
+        max-width: 100%;
+        margin: 0 auto 20px auto;
+        margin-left: 0.7%;
+    }
+    .stats-container > div {
+        flex: 1;
         background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        text-align: center;
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    .stats-icon {
+        width: 40px;
+        height: 40px;
+        margin-bottom: 10px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+    }
+    .total-icon {
+        background-color: #9b59b6;
+        color: white;
+    }
+    .countries-icon {
+        background-color: #f39c12;
+        color: white;
+    }
+    .latest-icon {
+        background-color: #27ae60;
+        color: white;
+    }
+    .stats-section {
+        text-align: left;
+        margin-left: 11%;
+    }
+    .stats-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #2c3e50;
+        margin: 8px 0 5px 0;
+    }
+    .stats-number {
+        font-size: 24px;
+        font-weight: 700;
+        color: #34495e;
+    }
+    .btn-sm {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
     }
 </style>
 
-<div class="text-wrapper-8"><h3>Currency Rates Management</h3></div>
-<p class="p">Manage Currency Exchange Rate Data</p>
+<div class="stats-section">
+    <div class="text-wrapper-8"><h3>Currency Rates Management</h3></div>
+    <p class="p">Manage Currency Exchange Rate Data</p>
+
+    <div class="stats-container">
+        <div class="overlap-6">
+            <div class="stats-icon total-icon">
+                <i class="fas fa-money-bill-wave"></i>
+            </div>
+            <div class="stats-title">Total Currency Rates</div>
+            <div class="stats-number"><?php echo $total_currencies; ?></div>
+        </div>
+        
+        <div class="overlap-6">
+            <div class="stats-icon countries-icon">
+                <i class="fas fa-globe"></i>
+            </div>
+            <div class="stats-title">Unique Countries</div>
+            <div class="stats-number"><?php echo $unique_countries; ?></div>
+        </div>
+        
+        <div class="overlap-7">
+            <div class="stats-icon latest-icon">
+                <i class="fas fa-calendar-alt"></i>
+            </div>
+            <div class="stats-title">Latest Update</div>
+            <div class="stats-number"><?php echo $latest_update; ?></div>
+        </div>
+    </div>
+</div>
 
 <?php if (isset($import_message)): ?>
-    <div class="alert alert-<?= $import_status ?>">
-        <?= $import_message ?>
+    <div class="alert alert-<?php echo $import_status; ?>">
+        <?php echo $import_message; ?>
     </div>
 <?php endif; ?>
 
 <div class="container">
-    <div class="toolbar">
-        <div class="toolbar-left">
-            <a href="../data/add_currency.php" class="primary" style="display: inline-block; padding: 12px 20px; text-align: center; line-height: normal; text-decoration: none; color: white; background-color:rgba(180, 80, 50, 1); border: none; border-radius: 5px; cursor: pointer;">
-                <i class="fa fa-plus" style="margin-right: 6px;"></i> Add New
-            </a>
-            <button class="delete-btn">
-                <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
+    <div class="btn-group">
+        <a href="../data/add_currency.php" class="btn btn-add-new">
+            <i class="fas fa-plus" style="margin-right: 5px;"></i>
+            Add New
+        </a>
+
+        <button class="btn btn-delete" onclick="deleteSelected()">
+            <i class="fas fa-trash" style="margin-right: 3px;"></i>
+            Delete
+            <?php if (count($_SESSION['selected_currencies']) > 0): ?>
+                <span class="selected-count"><?php echo count($_SESSION['selected_currencies']); ?></span>
+            <?php endif; ?>
+        </button>
+
+        <button class="btn btn-clear-selections" onclick="clearAllSelections()">
+            <i class="fas fa-times-circle" style="margin-right: 3px;"></i>
+            Clear Selections
+        </button>
+
+        <form method="POST" action="export_current_page_currencies.php" style="display: inline;">
+            <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
+            <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
+            <input type="hidden" name="sort" value="<?php echo $sort_column; ?>">
+            <input type="hidden" name="order" value="<?php echo $sort_order; ?>">
+            <button type="submit" class="btn-export">
+                <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
             </button>
-            
-            <div class="dropdown">
-                <button class="btn-export dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
-                </button>
-                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
-                    <li><h6 class="dropdown-header">Export Selected</h6></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportSelected('csv')">
-                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Selected to CSV
-                    </a></li>
-                    <li><hr class="dropdown-divider"></li>
-                    <li><h6 class="dropdown-header">Export All</h6></li>
-                    <li><a class="dropdown-item" href="#" onclick="exportAll('csv')">
-                        <i class="fas fa-file-csv" style="margin-right: 8px;"></i>All to CSV
-                    </a></li>
-                </ul>
-            </div>
-            
-            <button class="btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
-                <i class="fa fa-upload" style="margin-right: 6px;"></i> Import
+        </form>
+
+        <div class="dropdown" style="display: inline-block;">
+            <button class="btn btn-bulk-export dropdown-toggle" type="button" id="exportAllDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-database" style="margin-right: 3px;"></i> Bulk Export
             </button>
+            <ul class="dropdown-menu" aria-labelledby="exportAllDropdown">
+                <li><a class="dropdown-item" href="#" onclick="exportAll('csv')">
+                    <i class="fas fa-file-csv" style="margin-right: 8px;"></i>All to CSV
+                </a></li>
+                <li><a class="dropdown-item" href="#" onclick="exportSelected('csv')">
+                    <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Selected to CSV
+                </a></li>
+            </ul>
         </div>
         
-        <div class="toolbar-right">
-            <form method="GET" action="" class="search-box">
-                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Search countries or currency codes...">
-                <button type="submit">
-                    <i class="fa fa-search"></i>
-                </button>
-                <?php if (!empty($search)): ?>
-                    <a href="?" style="margin-left: 8px; color: #666; text-decoration: none;">
-                        <i class="fa fa-times"></i>
-                    </a>
-                <?php endif; ?>
-                <!-- Keep limit as hidden field -->
-                <input type="hidden" name="limit" value="<?php echo $limit; ?>">
-            </form>
-        </div>
+        <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
+            <i class="fas fa-upload" style="margin-right: 3px;"></i>
+            Import
+        </button>
     </div>
+
+
 
     <table>
         <thead>
-            <tr>
-                <th><input type="checkbox" id="select-all"/></th>
-                <th>Country</th>
-                <th>Currency</th>
-                <th>Exchange Rate (to USD)</th>
-                <th>Effective Date</th>
+            <tr style="background-color: #d3d3d3 !important; color: black !important;">
+                <th><input type="checkbox" id="selectAll"></th>
+                <th class="sortable <?php echo getSortClass('id'); ?>" onclick="sortTable('id')">
+                    ID
+                    <span class="sort-icon"></span>
+                </th>
+                <th class="sortable <?php echo getSortClass('country'); ?>" onclick="sortTable('country')">
+                    Country
+                    <span class="sort-icon"></span>
+                </th>
+                <th class="sortable <?php echo getSortClass('currency_code'); ?>" onclick="sortTable('currency_code')">
+                    Currency
+                    <span class="sort-icon"></span>
+                </th>
+                <th class="sortable <?php echo getSortClass('exchange_rate'); ?>" onclick="sortTable('exchange_rate')">
+                    Exchange Rate (to USD)
+                    <span class="sort-icon"></span>
+                </th>
+                <th class="sortable <?php echo getSortClass('effective_date'); ?>" onclick="sortTable('effective_date')">
+                    Effective Date
+                    <span class="sort-icon"></span>
+                </th>
                 <th>Actions</th>
             </tr>
             <tr class="filter-row">
                 <th></th>
-                <th><input type="text" class="filter-input" id="filterCountry" placeholder="Filter Country" onkeyup="filterTable()"></th>
-                <th><input type="text" class="filter-input" id="filterCurrency" placeholder="Filter Currency" onkeyup="filterTable()"></th>
-                <th><input type="text" class="filter-input" id="filterRate" placeholder="Filter Rate" onkeyup="filterTable()"></th>
-                <th><input type="text" class="filter-input" id="filterDate" placeholder="Filter Date" onkeyup="filterTable()"></th>
+                <th>
+                    <input type="text" class="filter-input" id="filterId" placeholder="Filter ID"
+                           value="<?php echo isset($_GET['filter_id']) ? htmlspecialchars($_GET['filter_id']) : ''; ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterCountry" placeholder="Filter Country"
+                           value="<?php echo isset($_GET['filter_country']) ? htmlspecialchars($_GET['filter_country']) : ''; ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterCurrency" placeholder="Filter Currency"
+                           value="<?php echo isset($_GET['filter_currency']) ? htmlspecialchars($_GET['filter_currency']) : ''; ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterRate" placeholder="Filter Rate"
+                           value="<?php echo isset($_GET['filter_rate']) ? htmlspecialchars($_GET['filter_rate']) : ''; ?>"
+                           onkeyup="applyFilters()">
+                </th>
+                <th>
+                    <input type="text" class="filter-input" id="filterDate" placeholder="Filter Date (YYYY-MM-DD)"
+                           value="<?php echo isset($_GET['filter_date']) ? htmlspecialchars($_GET['filter_date']) : ''; ?>"
+                           onkeyup="applyFilters()">
+                </th>
                 <th></th>
             </tr>
         </thead>
         <tbody id="currencyRatesTable">
-            <?php if (!empty($currency_rates_data)): ?>
-                <?php foreach ($currency_rates_data as $rate): ?>
+            <?php if (!empty($currencies_paged)): ?>
+                <?php foreach ($currencies_paged as $rate): ?>
                     <tr>
-                        <td><input type="checkbox" data-id="<?php echo $rate['id']; ?>"/></td>
+                        <td>
+                            <input type="checkbox" 
+                                   class="row-checkbox" 
+                                   value="<?php echo htmlspecialchars($rate['id']); ?>"
+                                   data-id="<?php echo $rate['id']; ?>"
+                                   <?php echo in_array($rate['id'], $_SESSION['selected_currencies']) ? 'checked' : ''; ?>
+                                   onchange="updateSelection(this, <?php echo $rate['id']; ?>)">
+                        </td>
+                        <td><?php echo htmlspecialchars($rate['id']); ?></td>
                         <td><?php echo htmlspecialchars($rate['country']); ?></td>
                         <td><span class="currency-code"><?php echo htmlspecialchars($rate['currency_code']); ?></span></td>
-                        <td class="exchange-rate"><?php echo formatExchangeRate($rate['exchange_rate']); ?></td>
+                        <td class="exchange-rate"><?php echo number_format($rate['exchange_rate'], 4); ?></td>
                         <td><?php echo date('Y-m-d', strtotime($rate['effective_date'])); ?></td>
                         <td>
-                            <a href="../data/edit_currency.php?id=<?= $rate['id'] ?>">
-                                <button class="btn btn-sm btn-warning">
-                                    <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
-                                </button>
+                            <a href="../data/edit_currency.php?id=<?= $rate['id'] ?>" class="btn btn-sm btn-warning">
+                                <i class="fas fa-edit"></i>
                             </a>
                         </td>
                     </tr>
                 <?php endforeach; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="6" style="text-align: center; padding: 20px;">
-                        No currency rates found<?php echo !empty($search) ? ' matching your search criteria' : ''; ?>.
+                    <td colspan="7" style="text-align: center; padding: 20px;">
+                        No currency rates found<?php echo !empty($_GET['search']) ? ' matching your search criteria' : ''; ?>.
                     </td>
                 </tr>
             <?php endif; ?>
@@ -560,32 +846,38 @@ function formatExchangeRate($rate) {
 
     <div class="pagination">
         <div>
-            Show
-            <select id="itemsPerPage" onchange="updateItemsPerPage(this.value)">
-                <option value="10" <?php echo $limit == 10 ? 'selected' : ''; ?>>10</option>
-                <option value="25" <?php echo $limit == 25 ? 'selected' : ''; ?>>25</option>
-                <option value="50" <?php echo $limit == 50 ? 'selected' : ''; ?>>50</option>
-                <option value="100" <?php echo $limit == 100 ? 'selected' : ''; ?>>100</option>
-            </select>
-            entries
+            Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
+            <?php if (count($_SESSION['selected_currencies']) > 0): ?>
+                <span class="selected-count"><?php echo count($_SESSION['selected_currencies']); ?> selected across all pages</span>
+            <?php endif; ?>
+            <?php if (!empty($sort_column)): ?>
+                <span class="text-muted ms-2">Sorted by: <?php echo ucfirst(str_replace('_', ' ', $sort_column)); ?> (<?php echo $sort_order; ?>)</span>
+            <?php endif; ?>
         </div>
-        <div>Displaying <?php echo ($offset + 1) . ' to ' . min($offset + $limit, $total_records) . ' of ' . $total_records; ?> items</div>
+        <div>
+            <label for="itemsPerPage">Show:</label>
+            <select id="itemsPerPage" onchange="updateItemsPerPage(this.value)">
+                <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
+                <option value="25" <?php echo ($itemsPerPage == 25) ? 'selected' : ''; ?>>25</option>
+                <option value="50" <?php echo ($itemsPerPage == 50) ? 'selected' : ''; ?>>50</option>
+                <option value="100" <?php echo ($itemsPerPage == 100) ? 'selected' : ''; ?>>100</option>
+            </select>
+        </div>
         <div class="pages">
             <?php if ($page > 1): ?>
-                <a href="?page=<?php echo $page - 1; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>" class="page">‹</a>
+                <a href="<?php echo getPageUrl($page - 1, $itemsPerPage, $sort_column, $sort_order); ?>" class="page">‹</a>
             <?php endif; ?>
 
             <?php 
-            // Show limited page numbers for better UX
             $start_page = max(1, $page - 2);
-            $end_page = min($total_pages, $page + 2);
+            $end_page = min($totalPages, $page + 2);
             
             for ($i = $start_page; $i <= $end_page; $i++): ?>
-                <a href="?page=<?php echo $i; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>" class="page <?php echo ($page == $i) ? 'current' : ''; ?>"><?php echo $i; ?></a>
+                <a href="<?php echo getPageUrl($i, $itemsPerPage, $sort_column, $sort_order); ?>" class="page <?php echo ($page == $i) ? 'current' : ''; ?>"><?php echo $i; ?></a>
             <?php endfor; ?>
 
-            <?php if ($page < $total_pages): ?>
-                <a href="?page=<?php echo $page + 1; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>" class="page">›</a>
+            <?php if ($page < $totalPages): ?>
+                <a href="<?php echo getPageUrl($page + 1, $itemsPerPage, $sort_column, $sort_order); ?>" class="page">›</a>
             <?php endif; ?>
         </div>
     </div>
@@ -638,11 +930,56 @@ function formatExchangeRate($rate) {
     </div>
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    initializeCurrencies();
+<?php
+// Helper function to generate page URLs with filters and sorting
+function getPageUrl($pageNum, $itemsPerPage, $sortColumn = null, $sortOrder = null) {
+    $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
     
-    // Update breadcrumb if the function exists
+    // Add sort parameters if provided
+    if ($sortColumn) {
+        $url .= '&sort=' . urlencode($sortColumn);
+    }
+    if ($sortOrder) {
+        $url .= '&order=' . urlencode($sortOrder);
+    }
+    
+    // Add search parameter if exists
+    if (isset($_GET['search']) && !empty($_GET['search'])) {
+        $url .= '&search=' . urlencode($_GET['search']);
+    }
+    
+    // Add filter parameters if they exist
+    $filterParams = ['filter_id', 'filter_country', 'filter_currency', 'filter_rate', 'filter_date'];
+    foreach ($filterParams as $param) {
+        if (isset($_GET[$param]) && !empty($_GET[$param])) {
+            $url .= '&' . $param . '=' . urlencode($_GET[$param]);
+        }
+    }
+    
+    return $url;
+}
+
+// Helper function to get sort CSS class
+function getSortClass($column) {
+    $current_sort = isset($_GET['sort']) ? $_GET['sort'] : 'effective_date';
+    $current_order = isset($_GET['order']) ? strtoupper($_GET['order']) : 'DESC';
+    
+    if ($current_sort === $column) {
+        return $current_order === 'ASC' ? 'sort-asc' : 'sort-desc';
+    }
+    return '';
+}
+?>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    // Initialize filter inputs with current values
+    const filterInputs = document.querySelectorAll('.filter-input');
+    
+    // Initialize select all checkbox based on current page selections
+    updateSelectAllCheckbox();
+    
+    // Update breadcrumb
     if (typeof updateBreadcrumb === 'function') {
         updateBreadcrumb('Base', 'Currency Rates');
     }
@@ -654,93 +991,197 @@ document.addEventListener('DOMContentLoaded', function() {
     <?php endif; ?>
 });
 
-function initializeCurrencies() {
-    console.log("Initializing Currencies functionality...");
+// Update selection function
+function updateSelection(checkbox, id) {
+    const isSelected = checkbox.checked;
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `action=update_selection&id=${id}&selected=${isSelected}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('Selection updated:', data);
+        updateSelectAllCheckbox();
+        updateSelectionCount();
+    })
+    .catch(error => console.error('Error updating selection:', error));
+}
 
-    const selectAllCheckbox = document.getElementById('select-all');
-    const itemCheckboxes = document.querySelectorAll('table tbody input[type="checkbox"][data-id]');
-
-    // Debug: Log if elements are found
-    console.log("Select All checkbox:", selectAllCheckbox);
-    console.log("Item checkboxes found:", itemCheckboxes.length);
-
-    // Exit if essential elements are not found
-    if (!selectAllCheckbox || itemCheckboxes.length === 0) {
-        console.log("Currency elements not found, retrying in 500ms");
-        setTimeout(initializeCurrencies, 500);
-        return;
-    }
-
-    // Select All Functionality
-    selectAllCheckbox.addEventListener('change', function() {
-        const isChecked = this.checked;
-        itemCheckboxes.forEach(checkbox => {
-            checkbox.checked = isChecked;
-        });
+function updateSelectionCount() {
+    // Update the selection count display
+    const count = <?php echo count($_SESSION['selected_currencies']); ?>;
+    const countElements = document.querySelectorAll('.selected-count');
+    countElements.forEach(el => {
+        if (el) el.textContent = count + ' selected';
     });
-
-    // Setup Delete Button
-    setupDeleteButton();
 }
 
-function setupDeleteButton() {
-    const deleteButton = document.querySelector('.toolbar .delete-btn');
-    if (deleteButton) {
-        console.log("Found delete button");
-        deleteButton.addEventListener('click', function() {
-            const ids = getSelectedIds();
-            console.log("Delete clicked, selected IDs:", ids);
-            confirmDelete(ids);
-        });
+function sortTable(column) {
+    const url = new URL(window.location);
+    const currentSort = url.searchParams.get('sort');
+    const currentOrder = url.searchParams.get('order');
+    
+    // Toggle order if clicking the same column
+    if (currentSort === column) {
+        const newOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
+        url.searchParams.set('order', newOrder);
+    } else {
+        // New column, default to DESC for ID and date, ASC for others
+        const defaultOrder = (column === 'id' || column === 'effective_date') ? 'DESC' : 'ASC';
+        url.searchParams.set('sort', column);
+        url.searchParams.set('order', defaultOrder);
+    }
+    
+    // Reset to page 1 when sorting
+    url.searchParams.set('page', '1');
+    
+    window.location.href = url.toString();
+}
+
+function applyFilters() {
+    const filters = {
+        id: document.getElementById('filterId').value,
+        country: document.getElementById('filterCountry').value,
+        currency: document.getElementById('filterCurrency').value,
+        rate: document.getElementById('filterRate').value,
+        date: document.getElementById('filterDate').value
+    };
+
+    // Build URL with filter parameters
+    const url = new URL(window.location);
+    
+    // Set filter parameters
+    if (filters.id) url.searchParams.set('filter_id', filters.id);
+    else url.searchParams.delete('filter_id');
+    
+    if (filters.country) url.searchParams.set('filter_country', filters.country);
+    else url.searchParams.delete('filter_country');
+    
+    if (filters.currency) url.searchParams.set('filter_currency', filters.currency);
+    else url.searchParams.delete('filter_currency');
+    
+    if (filters.rate) url.searchParams.set('filter_rate', filters.rate);
+    else url.searchParams.delete('filter_rate');
+    
+    if (filters.date) url.searchParams.set('filter_date', filters.date);
+    else url.searchParams.delete('filter_date');
+    
+    // Reset to page 1 when filtering
+    url.searchParams.set('page', '1');
+    
+    // Navigate to filtered URL
+    window.location.href = url.toString();
+}
+
+function updateItemsPerPage(value) {
+    const url = new URL(window.location);
+    url.searchParams.set('limit', value);
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
+}
+
+function updateSelectAllCheckbox() {
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const selectAll = document.getElementById('selectAll');
+    
+    if (!selectAll || checkboxes.length === 0) {
+        return;
+    }
+    
+    // Check if all checkboxes on current page are checked
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+    
+    selectAll.checked = allChecked;
+    selectAll.indeterminate = !allChecked && someChecked;
+}
+
+document.getElementById('selectAll').addEventListener('change', function() {
+    const isChecked = this.checked;
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    
+    // Update all checkboxes on current page
+    checkboxes.forEach(checkbox => {
+        if (checkbox.checked !== isChecked) {
+            checkbox.checked = isChecked;
+            // Trigger the update for each checkbox
+            const id = checkbox.getAttribute('data-id');
+            if (id) {
+                updateSelection(checkbox, id);
+            }
+        }
+    });
+});
+
+function clearAllSelections() {
+    if (confirm('Clear all selections across all pages?')) {
+        clearAllSelectionsSilent();
+        alert('All selections cleared.');
+        location.reload();
     }
 }
 
-function getSelectedIds() {
-    const checkboxes = document.querySelectorAll('table tbody input[type="checkbox"][data-id]:checked');
-    return Array.from(checkboxes).map(checkbox => parseInt(checkbox.getAttribute('data-id')));
+function clearAllSelectionsSilent() {
+    fetch(window.location.href, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'action=update_selection&clear_all=true'
+    })
+    .catch(error => console.error('Error clearing selections:', error));
 }
 
-function confirmDelete(ids) {
-    if (ids.length === 0) {
-        alert('Please select items to delete.');
+function deleteSelected() {
+    // Get count from session (across all pages)
+    const selectedCount = <?php echo count($_SESSION['selected_currencies']); ?>;
+    
+    if (selectedCount === 0) {
+        alert('Please select at least one currency rate to delete.');
         return;
     }
 
-    if (confirm(`Are you sure you want to delete ${ids.length} selected currency rate(s)? This action cannot be undone.`)) {
+    if (confirm('Are you sure you want to delete ' + selectedCount + ' selected currency rate(s) across all pages? This action cannot be undone.')) {
+        // Pass all selected IDs from session
         fetch('../data/delete_currencies.php', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ ids: ids }),
+            body: JSON.stringify({ ids: <?php echo json_encode($_SESSION['selected_currencies']); ?> })
         })
         .then(response => {
-            if (!response.ok) throw new Error('Network response was not ok');
+            if (!response.ok) throw new Error('Network error');
             return response.json();
         })
         .then(data => {
             if (data.success) {
-                alert('Currency rates deleted successfully');
-                window.location.reload();
+                alert(data.message || 'Currency rates deleted successfully');
+                // Clear selections after deletion
+                clearAllSelectionsSilent();
+                location.reload();
             } else {
-                alert(data.message || 'Failed to delete currency rates');
+                alert('Error: ' + (data.message || 'Failed to delete currency rates'));
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            alert('Error deleting currency rates: ' + error.message);
+            console.error('Fetch error:', error);
+            alert('Request failed: ' + error.message);
         });
     }
 }
 
 function exportSelected(format) {
-    const checkedBoxes = document.querySelectorAll('table tbody input[type="checkbox"][data-id]:checked');
-    if (checkedBoxes.length === 0) {
+    const selectedCount = <?php echo count($_SESSION['selected_currencies']); ?>;
+    
+    if (selectedCount === 0) {
         alert('Please select at least one currency rate to export.');
         return;
     }
-    
-    const ids = Array.from(checkedBoxes).map(cb => cb.getAttribute('data-id'));
     
     // Create a form to submit the export request
     const form = document.createElement('form');
@@ -754,14 +1195,27 @@ function exportSelected(format) {
     formatInput.value = format;
     form.appendChild(formatInput);
     
-    // Add selected IDs
-    ids.forEach(id => {
-        const idInput = document.createElement('input');
-        idInput.type = 'hidden';
-        idInput.name = 'selected_ids[]';
-        idInput.value = id;
-        form.appendChild(idInput);
-    });
+    // Add sort parameters
+    const sortInput = document.createElement('input');
+    sortInput.type = 'hidden';
+    sortInput.name = 'sort';
+    sortInput.value = '<?php echo $sort_column; ?>';
+    form.appendChild(sortInput);
+    
+    const orderInput = document.createElement('input');
+    orderInput.type = 'hidden';
+    orderInput.name = 'order';
+    orderInput.value = '<?php echo $sort_order; ?>';
+    form.appendChild(orderInput);
+    
+    // Add selected IDs from session
+    <?php foreach ($_SESSION['selected_currencies'] as $id): ?>
+        const idInput<?php echo $id; ?> = document.createElement('input');
+        idInput<?php echo $id; ?>.type = 'hidden';
+        idInput<?php echo $id; ?>.name = 'selected_ids[]';
+        idInput<?php echo $id; ?>.value = '<?php echo $id; ?>';
+        form.appendChild(idInput<?php echo $id; ?>);
+    <?php endforeach; ?>
     
     // Submit the form
     document.body.appendChild(form);
@@ -769,54 +1223,10 @@ function exportSelected(format) {
     document.body.removeChild(form);
 }
 
-function updateItemsPerPage(value) {
-    const url = new URL(window.location);
-    url.searchParams.set('limit', value);
-    url.searchParams.set('page', '1');
-    window.location.href = url.toString();
-}
-
-function filterTable() {
-    const countryFilter = document.getElementById('filterCountry').value.toLowerCase();
-    const currencyFilter = document.getElementById('filterCurrency').value.toLowerCase();
-    const rateFilter = document.getElementById('filterRate').value.toLowerCase();
-    const dateFilter = document.getElementById('filterDate').value.toLowerCase();
-    
-    const rows = document.querySelectorAll('#currencyRatesTable tr');
-    
-    rows.forEach(row => {
-        if (row.cells.length < 5) return;
-        
-        const countryName = row.cells[1].textContent.toLowerCase();
-        const currencyCode = row.cells[2].textContent.toLowerCase();
-        const exchangeRate = row.cells[3].textContent.toLowerCase();
-        const effectiveDate = row.cells[4].textContent.toLowerCase();
-        
-        const matchesCountry = countryName.includes(countryFilter);
-        const matchesCurrency = currencyCode.includes(currencyFilter);
-        const matchesRate = exchangeRate.includes(rateFilter);
-        const matchesDate = effectiveDate.includes(dateFilter);
-        
-        row.style.display = (matchesCountry && matchesCurrency && matchesRate && matchesDate) ? '' : 'none';
-    });
-}
-
-// Clear filters when clicking on clear button in search
-document.addEventListener('DOMContentLoaded', function() {
-    const clearButton = document.querySelector('.search-box a');
-    if (clearButton) {
-        clearButton.addEventListener('click', function(e) {
-            e.preventDefault();
-            window.location.href = '?limit=<?php echo $limit; ?>';
-        });
-    }
-});
-
 function exportAll(format) {
     // Get current search parameters
     const searchParams = new URLSearchParams(window.location.search);
     const search = searchParams.get('search') || '';
-    const limit = searchParams.get('limit') || '10';
     
     // Create a form to submit the export request for ALL records
     const form = document.createElement('form');
@@ -836,6 +1246,19 @@ function exportAll(format) {
     allInput.name = 'export_all';
     allInput.value = '1';
     form.appendChild(allInput);
+    
+    // Add sort parameters
+    const sortInput = document.createElement('input');
+    sortInput.type = 'hidden';
+    sortInput.name = 'sort';
+    sortInput.value = '<?php echo $sort_column; ?>';
+    form.appendChild(sortInput);
+    
+    const orderInput = document.createElement('input');
+    orderInput.type = 'hidden';
+    orderInput.name = 'order';
+    orderInput.value = '<?php echo $sort_order; ?>';
+    form.appendChild(orderInput);
     
     // Add search parameter if exists
     if (search) {
