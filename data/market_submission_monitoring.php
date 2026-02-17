@@ -9,7 +9,461 @@ if (session_status() == PHP_SESSION_NONE) {
 // Include the configuration file first
 include '../admin/includes/config.php';
 
-// Include the shared header
+// Handle export request - MUST BE BEFORE ANY OUTPUT
+if (isset($_POST['export_excel'])) {
+    $start_date = $_POST['start_date'];
+    $end_date = $_POST['end_date'];
+    
+    // Validate dates
+    if (empty($start_date) || empty($end_date)) {
+        $export_error = "Please select both start and end dates";
+    } else {
+        // Get all markets first
+        $all_markets_query = "SELECT id, market_name, county_district, country FROM markets ORDER BY market_name";
+        $all_markets_result = $con->query($all_markets_query);
+        $all_markets_list = [];
+        while ($market = $all_markets_result->fetch_assoc()) {
+            $all_markets_list[$market['id']] = $market;
+        }
+        
+        // Get submissions for the date range
+        $export_query = "SELECT 
+                            DATE(mp.date_posted) as submission_date,
+                            TIME(mp.date_posted) as submission_time,
+                            mp.market,
+                            mp.market_id,
+                            mp.commodity,
+                            mp.variety,
+                            mp.unit,
+                            m.county_district,
+                            m.country
+                        FROM market_prices mp
+                        LEFT JOIN markets m ON mp.market_id = m.id
+                        WHERE DATE(mp.date_posted) BETWEEN ? AND ?
+                        ORDER BY mp.date_posted DESC, mp.market, mp.commodity";
+        
+        $stmt = $con->prepare($export_query);
+        $stmt->bind_param('ss', $start_date, $end_date);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $export_data = $result->fetch_all(MYSQLI_ASSOC);
+        
+        // Group submissions by date and market
+        $submissions_by_date = [];
+        foreach ($export_data as $row) {
+            $date = $row['submission_date'];
+            $market_id = $row['market_id'];
+            if (!isset($submissions_by_date[$date])) {
+                $submissions_by_date[$date] = [];
+            }
+            if (!isset($submissions_by_date[$date][$market_id])) {
+                $submissions_by_date[$date][$market_id] = [];
+            }
+            $submissions_by_date[$date][$market_id][] = $row;
+        }
+        
+        // IMPORTANT: Clear any output buffers and disable further output buffering
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+        
+        // Set proper headers for Excel download
+        header('Content-Type: application/vnd.ms-excel');
+        header('Content-Disposition: attachment; filename="market_submissions_' . $start_date . '_to_' . $end_date . '.xls"');
+        header('Cache-Control: max-age=0');
+        header('Pragma: public');
+        header('Expires: 0');
+        
+        // Start output buffer for the Excel content
+        ob_start();
+        
+        // Create Excel file with HTML table
+        echo '<html>';
+        echo '<head>';
+        echo '<meta charset="UTF-8">';
+        echo '<style>';
+        echo 'body { font-family: Arial, sans-serif; margin: 20px; }';
+        echo 'h2, h3, h4 { color: #333; }';
+        echo 'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }';
+        echo 'th { background-color: #4CAF50; color: white; padding: 8px; text-align: left; font-weight: bold; border: 1px solid #ddd; }';
+        echo 'td { border: 1px solid #ddd; padding: 8px; }';
+        echo 'tr:nth-child(even) { background-color: #f2f2f2; }';
+        echo '.header-row { background-color: #333; color: white; font-size: 16px; }';
+        echo '.summary-row { background-color: #e8f4f8; font-weight: bold; }';
+        echo '.submitted-yes { color: #28a745; font-weight: bold; }';
+        echo '.submitted-no { color: #dc3545; font-weight: bold; }';
+        echo '.warning { color: #ffc107; font-weight: bold; }';
+        echo '.date-header { background-color: #17a2b8; color: white; font-weight: bold; }';
+        echo '.text-center { text-align: center; }';
+        echo '.badge-success { background-color: #28a745; color: white; padding: 3px 8px; border-radius: 12px; }';
+        echo '.badge-danger { background-color: #dc3545; color: white; padding: 3px 8px; border-radius: 12px; }';
+        echo '.badge-warning { background-color: #ffc107; color: #212529; padding: 3px 8px; border-radius: 12px; }';
+        echo '</style>';
+        echo '</head>';
+        echo '<body>';
+        
+        // Add title and summary
+        echo '<h2>Market Submissions Report</h2>';
+        echo '<p><strong>Date Range:</strong> ' . date('F j, Y', strtotime($start_date)) . ' to ' . date('F j, Y', strtotime($end_date)) . '</p>';
+        echo '<p><strong>Generated on:</strong> ' . date('F j, Y H:i:s') . '</p>';
+        echo '<p><strong>Total Days in Range:</strong> ' . (floor((strtotime($end_date) - strtotime($start_date)) / (60 * 60 * 24)) + 1) . ' days</p>';
+        
+        // Summary statistics
+        $total_submissions = count($export_data);
+        $unique_markets_with_data = count(array_unique(array_column($export_data, 'market_id')));
+        $unique_dates = count(array_unique(array_column($export_data, 'submission_date')));
+        $unique_commodities = count(array_unique(array_column($export_data, 'commodity')));
+        
+        echo '<h3>Summary Statistics</h3>';
+        echo '<table>';
+        echo '<tr><th style="width: 250px;">Total Submissions</th><td>' . $total_submissions . '</td></tr>';
+        echo '<tr><th>Markets with Data</th><td>' . $unique_markets_with_data . ' / ' . count($all_markets_list) . '</td></tr>';
+        echo '<tr><th>Active Days</th><td>' . $unique_dates . ' / ' . (floor((strtotime($end_date) - strtotime($start_date)) / (60 * 60 * 24)) + 1) . '</td></tr>';
+        echo '<tr><th>Unique Commodities</th><td>' . $unique_commodities . '</td></tr>';
+        echo '<tr><th>Average Submissions per Day</th><td>' . round($total_submissions / max($unique_dates, 1), 1) . '</td></tr>';
+        echo '<tr><th>Average Markets per Day</th><td>' . round($unique_markets_with_data / max($unique_dates, 1), 1) . '</td></tr>';
+        echo '</table>';
+        
+        echo '<br>';
+        
+        // Daily Market Status Summary with Data Submitted Column
+        echo '<h3>Daily Market Submission Status</h3>';
+        
+        // Loop through each date in the range
+        $current_date = $start_date;
+        while (strtotime($current_date) <= strtotime($end_date)) {
+            $date_submissions = isset($submissions_by_date[$current_date]) ? $submissions_by_date[$current_date] : [];
+            
+            echo '<h4>' . date('F j, Y', strtotime($current_date)) . ' (' . date('l', strtotime($current_date)) . ')</h4>';
+            echo '<table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 100%;">';
+            echo '<tr style="background-color: #17a2b8; color: white;">';
+            echo '<th>Market</th>';
+            echo '<th>Location</th>';
+            echo '<th>Data Submitted</th>';  // New column
+            echo '<th>Submission Status</th>';
+            echo '<th>Submissions Count</th>';
+            echo '<th>Commodities</th>';
+            echo '<th>First Submission</th>';
+            echo '<th>Last Submission</th>';
+            echo '</tr>';
+            
+            foreach ($all_markets_list as $market_id => $market) {
+                $has_submission = isset($date_submissions[$market_id]);
+                $market_submissions = $has_submission ? $date_submissions[$market_id] : [];
+                $submission_count = count($market_submissions);
+                
+                // Get unique commodities for this market on this date
+                $commodities = [];
+                $first_submission = '';
+                $last_submission = '';
+                
+                if ($has_submission) {
+                    foreach ($market_submissions as $sub) {
+                        $commodities[$sub['commodity']] = true;
+                    }
+                    $commodities_list = !empty($commodities) ? implode(', ', array_keys($commodities)) : 'None';
+                    
+                    // Get first and last submission times
+                    $times = array_column($market_submissions, 'submission_time');
+                    $first_submission = !empty($times) ? min($times) : '';
+                    $last_submission = !empty($times) ? max($times) : '';
+                } else {
+                    $commodities_list = 'None';
+                }
+                
+                echo '<tr>';
+                echo '<td>' . htmlspecialchars($market['market_name']) . '</td>';
+                echo '<td>' . htmlspecialchars($market['county_district'] . ', ' . $market['country']) . '</td>';
+                // New column: Data Submitted (Yes/No)
+                echo '<td class="text-center" style="font-weight: bold; color: ' . ($has_submission ? '#28a745' : '#dc3545') . ';">' 
+                     . ($has_submission ? '✓ YES' : '✗ NO') . '</td>';
+                echo '<td class="' . ($has_submission ? 'submitted-yes' : 'submitted-no') . '">' . ($has_submission ? 'Submitted' : 'No Data') . '</td>';
+                echo '<td class="text-center">' . $submission_count . '</td>';
+                echo '<td>' . htmlspecialchars($commodities_list) . '</td>';
+                echo '<td>' . ($first_submission ? date('H:i:s', strtotime($first_submission)) : '-') . '</td>';
+                echo '<td>' . ($last_submission ? date('H:i:s', strtotime($last_submission)) : '-') . '</td>';
+                echo '</tr>';
+            }
+            
+            // Add summary row for this date
+            $total_submitted = count($date_submissions);
+            $total_markets = count($all_markets_list);
+            $submission_percentage = $total_markets > 0 ? round(($total_submitted / $total_markets) * 100, 1) : 0;
+            
+            echo '<tr style="background-color: #e8f4f8; font-weight: bold;">';
+            echo '<td colspan="2" style="text-align: right;"><strong>Daily Summary:</strong></td>';
+            echo '<td class="text-center"><strong>' . $total_submitted . ' / ' . $total_markets . '</strong></td>';
+            echo '<td colspan="5"><strong>Submission Rate: ' . $submission_percentage . '%</strong></td>';
+            echo '</tr>';
+            
+            echo '</table>';
+            echo '<br>';
+            
+            // Move to next date
+            $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
+        }
+        
+        echo '<br>';
+        
+        // Overall Market Submission Summary (across all dates)
+        echo '<h3>Overall Market Submission Summary (' . $start_date . ' to ' . $end_date . ')</h3>';
+        echo '<table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 100%;">';
+        echo '<tr style="background-color: #333; color: white;">';
+        echo '<th>Market</th>';
+        echo '<th>Location</th>';
+        echo '<th>Total Days in Range</th>';
+        echo '<th>Days Submitted</th>';
+        echo '<th>Submission Rate</th>';
+        echo '<th>Total Submissions</th>';
+        echo '<th>Avg Submissions per Day</th>';
+        echo '<th>Status</th>';
+        echo '</tr>';
+        
+        $total_days_in_range = floor((strtotime($end_date) - strtotime($start_date)) / (60 * 60 * 24)) + 1;
+        
+        foreach ($all_markets_list as $market_id => $market) {
+            $days_submitted = 0;
+            $total_submissions_for_market = 0;
+            $commodities_covered = [];
+            
+            // Count days this market submitted
+            $current_date = $start_date;
+            while (strtotime($current_date) <= strtotime($end_date)) {
+                if (isset($submissions_by_date[$current_date][$market_id])) {
+                    $days_submitted++;
+                    $total_submissions_for_market += count($submissions_by_date[$current_date][$market_id]);
+                    
+                    // Collect commodities
+                    foreach ($submissions_by_date[$current_date][$market_id] as $sub) {
+                        $commodities_covered[$sub['commodity']] = true;
+                    }
+                }
+                $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
+            }
+            
+            $submission_rate = $total_days_in_range > 0 ? round(($days_submitted / $total_days_in_range) * 100, 1) : 0;
+            $avg_per_day = $days_submitted > 0 ? round($total_submissions_for_market / $days_submitted, 1) : 0;
+            
+            // Determine status and color
+            if ($submission_rate >= 80) {
+                $status = 'Regular';
+                $status_color = '#28a745';
+                $status_class = 'submitted-yes';
+            } elseif ($submission_rate >= 50) {
+                $status = 'Inconsistent';
+                $status_color = '#ffc107';
+                $status_class = 'warning';
+            } elseif ($submission_rate > 0) {
+                $status = 'Sporadic';
+                $status_color = '#fd7e14';
+                $status_class = 'warning';
+            } else {
+                $status = 'Inactive';
+                $status_color = '#dc3545';
+                $status_class = 'submitted-no';
+            }
+            
+            echo '<tr>';
+            echo '<td>' . htmlspecialchars($market['market_name']) . '</td>';
+            echo '<td>' . htmlspecialchars($market['county_district'] . ', ' . $market['country']) . '</td>';
+            echo '<td class="text-center">' . $total_days_in_range . '</td>';
+            echo '<td class="text-center">' . $days_submitted . '</td>';
+            echo '<td class="text-center" style="font-weight: bold; color: ' . $status_color . ';">' . $submission_rate . '%</td>';
+            echo '<td class="text-center">' . $total_submissions_for_market . '</td>';
+            echo '<td class="text-center">' . $avg_per_day . '</td>';
+            echo '<td class="text-center ' . $status_class . '">' . $status . '</td>';
+            echo '</tr>';
+        }
+        
+        // Add overall footer
+        $total_markets = count($all_markets_list);
+        $avg_submission_rate = 0;
+        $total_active_markets = 0;
+        
+        foreach ($all_markets_list as $market_id => $market) {
+            $days_submitted = 0;
+            $current_date = $start_date;
+            while (strtotime($current_date) <= strtotime($end_date)) {
+                if (isset($submissions_by_date[$current_date][$market_id])) {
+                    $days_submitted++;
+                }
+                $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
+            }
+            if ($days_submitted > 0) {
+                $total_active_markets++;
+            }
+            $avg_submission_rate += ($days_submitted / $total_days_in_range) * 100;
+        }
+        $avg_submission_rate = $total_markets > 0 ? round($avg_submission_rate / $total_markets, 1) : 0;
+        
+        echo '<tr style="background-color: #e8f4f8; font-weight: bold;">';
+        echo '<td colspan="4" style="text-align: right;"><strong>Summary:</strong></td>';
+        echo '<td class="text-center"><strong>' . $avg_submission_rate . '% avg</strong></td>';
+        echo '<td class="text-center"><strong>' . array_sum(array_column($export_data, 'market_id')) . '</strong></td>';
+        echo '<td class="text-center"><strong>-</strong></td>';
+        echo '<td class="text-center"><strong>' . $total_active_markets . ' active markets</strong></td>';
+        echo '</tr>';
+        
+        echo '</table>';
+        
+        echo '<br>';
+        
+        // Daily submission summary (by numbers)
+        $daily_summary = [];
+        foreach ($export_data as $row) {
+            $date = $row['submission_date'];
+            if (!isset($daily_summary[$date])) {
+                $daily_summary[$date] = [
+                    'submissions' => 0,
+                    'markets' => [],
+                    'commodities' => []
+                ];
+            }
+            $daily_summary[$date]['submissions']++;
+            $daily_summary[$date]['markets'][$row['market_id']] = $row['market'];
+            $daily_summary[$date]['commodities'][$row['commodity']] = true;
+        }
+        
+        echo '<h3>Daily Submission Summary (Markets with Data)</h3>';
+        echo '<table>';
+        echo '<tr>';
+        echo '<th>Date</th>';
+        echo '<th>Day of Week</th>';
+        echo '<th>Total Submissions</th>';
+        echo '<th>Unique Markets</th>';
+        echo '<th>Markets without Data</th>';
+        echo '<th>Unique Commodities</th>';
+        echo '<th>Submission Rate</th>';
+        echo '<th>Status</th>';
+        echo '</tr>';
+        
+        $current_date = $start_date;
+        while (strtotime($current_date) <= strtotime($end_date)) {
+            $summary = isset($daily_summary[$current_date]) ? $daily_summary[$current_date] : ['submissions' => 0, 'markets' => [], 'commodities' => []];
+            $markets_count = count($summary['markets']);
+            $markets_without_data = $total_markets - $markets_count;
+            $submission_rate = round(($markets_count / $total_markets) * 100, 1);
+            
+            // Determine status color
+            if ($submission_rate >= 80) {
+                $status = 'Good';
+                $status_color = '#28a745';
+            } elseif ($submission_rate >= 50) {
+                $status = 'Fair';
+                $status_color = '#ffc107';
+            } elseif ($submission_rate > 0) {
+                $status = 'Poor';
+                $status_color = '#fd7e14';
+            } else {
+                $status = 'No Data';
+                $status_color = '#dc3545';
+            }
+            
+            echo '<tr>';
+            echo '<td>' . date('Y-m-d', strtotime($current_date)) . '</td>';
+            echo '<td>' . date('l', strtotime($current_date)) . '</td>';
+            echo '<td class="text-center">' . $summary['submissions'] . '</td>';
+            echo '<td class="text-center">' . $markets_count . ' / ' . $total_markets . '</td>';
+            echo '<td class="text-center" style="color: #dc3545;">' . $markets_without_data . '</td>';
+            echo '<td class="text-center">' . count($summary['commodities']) . '</td>';
+            echo '<td class="text-center" style="font-weight: bold; color: ' . $status_color . ';">' . $submission_rate . '%</td>';
+            echo '<td class="text-center" style="color: ' . $status_color . '; font-weight: bold;">' . $status . '</td>';
+            echo '</tr>';
+            
+            $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
+        }
+        echo '</table>';
+        
+        echo '<br>';
+        
+        // Markets without any submissions
+        echo '<h3>Markets with No Submissions (Entire Period)</h3>';
+        echo '<table>';
+        echo '<tr>';
+        echo '<th>Market</th>';
+        echo '<th>Location</th>';
+        echo '<th>Country</th>';
+        echo '<th>Status</th>';
+        echo '</tr>';
+        
+        $markets_without_any = 0;
+        foreach ($all_markets_list as $market_id => $market) {
+            $has_any_submission = false;
+            $current_date = $start_date;
+            while (strtotime($current_date) <= strtotime($end_date)) {
+                if (isset($submissions_by_date[$current_date][$market_id])) {
+                    $has_any_submission = true;
+                    break;
+                }
+                $current_date = date('Y-m-d', strtotime($current_date . ' +1 day'));
+            }
+            
+            if (!$has_any_submission) {
+                $markets_without_any++;
+                echo '<tr>';
+                echo '<td>' . htmlspecialchars($market['market_name']) . '</td>';
+                echo '<td>' . htmlspecialchars($market['county_district']) . '</td>';
+                echo '<td>' . htmlspecialchars($market['country']) . '</td>';
+                echo '<td class="submitted-no">✗ No Data</td>';
+                echo '</tr>';
+            }
+        }
+        
+        if ($markets_without_any == 0) {
+            echo '<tr><td colspan="4" class="text-center" style="color: #28a745;">✓ All markets have submitted data at least once in this period</td></tr>';
+        }
+        echo '</table>';
+        
+        echo '<br>';
+        
+        // Detailed submissions table
+        echo '<h3>Detailed Submissions</h3>';
+        echo '<table>';
+        echo '<tr>';
+        echo '<th>Date</th>';
+        echo '<th>Time</th>';
+        echo '<th>Market</th>';
+        echo '<th>Location</th>';
+        echo '<th>Commodity</th>';
+        echo '<th>Variety</th>';
+        echo '<th>Unit</th>';
+        echo '</tr>';
+        
+        foreach ($export_data as $row) {
+            echo '<tr>';
+            echo '<td>' . date('Y-m-d', strtotime($row['submission_date'])) . '</td>';
+            echo '<td>' . date('H:i:s', strtotime($row['submission_time'])) . '</td>';
+            echo '<td>' . htmlspecialchars($row['market']) . '</td>';
+            echo '<td>' . htmlspecialchars($row['county_district'] . ', ' . $row['country']) . '</td>';
+            echo '<td>' . htmlspecialchars($row['commodity']) . '</td>';
+            echo '<td>' . htmlspecialchars($row['variety'] ?? 'N/A') . '</td>';
+            echo '<td>' . htmlspecialchars($row['unit']) . '</td>';
+            echo '</tr>';
+        }
+        
+        if (empty($export_data)) {
+            echo '<tr><td colspan="7" class="text-center">No submissions found for this date range</td></tr>';
+        }
+        
+        echo '</table>';
+        
+        // Add generation footer
+        echo '<br><hr>';
+        echo '<p style="font-size: 12px; color: #666;">';
+        echo 'Report generated by Market Submission Monitoring System<br>';
+        echo 'Total records: ' . $total_submissions . ' | Date range: ' . $start_date . ' to ' . $end_date;
+        echo '</p>';
+        
+        echo '</body>';
+        echo '</html>';
+        
+        // Flush output and exit
+        ob_end_flush();
+        exit;
+    }
+}
+
+// Include the shared header AFTER export handling
 include '../admin/includes/header.php';
 
 // Default to today's date if not specified
@@ -385,6 +839,90 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
             border-color: #667eea;
         }
 
+        /* Export Section */
+        .export-section {
+            background: linear-gradient(135deg, #f5f7fa 0%, #e9ecef 100%);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border: 1px solid #dee2e6;
+        }
+
+        .export-section h4 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .export-form {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .export-input-group {
+            flex: 1;
+            min-width: 180px;
+        }
+
+        .export-input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #495057;
+            font-size: 14px;
+        }
+
+        .export-input-group input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #ced4da;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .export-input-group input:focus {
+            outline: none;
+            border-color: #28a745;
+            box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.1);
+        }
+
+        .btn-export-excel {
+            background: #28a745;
+            color: white;
+            padding: 10px 25px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 16px;
+        }
+
+        .btn-export-excel:hover {
+            background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-export-excel i {
+            font-size: 18px;
+        }
+
+        .export-error {
+            color: #dc3545;
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(220, 53, 69, 0.1);
+            border-radius: 4px;
+            border-left: 3px solid #dc3545;
+        }
+
         /* Market Status Grid */
         .market-status-section {
             margin-bottom: 40px;
@@ -756,6 +1294,15 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
             .date-input {
                 width: 100%;
             }
+            
+            .export-form {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .export-input-group {
+                width: 100%;
+            }
         }
 
         /* Loading Animation */
@@ -820,6 +1367,25 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
             font-size: 0.95rem;
             margin-bottom: 0;
         }
+
+        /* Data Submitted Badge */
+        .badge-yes {
+            background-color: #28a745;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-no {
+            background-color: #dc3545;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -866,6 +1432,42 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
                     </div>
                 </div>
 
+                <!-- Export by Date Range Section -->
+                <div class="export-section">
+                    <h4><i class="fas fa-file-excel" style="margin-right: 10px; color: #28a745;"></i>Export Submissions by Date Range</h4>
+                    
+                    <?php if (isset($export_error)): ?>
+                        <div class="export-error">
+                            <i class="fas fa-exclamation-triangle"></i> <?= htmlspecialchars($export_error) ?>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <form method="POST" action="" class="export-form">
+                        <div class="export-input-group">
+                            <label for="start_date">Start Date</label>
+                            <input type="date" id="start_date" name="start_date" 
+                                   value="<?= isset($_POST['start_date']) ? htmlspecialchars($_POST['start_date']) : date('Y-m-d', strtotime('-7 days')) ?>"
+                                   max="<?= date('Y-m-d') ?>" required>
+                        </div>
+                        
+                        <div class="export-input-group">
+                            <label for="end_date">End Date</label>
+                            <input type="date" id="end_date" name="end_date" 
+                                   value="<?= isset($_POST['end_date']) ? htmlspecialchars($_POST['end_date']) : date('Y-m-d') ?>"
+                                   max="<?= date('Y-m-d') ?>" required>
+                        </div>
+                        
+                        <button type="submit" name="export_excel" class="btn-export-excel">
+                            <i class="fas fa-file-excel"></i> Export to Excel
+                        </button>
+                    </form>
+                    
+                    <div style="margin-top: 15px; font-size: 13px; color: #6c757d;">
+                        <i class="fas fa-info-circle"></i> 
+                        Export includes: daily market status with YES/NO submission indicators, submission counts, commodities, and detailed price data
+                    </div>
+                </div>
+
                 <!-- Date Picker Section -->
                 <div class="date-picker-section">
                     <h4>Select Date to Monitor</h4>
@@ -898,9 +1500,15 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
                     </div>
                 </div>
 
-                <!-- Market Status Grid -->
+                <!-- Market Status Grid with Data Submitted Indicator -->
                 <div class="market-status-section">
-                    <div class="section-title">Market Submission Status for <?= htmlspecialchars(date('F j, Y', strtotime($selected_date))) ?></div>
+                    <div class="section-title">
+                        Market Submission Status for <?= htmlspecialchars(date('F j, Y', strtotime($selected_date))) ?>
+                        <span style="font-size: 14px; margin-left: 15px; color: #6c757d;">
+                            <span class="badge-yes">✓ YES</span> = Data Submitted | 
+                            <span class="badge-no">✗ NO</span> = No Data
+                        </span>
+                    </div>
                     
                     <?php if (empty($all_markets)): ?>
                         <div class="empty-state">
@@ -926,6 +1534,12 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
                                 
                                 <div class="market-details">
                                     <div><?= htmlspecialchars($market['county_district']) ?>, <?= htmlspecialchars($market['country']) ?></div>
+                                    <div style="margin-top: 5px;">
+                                        <span class="<?= $has_submission ? 'badge-yes' : 'badge-no' ?>">
+                                            <?= $has_submission ? '✓ YES' : '✗ NO' ?>
+                                        </span>
+                                        <span style="margin-left: 5px; font-size: 11px;">Data Submitted</span>
+                                    </div>
                                 </div>
                                 
                                 <?php if ($has_submission): ?>
@@ -963,7 +1577,6 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
 
                 <!-- Charts Section -->
                 <div class="charts-section">
-
                     <!-- Weekly Calendar -->
                     <div class="chart-container">
                         <div class="chart-title">Weekly Submission Calendar (<?= htmlspecialchars(date('M d', strtotime($week_start))) ?> - <?= htmlspecialchars(date('M d', strtotime($week_end))) ?>)</div>
@@ -983,6 +1596,10 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
                                 <?php if ($has_data): ?>
                                 <div class="day-stats">
                                     <?= htmlspecialchars($day_data['markets_count']) ?> markets
+                                </div>
+                                <?php else: ?>
+                                <div class="day-stats" style="color: #dc3545;">
+                                    No data
                                 </div>
                                 <?php endif; ?>
                             </div>
@@ -1072,6 +1689,20 @@ $submission_timeline = getSubmissionTimeline($con, $selected_date);
     document.addEventListener('DOMContentLoaded', function() {
         // Initialize tooltips
         initTooltips();
+        
+        // Set default date range (last 7 days to today)
+        const today = new Date().toISOString().split('T')[0];
+        const lastWeek = new Date();
+        lastWeek.setDate(lastWeek.getDate() - 7);
+        const lastWeekStr = lastWeek.toISOString().split('T')[0];
+        
+        // Only set if not already set
+        if (!document.getElementById('start_date').value) {
+            document.getElementById('start_date').value = lastWeekStr;
+        }
+        if (!document.getElementById('end_date').value) {
+            document.getElementById('end_date').value = today;
+        }
     });
 
     function navigateToDate(date) {
