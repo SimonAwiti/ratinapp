@@ -807,6 +807,9 @@
                     <a href="../data/currencies_boilerplate.php" class="sidebar-link">
                         <i class="fa fa-credit-card"></i> Currency Rates
                     </a>
+                    <a href="../data/market_submission_monitoring.php" class="sidebar-link">
+                        <i class="fa fa-chart-bar"></i> Submissions Monitor
+                    </a>
                 </div>
 
                 <!-- WEB Section -->
