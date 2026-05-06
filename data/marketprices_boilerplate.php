@@ -415,6 +415,156 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
     header("Location: marketprices_boilerplate.php");
     exit;
 }
+
+// Handle export requests
+if (isset($_POST['export_format'])) {
+    $format = $_POST['export_format'];
+    $selected_ids = isset($_POST['selected_ids']) ? $_POST['selected_ids'] : [];
+    $export_all = isset($_POST['export_all']) && $_POST['export_all'] == 'true';
+    
+    // Fetch data
+    $data = [];
+    if ($export_all) {
+        $sql = "SELECT 
+                    p.market, 
+                    c.commodity_name as commodity, 
+                    p.price_type, 
+                    p.Price as price, 
+                    p.date_posted, 
+                    p.status, 
+                    p.data_source as source,
+                    p.variety
+                FROM market_prices p
+                LEFT JOIN commodities c ON p.commodity = c.id
+                ORDER BY p.date_posted DESC";
+        $result = $con->query($sql);
+        if ($result) {
+            while ($row = $result->fetch_assoc()) {
+                $data[] = $row;
+            }
+        }
+    } elseif (!empty($selected_ids)) {
+        $ids = implode(',', array_map('intval', $selected_ids));
+        $sql = "SELECT 
+                    p.market, 
+                    c.commodity_name as commodity, 
+                    p.price_type, 
+                    p.Price as price, 
+                    p.date_posted, 
+                    p.status, 
+                    p.data_source as source,
+                    p.variety
+                FROM market_prices p
+                LEFT JOIN commodities c ON p.commodity = c.id
+                WHERE p.id IN ($ids)
+                ORDER BY p.date_posted DESC";
+        $result = $con->query($sql);
+        if ($result) {
+            while ($row = $result->fetch_assoc()) {
+                $data[] = $row;
+            }
+        }
+    }
+    
+    if ($format == 'excel' || $format == 'csv') {
+        // Set headers for CSV/Excel download
+        header('Content-Type: text/csv; charset=utf-8');
+        $filename = 'market_prices_' . date('Y-m-d') . '.csv';
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        
+        $output = fopen('php://output', 'w');
+        
+        // Add UTF-8 BOM for Excel
+        fputs($output, "\xEF\xBB\xBF");
+        
+        // Add headers
+        fputcsv($output, ['Market', 'Commodity', 'Price Type', 'Price', 'Date Posted', 'Status', 'Source', 'Variety']);
+        
+        // Add data
+        foreach ($data as $row) {
+            fputcsv($output, [
+                $row['market'],
+                $row['commodity'],
+                $row['price_type'],
+                $row['price'],
+                $row['date_posted'],
+                $row['status'],
+                $row['source'],
+                $row['variety']
+            ]);
+        }
+        
+        fclose($output);
+        exit;
+    } elseif ($format == 'pdf') {
+        // For PDF export, we'll use a simple HTML to PDF approach
+        // You'll need to have a PDF library installed (like dompdf)
+        // For now, we'll output HTML that can be printed to PDF
+        ?>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Market Prices Export</title>
+            <style>
+                body { font-family: Arial, sans-serif; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; }
+                h1 { color: #333; }
+                .footer { margin-top: 20px; font-size: 12px; text-align: center; color: #666; }
+            </style>
+        </head>
+        <body>
+            <h1>Market Prices Export</h1>
+            <p>Exported on: <?= date('Y-m-d H:i:s') ?></p>
+            <p>Total Records: <?= count($data) ?></p>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Market</th>
+                        <th>Commodity</th>
+                        <th>Price Type</th>
+                        <th>Price ($)</th>
+                        <th>Date Posted</th>
+                        <th>Status</th>
+                        <th>Source</th>
+                        <th>Variety</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($data as $row): ?>
+                    <tr>
+                        <td><?= htmlspecialchars($row['market']) ?></td>
+                        <td><?= htmlspecialchars($row['commodity']) ?></td>
+                        <td><?= htmlspecialchars($row['price_type']) ?></td>
+                        <td><?= htmlspecialchars($row['price']) ?></td>
+                        <td><?= htmlspecialchars($row['date_posted']) ?></td>
+                        <td><?= htmlspecialchars($row['status']) ?></td>
+                        <td><?= htmlspecialchars($row['source']) ?></td>
+                        <td><?= htmlspecialchars($row['variety']) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+            
+            <div class="footer">
+                Generated by Market Prices Management System
+            </div>
+            
+            <script>
+                // Auto-print for PDF generation
+                window.onload = function() {
+                    window.print();
+                }
+            </script>
+        </body>
+        </html>
+        <?php
+        exit;
+    }
+}
+
 // Include the shared header AFTER handling POST requests
 include '../admin/includes/header.php';
 
@@ -989,6 +1139,15 @@ if ($wholesale_result) {
     .status-unpublished {
         background-color: #dc3545;
     }
+    
+    /* Highlight selected rows */
+    .table tbody tr.selected-row {
+        background-color: rgba(180, 80, 50, 0.1) !important;
+    }
+    
+    .table tbody tr.selected-row:hover {
+        background-color: rgba(180, 80, 50, 0.15) !important;
+    }
 </style>
 
 <div class="stats-section">
@@ -1107,14 +1266,17 @@ if ($wholesale_result) {
         foreach ($prices_data as $price) {
             $date = date('Y-m-d', strtotime($price['date_posted']));
             $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'];
+            if (!isset($grouped_data[$group_key])) {
+                $grouped_data[$group_key] = [];
+            }
             $grouped_data[$group_key][] = $price;
         }
         ?>
 
-        <table class="table table-striped table-hover table-bordered">
+        <table class="table table-striped table-hover table-bordered" id="marketPricesTable">
             <thead>
                 <tr style="background-color: #d3d3d3 !important; color: black !important;">
-                    <th><input type="checkbox" id="selectAll"></th>
+                    <th style="width: 40px;"><input type="checkbox" id="selectAll"></th>
                     <th>Market</th>
                     <th>Commodity</th>
                     <th>Date</th>
@@ -1124,7 +1286,7 @@ if ($wholesale_result) {
                     <th>Month Change(%)</th>
                     <th>Status</th>
                     <th>Source</th>
-                    <th>Actions</th>
+                    <th style="width: 80px;">Actions</th>
                 </tr>
                 <tr class="filter-row" style="background-color: white !important; color: black !important;">
                     <th></th>
@@ -1143,43 +1305,45 @@ if ($wholesale_result) {
             <tbody id="pricesTable">
                 <?php
                 // Table row generation
+                $rowIndex = 0;
                 foreach ($grouped_data as $group_key => $prices_in_group):
                     $first_row = true;
                     $group_price_ids = array_column($prices_in_group, 'id');
                     $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
+                    $rowspan = count($prices_in_group);
 
                     foreach($prices_in_group as $price):
                         $price_date = $price['date_posted'];
                         $day_change = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
                         $month_change = calculateMoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $price_date, $con);
                         ?>
-                    <tr>
-                        <?php if ($first_row): ?>
-                            <td rowspan="<?php echo count($prices_in_group); ?>">
-                                <input type="checkbox" class="row-checkbox" 
-                                    data-group-key="<?php echo $group_key; ?>"
-                                    data-price-ids="<?php echo $group_price_ids_json; ?>"
-                                    onchange="handleGroupSelection(this)"
-                                />
+                        <tr data-price-id="<?= $price['id'] ?>" data-group-key="<?= $group_key ?>" class="price-row">
+                            <?php if ($first_row): ?>
+                                <td rowspan="<?= $rowspan ?>" class="checkbox-cell">
+                                    <input type="checkbox" class="row-checkbox" 
+                                        data-group-key="<?= $group_key ?>"
+                                        data-price-ids="<?= $group_price_ids_json ?>"
+                                        onchange="handleGroupSelection(this)"
+                                    />
+                                </td>
+                                <td rowspan="<?= $rowspan ?>"><?= htmlspecialchars($price['market']) ?></td>
+                                <td rowspan="<?= $rowspan ?>"><?= htmlspecialchars($price['commodity_display']) ?></td>
+                                <td rowspan="<?= $rowspan ?>"><?= date('Y-m-d', strtotime($price['date_posted'])) ?></td>
+                            <?php endif; ?>
+                            <td><?= htmlspecialchars($price['price_type']) ?></td>
+                            <td><?= htmlspecialchars($price['Price']) ?></td>
+                            <td><?= $day_change ?></td>
+                            <td><?= $month_change ?></td>
+                            <td><?= getStatusDisplay($price['status']) ?></td>
+                            <td><?= htmlspecialchars($price['data_source']) ?></td>
+                            <td>
+                                <a href="../data/edit_marketprice.php?id=<?= $price['id'] ?>">
+                                    <button class="btn btn-sm btn-warning">
+                                        <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
+                                    </button>
+                                </a>
                             </td>
-                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['market']); ?></td>
-                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['commodity_display']); ?></td>
-                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
-                        <?php endif; ?>
-                        <td><?php echo htmlspecialchars($price['price_type']); ?></td>
-                        <td><?php echo htmlspecialchars($price['Price']); ?></td>
-                        <td><?php echo $day_change; ?></td>
-                        <td><?php echo $month_change; ?></td>
-                        <td><?php echo getStatusDisplay($price['status']); ?></td>
-                        <td><?php echo htmlspecialchars($price['data_source']); ?></td>
-                        <td>
-                            <a href="../data/edit_marketprice.php?id=<?= $price['id'] ?>">
-                                <button class="btn btn-sm btn-warning">
-                                    <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px; margin-right: 5px;">
-                                </button>
-                            </a>
-                        </td>
-                    </tr>
+                        </tr>
                     <?php
                     $first_row = false;
                     endforeach;
@@ -1339,15 +1503,29 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     });
 
-    // Initialize select all checkbox
-    document.getElementById('selectAll').addEventListener('change', function() {
-        const checkboxes = document.querySelectorAll('.row-checkbox');
-        checkboxes.forEach(checkbox => {
-            checkbox.checked = this.checked;
-            handleGroupSelection(checkbox);
+    // Initialize select all checkbox - FIXED
+    const selectAllCheckbox = document.getElementById('selectAll');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', function(e) {
+            const isChecked = this.checked;
+            const allCheckboxes = document.querySelectorAll('#pricesTable .row-checkbox');
+            
+            allCheckboxes.forEach(checkbox => {
+                // Only change if the checkbox is currently visible (not hidden by filter)
+                if (checkbox.closest('tr') && checkbox.closest('tr').style.display !== 'none') {
+                    checkbox.checked = isChecked;
+                    
+                    // Trigger the group selection handler
+                    const event = new Event('change', { bubbles: true });
+                    checkbox.dispatchEvent(event);
+                }
+            });
         });
-    });
+    }
 
+    // Initialize existing checkboxes
+    initializeCheckboxes();
+    
     // Update breadcrumb
     if (typeof updateBreadcrumb === 'function') {
         updateBreadcrumb('Base', 'Market Prices');
@@ -1360,17 +1538,46 @@ document.addEventListener("DOMContentLoaded", function() {
     <?php endif; ?>
 });
 
-// Handle group selection
+// Initialize checkboxes and add change listeners
+function initializeCheckboxes() {
+    const checkboxes = document.querySelectorAll('#pricesTable .row-checkbox');
+    checkboxes.forEach(checkbox => {
+        // Remove existing listener to avoid duplicates
+        checkbox.removeEventListener('change', handleGroupSelection);
+        checkbox.addEventListener('change', function() {
+            handleGroupSelection(this);
+        });
+    });
+}
+
+// Handle group selection - FIXED
 function handleGroupSelection(checkbox) {
     try {
-        const priceIds = JSON.parse(checkbox.getAttribute('data-price-ids'));
+        const priceIdsAttr = checkbox.getAttribute('data-price-ids');
+        if (!priceIdsAttr) return;
+        
+        const priceIds = JSON.parse(priceIdsAttr);
         
         if (checkbox.checked) {
             // Add all IDs in the group
-            priceIds.forEach(id => allSelectedIds.add(id));
+            priceIds.forEach(id => {
+                const idStr = id.toString();
+                if (!allSelectedIds.has(idStr)) {
+                    allSelectedIds.add(idStr);
+                    // Highlight the row
+                    const row = document.querySelector(`#pricesTable tr[data-price-id="${id}"]`);
+                    if (row) row.classList.add('selected-row');
+                }
+            });
         } else {
             // Remove all IDs in the group
-            priceIds.forEach(id => allSelectedIds.delete(id));
+            priceIds.forEach(id => {
+                const idStr = id.toString();
+                allSelectedIds.delete(idStr);
+                // Remove highlight from the row
+                const row = document.querySelector(`#pricesTable tr[data-price-id="${id}"]`);
+                if (row) row.classList.remove('selected-row');
+            });
         }
         
         updateSelectionCount();
@@ -1386,20 +1593,47 @@ function updateSelectionCount() {
     const countBadge = document.getElementById('selectedCount');
     const selectionSummary = document.getElementById('selectionSummary');
     
-    countBadge.textContent = count;
+    if (countBadge) {
+        countBadge.textContent = count;
+        // Add visual feedback
+        if (count > 0) {
+            countBadge.style.backgroundColor = 'rgba(180, 80, 50, 0.3)';
+        } else {
+            countBadge.style.backgroundColor = 'rgba(180, 80, 50, 0.15)';
+        }
+    }
     
-    if (count > 0) {
-        selectionSummary.textContent = `(${count} item${count !== 1 ? 's' : ''} selected)`;
-    } else {
-        selectionSummary.textContent = '';
+    if (selectionSummary) {
+        if (count > 0) {
+            selectionSummary.textContent = `(${count} item${count !== 1 ? 's' : ''} selected)`;
+        } else {
+            selectionSummary.textContent = '';
+        }
     }
 }
 
-// Clear all selections
+// Clear all selections - FIXED
 function clearAllSelections() {
     // Uncheck all checkboxes
-    document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
-    document.getElementById('selectAll').checked = false;
+    const allCheckboxes = document.querySelectorAll('#pricesTable .row-checkbox');
+    allCheckboxes.forEach(checkbox => {
+        checkbox.checked = false;
+        // Remove highlights from all rows in this group
+        const priceIdsAttr = checkbox.getAttribute('data-price-ids');
+        if (priceIdsAttr) {
+            try {
+                const priceIds = JSON.parse(priceIdsAttr);
+                priceIds.forEach(id => {
+                    const row = document.querySelector(`#pricesTable tr[data-price-id="${id}"]`);
+                    if (row) row.classList.remove('selected-row');
+                });
+            } catch(e) {}
+        }
+    });
+    
+    // Uncheck select all
+    const selectAll = document.getElementById('selectAll');
+    if (selectAll) selectAll.checked = false;
     
     // Clear the Set
     allSelectedIds.clear();
@@ -1408,19 +1642,28 @@ function clearAllSelections() {
     updateSelectionCount();
 }
 
-// Update select all checkbox state
+// Update select all checkbox state - FIXED
 function updateSelectAllCheckbox() {
-    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const checkboxes = document.querySelectorAll('#pricesTable .row-checkbox');
     const selectAll = document.getElementById('selectAll');
     
-    if (checkboxes.length === 0) {
+    if (!selectAll || checkboxes.length === 0) return;
+    
+    // Get only visible checkboxes (not filtered out)
+    const visibleCheckboxes = Array.from(checkboxes).filter(cb => {
+        const row = cb.closest('tr');
+        return row && row.style.display !== 'none';
+    });
+    
+    if (visibleCheckboxes.length === 0) {
         selectAll.checked = false;
+        selectAll.indeterminate = false;
         return;
     }
     
-    // Check if all checkboxes on current page are checked
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+    // Check if all visible checkboxes are checked
+    const allChecked = visibleCheckboxes.every(cb => cb.checked === true);
+    const someChecked = visibleCheckboxes.some(cb => cb.checked === true);
     
     selectAll.checked = allChecked;
     selectAll.indeterminate = !allChecked && someChecked;
@@ -1453,28 +1696,9 @@ function publishSelected() {
         return;
     }
     
-    // Check if all selected items are approved before publishing
-    fetch('../data/check_status.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ids: ids }),
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.allApproved) {
-            if (confirm(`Publish ${ids.length} selected item(s)?`)) {
-                performAction('publish', ids);
-            }
-        } else {
-            alert('Cannot publish. All selected items must be approved first. ' + (data.message || ''));
-        }
-    })
-    .catch(error => {
-        console.error('Fetch error checking approval status:', error);
-        alert('An error occurred while checking approval status: ' + error.message);
-    });
+    if (confirm(`Publish ${ids.length} selected item(s)?`)) {
+        performAction('publish', ids);
+    }
 }
 
 function unpublishSelected() {
@@ -1485,32 +1709,23 @@ function unpublishSelected() {
         return;
     }
     
-    // Check if all selected items are currently published before unpublishing
-    fetch('../data/check_status_for_unpublish.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ids: ids }),
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.allPublished) {
-            if (confirm(`Unpublish ${ids.length} selected item(s)?`)) {
-                performAction('unpublish', ids);
-            }
-        } else {
-            alert('Cannot unpublish. All selected items must currently be in "Published" status.');
-        }
-    })
-    .catch(error => {
-        console.error('Fetch error checking status for unpublish:', error);
-        alert('An error occurred while checking status for unpublish: ' + error.message);
-    });
+    if (confirm(`Unpublish ${ids.length} selected item(s)?`)) {
+        performAction('unpublish', ids);
+    }
 }
 
 // Perform action (approve/publish/unpublish/delete)
 function performAction(action, ids) {
+    // Show loading indicator
+    const loadingMsg = document.createElement('div');
+    loadingMsg.className = 'alert alert-info';
+    loadingMsg.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    loadingMsg.style.position = 'fixed';
+    loadingMsg.style.top = '20px';
+    loadingMsg.style.right = '20px';
+    loadingMsg.style.zIndex = '9999';
+    document.body.appendChild(loadingMsg);
+    
     fetch('../data/update_status.php', {
         method: 'POST',
         headers: {
@@ -1523,15 +1738,16 @@ function performAction(action, ids) {
     })
     .then(response => response.json())
     .then(data => {
+        loadingMsg.remove();
         if (data.success) {
             alert(data.message || `Items ${action}d successfully.`);
-            clearAllSelections();
             location.reload();
         } else {
             alert('Error: ' + (data.message || 'Unknown error'));
         }
     })
     .catch(error => {
+        loadingMsg.remove();
         alert('Request failed: ' + error.message);
     });
 }
@@ -1545,7 +1761,7 @@ function deleteSelected() {
         return;
     }
 
-    if (confirm(`Delete ${ids.length} selected market price(s)?`)) {
+    if (confirm(`Delete ${ids.length} selected market price(s)? This action cannot be undone.`)) {
         performAction('delete', ids);
     }
 }
@@ -1562,7 +1778,8 @@ function exportSelected(format) {
     // Create a form to submit the export request
     const form = document.createElement('form');
     form.method = 'POST';
-    form.action = '../data/export_market_prices.php';
+    form.action = window.location.href;
+    form.target = '_blank';
     
     // Add format parameter
     const formatInput = document.createElement('input');
@@ -1580,7 +1797,6 @@ function exportSelected(format) {
         form.appendChild(idInput);
     });
     
-    // Submit the form
     document.body.appendChild(form);
     form.submit();
     document.body.removeChild(form);
@@ -1590,7 +1806,8 @@ function exportAll(format) {
     if (confirm('Export ALL market prices? This may take a moment for large datasets.')) {
         const form = document.createElement('form');
         form.method = 'POST';
-        form.action = '../data/export_market_prices.php';
+        form.action = window.location.href;
+        form.target = '_blank';
         
         const formatInput = document.createElement('input');
         formatInput.type = 'hidden';
@@ -1610,7 +1827,7 @@ function exportAll(format) {
     }
 }
 
-// Filter functions
+// Filter functions - FIXED to maintain selection state
 function applyFilters() {
     const filters = {
         market: document.getElementById('filterMarket').value.toLowerCase(),
@@ -1635,12 +1852,9 @@ function applyFilters() {
         
         if (hasRowspan) {
             // This is the first row of a new group
-            // Check group-level filters (market, commodity, date)
             const market = cells[1] ? cells[1].textContent.toLowerCase() : '';
             const commodity = cells[2] ? cells[2].textContent.toLowerCase() : '';
             const date = cells[3] ? cells[3].textContent.toLowerCase() : '';
-            
-            // Check row-level filters (type, price, status, source)
             const type = cells[4] ? cells[4].textContent.toLowerCase() : '';
             const price = cells[5] ? cells[5].textContent.toLowerCase() : '';
             const status = cells[8] ? cells[8].textContent.toLowerCase() : '';
@@ -1658,16 +1872,15 @@ function applyFilters() {
             row.style.display = groupMatches ? '' : 'none';
             if (groupMatches) visibleCount++;
             
-        } else {
+        } else if (cells.length > 0) {
             // This is a continuation row of the current group
-            // Check row-level filters only (type, price, status, source)
             const type = cells[0] ? cells[0].textContent.toLowerCase() : '';
             const price = cells[1] ? cells[1].textContent.toLowerCase() : '';
             const status = cells[4] ? cells[4].textContent.toLowerCase() : '';
             const source = cells[5] ? cells[5].textContent.toLowerCase() : '';
             
             const rowMatches = 
-                groupMatches && // Must be part of a matching group
+                groupMatches &&
                 type.includes(filters.type) &&
                 price.includes(filters.price) &&
                 status.includes(filters.status) &&
@@ -1678,6 +1891,9 @@ function applyFilters() {
         }
     });
     
+    // Update the select all checkbox state after filtering
+    updateSelectAllCheckbox();
+    
     // Update display count
     const displayElement = document.querySelector('.d-flex.justify-content-between.align-items-center div:first-child');
     if (displayElement) {
@@ -1687,7 +1903,7 @@ function applyFilters() {
         }
     }
     
-    // Reinitialize the selection summary element
+    // Update selection summary
     const selectionSummary = document.getElementById('selectionSummary');
     if (selectionSummary) {
         const count = allSelectedIds.size;

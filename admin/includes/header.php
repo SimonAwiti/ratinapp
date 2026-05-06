@@ -454,10 +454,10 @@ if ($dirName === 'base') {
                     <li class="breadcrumb-item active" aria-current="page" id="subCategory">Home</li>
                 </ol>
             </nav>
-            <?php if (isset($_SESSION['admin_username'])): ?>
+            <?php if (isset($_SESSION['admin_name'])): ?>
                 <div class="user-display">
                     <i class="fa fa-user-circle"></i>
-                    <span><?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
+                    <span><?php echo htmlspecialchars($_SESSION['admin_name']); ?></span>
                 </div>
             <?php endif; ?>
         </div>
