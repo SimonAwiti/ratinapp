@@ -68,7 +68,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
                 $_SESSION['admin_name'] = 'Administrator';
                 $_SESSION['admin_role'] = 'admin';
                 
-                header("Location: base/landing_page.php");
+                header("Location: ../base/landing_page.php");
                 exit;
             } else {
                 $error_message = "Invalid username or password.";
@@ -79,409 +79,239 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
 ?>
 
 <!DOCTYPE html>
-<html lang="en">
+<html class="light" lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Login - RATIN Trade Analytics</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f8f8f8;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 20px;
-        }
-        
-        .login-container {
-            background: white;
-            padding: 50px;
-            border-radius: 15px;
-            width: 100%;
-            max-width: 450px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .login-container::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 5px;
-            background: linear-gradient(90deg, rgba(180, 80, 50, 1) 0%, rgba(200, 100, 70, 1) 100%);
-        }
-        
-        .login-header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-        
-        .login-header .logo {
-            width: 80px;
-            height: 80px;
-            background: rgba(180, 80, 50, 0.1);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 20px;
-            border: 3px solid rgba(180, 80, 50, 0.2);
-        }
-        
-        .login-header .logo i {
-            font-size: 35px;
-            color: rgba(180, 80, 50, 1);
-        }
-        
-        .login-header h2 {
-            color: #333;
-            margin-bottom: 8px;
-            font-weight: 600;
-        }
-        
-        .login-header p {
-            color: #666;
-            font-size: 14px;
-            margin-bottom: 0;
-        }
-        
-        .form-group {
-            margin-bottom: 25px;
-            position: relative;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #333;
-            font-size: 14px;
-        }
-        
-        .form-group .input-wrapper {
-            position: relative;
-        }
-        
-        .form-group input {
-            width: 100%;
-            padding: 15px 20px 15px 50px;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
-            font-size: 15px;
-            transition: all 0.3s ease;
-            background: #f8f9fa;
-        }
-        
-        .form-group input:focus {
-            outline: none;
-            border-color: rgba(180, 80, 50, 0.5);
-            box-shadow: 0 0 0 3px rgba(180, 80, 50, 0.1);
-            background: white;
-        }
-        
-        .form-group .input-icon {
-            position: absolute;
-            left: 18px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #999;
-            font-size: 16px;
-        }
-        
-        .form-group input:focus + .input-icon {
-            color: rgba(180, 80, 50, 1);
-        }
-        
-        .password-toggle {
-            position: absolute;
-            right: 18px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #999;
-            cursor: pointer;
-            font-size: 16px;
-            padding: 5px;
-        }
-        
-        .password-toggle:hover {
-            color: rgba(180, 80, 50, 1);
-        }
-        
-        .remember-forgot {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        
-        .remember-me {
-            display: flex;
-            align-items: center;
-        }
-        
-        .remember-me input[type="checkbox"] {
-            margin-right: 8px;
-            accent-color: rgba(180, 80, 50, 1);
-        }
-        
-        .forgot-password {
-            color: rgba(180, 80, 50, 1);
-            text-decoration: none;
-            transition: color 0.3s ease;
-        }
-        
-        .forgot-password:hover {
-            color: rgba(160, 60, 30, 1);
-            text-decoration: underline;
-        }
-        
-        .login-btn {
-            width: 100%;
-            background: linear-gradient(135deg, rgba(180, 80, 50, 1) 0%, rgba(200, 100, 70, 1) 100%);
-            color: white;
-            padding: 15px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .login-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(180, 80, 50, 0.3);
-        }
-        
-        .login-btn:active {
-            transform: translateY(0);
-        }
-        
-        .login-btn.loading {
-            pointer-events: none;
-            opacity: 0.8;
-        }
-        
-        .login-btn .spinner {
-            display: none;
-            margin-right: 10px;
-        }
-        
-        .login-btn.loading .spinner {
-            display: inline-block;
-        }
-        
-        .alert {
-            padding: 15px 20px;
-            border-radius: 8px;
-            margin-bottom: 25px;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-        }
-        
-        .alert-danger {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .alert-success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .alert i {
-            margin-right: 10px;
-            font-size: 16px;
-        }
-        
-        .footer-text {
-            text-align: center;
-            margin-top: 30px;
-            color: #999;
-            font-size: 13px;
-        }
-        
-        @media (max-width: 480px) {
-            .login-container {
-                padding: 30px 25px;
-                margin: 20px;
-            }
-            
-            .login-header h2 {
-                font-size: 24px;
-            }
-        }
-        
-        /* Loading animation */
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .spinner {
-            animation: spin 1s linear infinite;
-        }
-        
-        /* Floating animation for logo */
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-10px); }
-        }
-        
-        .login-header .logo {
-            animation: float 3s ease-in-out infinite;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Login | RATIN Analytics</title>
+<!-- Google Fonts: Inter & Material Symbols -->
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+                  "on-primary-container": "#90d689",
+                  "error": "#ba1a1a",
+                  "on-tertiary-container": "#73d4e0",
+                  "on-primary-fixed-variant": "#0c5216",
+                  "error-container": "#ffdad6",
+                  "surface-container-low": "#f3f3f3",
+                  "primary-fixed-dim": "#91d78a",
+                  "on-tertiary-fixed-variant": "#004f56",
+                  "tertiary": "#004248",
+                  "on-error-container": "#93000a",
+                  "on-tertiary": "#ffffff",
+                  "tertiary-container": "#005b64",
+                  "on-error": "#ffffff",
+                  "on-secondary": "#ffffff",
+                  "outline": "#717a6d",
+                  "primary-container": "#1b5e20",
+                  "on-surface-variant": "#41493e",
+                  "surface-variant": "#e2e2e2",
+                  "on-background": "#1a1c1c",
+                  "on-surface": "#1a1c1c",
+                  "on-secondary-container": "#5d1200",
+                  "inverse-surface": "#2f3131",
+                  "secondary-container": "#ff6338",
+                  "on-primary": "#ffffff",
+                  "surface-container-lowest": "#ffffff",
+                  "surface-dim": "#dadada",
+                  "on-primary-fixed": "#002203",
+                  "tertiary-fixed": "#92f1fe",
+                  "primary": "#00450d",
+                  "surface-container-high": "#e8e8e8",
+                  "surface": "#f9f9f9",
+                  "primary-fixed": "#acf4a4",
+                  "on-tertiary-fixed": "#001f23",
+                  "surface-container-highest": "#e2e2e2",
+                  "surface-bright": "#f9f9f9",
+                  "secondary-fixed-dim": "#ffb5a1",
+                  "inverse-on-surface": "#f1f1f1",
+                  "on-secondary-fixed": "#3b0800",
+                  "on-secondary-fixed-variant": "#881f00",
+                  "outline-variant": "#c0c9bb",
+                  "surface-tint": "#2a6b2c",
+                  "secondary": "#b22c01",
+                  "secondary-fixed": "#ffdbd1",
+                  "background": "#f9f9f9",
+                  "inverse-primary": "#91d78a",
+                  "tertiary-fixed-dim": "#75d5e2",
+                  "surface-container": "#eeeeee"
+          },
+          "borderRadius": {
+                  "DEFAULT": "0.125rem",
+                  "lg": "0.25rem",
+                  "xl": "0.5rem",
+                  "full": "0.75rem"
+          },
+          "spacing": {
+                  "gutter": "16px",
+                  "base": "8px",
+                  "sidebar-width": "260px",
+                  "container-padding": "24px",
+                  "card-gap": "20px"
+          },
+          "fontFamily": {
+                  "headline-lg-mobile": ["Inter"],
+                  "body-lg": ["Inter"],
+                  "body-md": ["Inter"],
+                  "headline-md": ["Inter"],
+                  "label-md": ["Inter"],
+                  "headline-lg": ["Inter"],
+                  "data-tabular": ["Inter"]
+          },
+          "fontSize": {
+                  "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}],
+                  "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                  "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                  "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                  "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                  "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                  "data-tabular": ["13px", {"lineHeight": "18px", "fontWeight": "400"}]
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+    .auth-bg-gradient {
+      background: radial-gradient(circle at top left, rgba(27, 94, 32, 0.05), transparent),
+                  radial-gradient(circle at bottom right, rgba(178, 44, 1, 0.05), transparent);
+    }
+    .password-toggle-btn {
+      cursor: pointer;
+    }
+</style>
 </head>
-<body>
-    <div class="login-container">
-        <div class="login-header">
-            <div class="logo">
-                <img class="ratin-logo" src="../base/img/Ratin-logo-1.png" alt="RATIN Logo">
-            </div>
-            <h2>Admin Login</h2>
-            <p>RATIN Trade Analytics</p>
-        </div>
-        
-        <?php if (!empty($error_message)): ?>
-            <div class="alert alert-danger">
-                <i class="fas fa-exclamation-triangle"></i>
-                <?= htmlspecialchars($error_message) ?>
-            </div>
-        <?php endif; ?>
-        
-        <?php if (!empty($success_message)): ?>
-            <div class="alert alert-success">
-                <i class="fas fa-check-circle"></i>
-                <?= htmlspecialchars($success_message) ?>
-            </div>
-        <?php endif; ?>
-        
-        <form method="POST" action="" id="loginForm">
-            <div class="form-group">
-                <label for="username">Username</label>
-                <div class="input-wrapper">
-                    <input type="text" 
-                           name="username" 
-                           id="username" 
-                           placeholder="Enter your username"
-                           value="<?= isset($_POST['username']) ? htmlspecialchars($_POST['username']) : '' ?>"
-                           required>
-                    <i class="fas fa-user input-icon"></i>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label for="password">Password</label>
-                <div class="input-wrapper">
-                    <input type="password" 
-                           name="password" 
-                           id="password" 
-                           placeholder="Enter your password"
-                           required>
-                    <i class="fas fa-lock input-icon"></i>
-                    <i class="fas fa-eye password-toggle" id="togglePassword"></i>
-                </div>
-            </div>
-            
-            <div class="remember-forgot">
-                <label class="remember-me">
-                    <input type="checkbox" name="remember" id="remember">
-                    Remember me
-                </label>
-            </div>
-            
-            <button type="submit" name="login" class="login-btn" id="loginBtn">
-                <i class="fas fa-spinner spinner"></i>
-                <span class="btn-text">Sign In</span>
-            </button>
-        </form>
-        
-        <div class="footer-text">
-            <p>&copy; <?= date('Y') ?> RATIN Trade Analytics All rights reserved.</p>
-        </div>
-    </div>
+<body class="bg-background font-body-md text-on-background min-h-screen flex items-center justify-center auth-bg-gradient">
+<main class="w-full max-w-[440px] px-container-padding py-12">
+<!-- Login Card -->
+<div class="bg-surface-container-lowest rounded-xl shadow-[0px_4px_24px_rgba(0,0,0,0.06)] overflow-hidden border border-outline-variant">
+<!-- Top Accent Bar -->
+<div class="h-1.5 w-full bg-secondary"></div>
+<div class="p-8 md:p-10">
+<!-- Logo Section -->
+<div class="flex flex-col items-center mb-10">
+<div class="mb-6 flex items-center justify-center">
+    <img class="ratin-logo h-14 w-auto object-contain" src="../base/img/Ratin-logo-1.png" alt="RATIN Logo">
+</div>
+<h1 class="font-headline-md text-headline-md text-on-surface mb-1 text-center">Admin Login</h1>
+<p class="font-body-md text-body-md text-on-surface-variant text-center">RATIN Trade Analytics</p>
+</div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const togglePassword = document.getElementById('togglePassword');
-            const passwordInput = document.getElementById('password');
-            const loginForm = document.getElementById('loginForm');
-            const loginBtn = document.getElementById('loginBtn');
-            const usernameInput = document.getElementById('username');
+<!-- Error/Success Messages -->
+<?php if (!empty($error_message)): ?>
+<div class="mb-6 p-4 bg-error-container text-on-error-container rounded-lg flex items-center gap-3">
+    <span class="material-symbols-outlined text-error">error</span>
+    <span class="text-sm font-medium"><?= htmlspecialchars($error_message) ?></span>
+</div>
+<?php endif; ?>
+
+<?php if (!empty($success_message)): ?>
+<div class="mb-6 p-4 bg-primary-container text-on-primary-container rounded-lg flex items-center gap-3">
+    <span class="material-symbols-outlined text-primary">check_circle</span>
+    <span class="text-sm font-medium"><?= htmlspecialchars($success_message) ?></span>
+</div>
+<?php endif; ?>
+
+<!-- Login Form - FULLY FUNCTIONAL PHP -->
+<form method="POST" action="" id="loginForm" class="space-y-6">
+<!-- Username Field -->
+<div class="space-y-2">
+    <label class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider block" for="username">Username</label>
+    <div class="relative group">
+        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant transition-colors group-focus-within:text-secondary">person</span>
+        <input class="w-full pl-12 pr-4 py-3 bg-surface border border-outline-variant rounded-lg text-body-md transition-all outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary" 
+               id="username" name="username" placeholder="Enter your username" type="text" 
+               value="<?= isset($_POST['username']) ? htmlspecialchars($_POST['username']) : '' ?>" required>
+    </div>
+</div>
+
+<!-- Password Field -->
+<div class="space-y-2">
+    <div class="flex justify-between items-end">
+        <label class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider" for="password">Password</label>
+    </div>
+    <div class="relative group">
+        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant transition-colors group-focus-within:text-secondary">lock</span>
+        <input class="w-full pl-12 pr-12 py-3 bg-surface border border-outline-variant rounded-lg text-body-md transition-all outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary" 
+               id="password" name="password" placeholder="Enter your password" type="password" required>
+        <button class="password-toggle-btn absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors" type="button" id="togglePassword">
+            <span class="material-symbols-outlined">visibility</span>
+        </button>
+    </div>
+</div>
+
+<!-- Actions Row -->
+<div class="flex items-center justify-between">
+    <label class="flex items-center gap-3 cursor-pointer group">
+        <input class="w-4 h-4 rounded border-outline-variant cursor-pointer text-secondary focus:ring-secondary/20" type="checkbox" name="remember" id="remember">
+        <span class="font-body-md text-body-md text-on-surface-variant group-hover:text-on-surface transition-colors">Remember me</span>
+    </label>
+    <a class="font-body-md text-body-md font-semibold transition-colors text-secondary hover:text-[#600000]" href="reset_password.php">Forgot Password?</a>
+</div>
+
+<!-- Sign In Button - CRITICAL: name="login" attribute added for PHP to detect -->
+<button type="submit" name="login" class="w-full text-on-secondary font-bold py-3.5 px-6 rounded-lg shadow-sm hover:shadow-md transition-all active:scale-[0.98] focus:ring-4 focus:ring-secondary/20 bg-secondary hover:bg-[#8a2201]">
+    Sign In
+</button>
+</form>
+
+<!-- Footer Info -->
+<div class="mt-10 pt-6 border-t border-outline-variant/50 text-center">
+    <p class="font-label-md text-label-md text-on-surface-variant opacity-60">
+        © <?= date('Y') ?> RATIN Trade Analytics All rights reserved.
+    </p>
+</div>
+</div>
+</div>
+
+<!-- External Brand Elements -->
+<div class="mt-8 flex justify-center gap-6">
+    <a class="font-label-md text-label-md text-on-surface-variant transition-colors uppercase tracking-widest hover:text-secondary" href="#">Privacy Policy</a>
+    <a class="font-label-md text-label-md text-on-surface-variant transition-colors uppercase tracking-widest hover:text-secondary" href="#">Terms</a>
+    <a class="font-label-md text-label-md text-on-surface-variant transition-colors uppercase tracking-widest hover:text-secondary" href="#">Support</a>
+</div>
+</main>
+
+<!-- Visual Background Accents -->
+<div class="fixed top-0 left-0 w-full h-full -z-10 pointer-events-none overflow-hidden opacity-20">
+    <div class="absolute -top-[10%] -left-[5%] w-[40%] h-[60%] bg-primary/10 blur-[120px] rounded-full"></div>
+    <div class="absolute -bottom-[10%] -right-[5%] w-[35%] h-[50%] bg-secondary/10 blur-[100px] rounded-full"></div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const togglePassword = document.getElementById('togglePassword');
+    const passwordInput = document.getElementById('password');
+    const loginForm = document.getElementById('loginForm');
+    const usernameInput = document.getElementById('username');
+    
+    // Toggle password visibility
+    if (togglePassword && passwordInput) {
+        togglePassword.addEventListener('click', function() {
+            const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
+            passwordInput.setAttribute('type', type);
             
-            // Toggle password visibility
-            togglePassword.addEventListener('click', function() {
-                const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
-                passwordInput.setAttribute('type', type);
-                
-                // Toggle icon
-                this.classList.toggle('fa-eye');
-                this.classList.toggle('fa-eye-slash');
-            });
-            
-            // Form submission with loading state
-            loginForm.addEventListener('submit', function(e) {
-                const username = usernameInput.value.trim();
-                const password = passwordInput.value;
-                
-                if (!username || !password) {
-                    e.preventDefault();
-                    alert('Please enter both username and password.');
-                    return;
-                }
-                
-                // Show loading state
-                loginBtn.classList.add('loading');
-                loginBtn.querySelector('.btn-text').textContent = 'Signing In...';
-            });
-            
-            // Focus on username field
-            usernameInput.focus();
-            
-            // Add enter key support
-            passwordInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    loginForm.submit();
-                }
-            });
-            
-            // Remove loading state on page load (in case of form errors)
-            loginBtn.classList.remove('loading');
-            loginBtn.querySelector('.btn-text').textContent = 'Sign In';
-            
-            // Input validation feedback
-            const inputs = [usernameInput, passwordInput];
-            inputs.forEach(input => {
-                input.addEventListener('blur', function() {
-                    if (this.value.trim() === '') {
-                        this.style.borderColor = '#dc3545';
-                    } else {
-                        this.style.borderColor = '#28a745';
-                    }
-                });
-                
-                input.addEventListener('input', function() {
-                    if (this.style.borderColor === '#dc3545' && this.value.trim() !== '') {
-                        this.style.borderColor = '#e1e5e9';
-                    }
-                });
-            });
+            const iconSpan = this.querySelector('.material-symbols-outlined');
+            if (iconSpan) {
+                iconSpan.textContent = type === 'password' ? 'visibility' : 'visibility_off';
+            }
         });
-    </script>
+    }
+    
+    // Focus on username field
+    if (usernameInput) usernameInput.focus();
+});
+</script>
 </body>
 </html>
