@@ -2,15 +2,15 @@
 // create_admin.php
 session_start();
 
-// Check if user is logged in and has admin privileges
+// Check if user is logged in
 if (!isset($_SESSION['admin_logged_in'])) {
     header("Location: index.php");
     exit;
 }
 
-// Only allow 'admin' role to create new admins
-if ($_SESSION['admin_role'] !== 'admin') {
-    header("Location: base/comodi.php");
+// Only allow 'super_admin' role to create new admins
+if ($_SESSION['admin_role'] !== 'super_admin') {
+    header("Location: ../base/landing_page.php");
     exit;
 }
 
@@ -32,39 +32,53 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['create_admin'])) {
     $full_name = trim($_POST['full_name']);
     $email = trim($_POST['email']);
     $role = $_POST['role'];
-    
+
     // Validate inputs
     if (empty($username) || empty($password) || empty($confirm_password) || empty($full_name)) {
         $error_message = "Please fill in all required fields.";
+    } elseif (empty($role)) {
+        $error_message = "Please select an administrative role.";
     } elseif ($password !== $confirm_password) {
         $error_message = "Passwords do not match.";
     } elseif (strlen($password) < 8) {
         $error_message = "Password must be at least 8 characters long.";
     } else {
-        // Check if username already exists
         if (isset($con)) {
+            // Check if username already exists
             $stmt = $con->prepare("SELECT id FROM admin_users WHERE username = ?");
-            $stmt->bind_param("s", $username);
-            $stmt->execute();
-            $stmt->store_result();
-            
-            if ($stmt->num_rows > 0) {
-                $error_message = "Username already exists. Please choose another.";
+            if (!$stmt) {
+                $error_message = "Database error: " . $con->error;
             } else {
-                // Hash the password
-                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                
-                // Insert new admin
-                $insert_stmt = $con->prepare("INSERT INTO admin_users (username, password, full_name, email, role, status, created_at) VALUES (?, ?, ?, ?, ?, 'active', NOW())");
-                $insert_stmt->bind_param("sssss", $username, $hashed_password, $full_name, $email, $role);
-                
-                if ($insert_stmt->execute()) {
-                    $success_message = "Admin account created successfully!";
-                    // Clear form fields
-                    $_POST = array();
+                $stmt->bind_param("s", $username);
+                $stmt->execute();
+                $stmt->store_result();
+
+                if ($stmt->num_rows > 0) {
+                    $error_message = "Username already exists. Please choose another.";
                 } else {
-                    $error_message = "Error creating admin account. Please try again.";
+                    // Hash the password
+                    $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+
+                    // Insert new admin
+                    $insert_stmt = $con->prepare("INSERT INTO admin_users (username, password, full_name, email, role, status, created_at) VALUES (?, ?, ?, ?, ?, 'active', NOW())");
+
+                    if (!$insert_stmt) {
+                        $error_message = "Database error: " . $con->error;
+                    } else {
+                        $insert_stmt->bind_param("sssss", $username, $hashed_password, $full_name, $email, $role);
+
+                        if ($insert_stmt->execute()) {
+                            $success_message = "Admin account created successfully!";
+                            $_POST = array();
+                        } else {
+                            $error_message = "Error creating admin account: " . $insert_stmt->error;
+                        }
+
+                        $insert_stmt->close();
+                    }
                 }
+
+                $stmt->close();
             }
         } else {
             $error_message = "Database connection error. Please check configuration.";
@@ -74,489 +88,346 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['create_admin'])) {
 ?>
 
 <!DOCTYPE html>
-<html lang="en">
+<html class="light" lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Admin - RATIN Trade Analytics</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f8f8f8;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 20px;
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Add New Admin User - RATIN Analytics</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+<script id="tailwind-config">
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                "colors": {
+                    "surface-container-lowest": "#ffffff",
+                    "surface-container-highest": "#e2e2e2",
+                    "surface-container": "#eeeeee",
+                    "primary-container": "#1b5e20",
+                    "on-tertiary-fixed-variant": "#004f56",
+                    "on-background": "#1a1c1c",
+                    "on-secondary-fixed-variant": "#881f00",
+                    "inverse-surface": "#2f3131",
+                    "surface-tint": "#2a6b2c",
+                    "on-error-container": "#93000a",
+                    "surface-bright": "#f9f9f9",
+                    "surface-container-low": "#f3f3f3",
+                    "on-tertiary": "#ffffff",
+                    "on-surface-variant": "#41493e",
+                    "inverse-primary": "#91d78a",
+                    "on-secondary-container": "#5d1200",
+                    "error-container": "#ffdad6",
+                    "tertiary": "#004248",
+                    "surface-variant": "#e2e2e2",
+                    "on-primary-fixed-variant": "#0c5216",
+                    "secondary-container": "#ff6338",
+                    "on-secondary": "#ffffff",
+                    "on-primary": "#ffffff",
+                    "secondary": "#b22c01",
+                    "primary-fixed": "#acf4a4",
+                    "on-tertiary-fixed": "#001f23",
+                    "secondary-fixed-dim": "#ffb5a1",
+                    "background": "#f9f9f9",
+                    "on-secondary-fixed": "#3b0800",
+                    "on-primary-container": "#90d689",
+                    "on-tertiary-container": "#73d4e0",
+                    "on-surface": "#1a1c1c",
+                    "tertiary-fixed-dim": "#75d5e2",
+                    "surface": "#f9f9f9",
+                    "on-primary-fixed": "#002203",
+                    "error": "#ba1a1a",
+                    "primary": "#00450d",
+                    "outline": "#717a6d",
+                    "outline-variant": "#c0c9bb",
+                    "secondary-fixed": "#ffdbd1",
+                    "surface-container-high": "#e8e8e8",
+                    "inverse-on-surface": "#f1f1f1",
+                    "on-error": "#ffffff",
+                    "primary-fixed-dim": "#91d78a",
+                    "tertiary-container": "#005b64",
+                    "tertiary-fixed": "#92f1fe",
+                    "surface-dim": "#dadada",
+                    "maroon-accent": "#800000"
+                },
+                "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+                },
+                "spacing": {
+                    "container-padding": "24px",
+                    "base": "8px",
+                    "gutter": "16px",
+                    "sidebar-width": "260px",
+                    "card-gap": "20px"
+                },
+                "fontFamily": {
+                    "headline-lg-mobile": ["Inter"],
+                    "data-tabular": ["Inter"],
+                    "body-md": ["Inter"],
+                    "label-md": ["Inter"],
+                    "body-lg": ["Inter"],
+                    "headline-md": ["Inter"],
+                    "headline-lg": ["Inter"]
+                },
+                "fontSize": {
+                    "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}],
+                    "data-tabular": ["13px", {"lineHeight": "18px", "fontWeight": "400"}],
+                    "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                    "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                    "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                    "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}]
+                }
+            },
         }
-        
-        .admin-container {
-            background: white;
-            padding: 40px;
-            border-radius: 15px;
-            width: 100%;
-            max-width: 600px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .admin-container::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 5px;
-            background: linear-gradient(90deg, rgba(180, 80, 50, 1) 0%, rgba(200, 100, 70, 1) 100%);
-        }
-        
-        .admin-header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        
-        .admin-header .logo {
-            width: 60px;
-            height: 60px;
-            background: rgba(180, 80, 50, 0.1);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 15px;
-            border: 2px solid rgba(180, 80, 50, 0.2);
-        }
-        
-        .admin-header .logo i {
-            font-size: 25px;
-            color: rgba(180, 80, 50, 1);
-        }
-        
-        .admin-header h2 {
-            color: #333;
-            margin-bottom: 8px;
-            font-weight: 600;
-        }
-        
-        .admin-header p {
-            color: #666;
-            font-size: 14px;
-            margin-bottom: 0;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-            position: relative;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #333;
-            font-size: 14px;
-        }
-        
-        .form-group .input-wrapper {
-            position: relative;
-        }
-        
-        .form-group input, 
-        .form-group select {
-            width: 100%;
-            padding: 12px 15px 12px 45px;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
-            font-size: 14px;
-            transition: all 0.3s ease;
-            background: #f8f9fa;
-        }
-        
-        .form-group input:focus, 
-        .form-group select:focus {
-            outline: none;
-            border-color: rgba(180, 80, 50, 0.5);
-            box-shadow: 0 0 0 3px rgba(180, 80, 50, 0.1);
-            background: white;
-        }
-        
-        .form-group .input-icon {
-            position: absolute;
-            left: 15px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #999;
-            font-size: 16px;
-        }
-        
-        .form-group input:focus + .input-icon,
-        .form-group select:focus + .input-icon {
-            color: rgba(180, 80, 50, 1);
-        }
-        
-        .password-toggle {
-            position: absolute;
-            right: 15px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #999;
-            cursor: pointer;
-            font-size: 16px;
-            padding: 5px;
-        }
-        
-        .password-toggle:hover {
-            color: rgba(180, 80, 50, 1);
-        }
-        
-        .create-btn {
-            width: 100%;
-            background: linear-gradient(135deg, rgba(180, 80, 50, 1) 0%, rgba(200, 100, 70, 1) 100%);
-            color: white;
-            padding: 15px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .create-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(180, 80, 50, 0.3);
-        }
-        
-        .create-btn:active {
-            transform: translateY(0);
-        }
-        
-        .create-btn.loading {
-            pointer-events: none;
-            opacity: 0.8;
-        }
-        
-        .create-btn .spinner {
-            display: none;
-            margin-right: 10px;
-        }
-        
-        .create-btn.loading .spinner {
-            display: inline-block;
-        }
-        
-        .alert {
-            padding: 15px 20px;
-            border-radius: 8px;
-            margin-bottom: 25px;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-        }
-        
-        .alert-danger {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .alert-success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .alert i {
-            margin-right: 10px;
-            font-size: 16px;
-        }
-        
-        .footer-text {
-            text-align: center;
-            margin-top: 30px;
-            color: #999;
-            font-size: 13px;
-        }
-        
-        .back-link {
-            display: inline-block;
-            margin-top: 20px;
-            color: rgba(180, 80, 50, 1);
-            text-decoration: none;
-            transition: color 0.3s ease;
-        }
-        
-        .back-link:hover {
-            color: rgba(160, 60, 30, 1);
-            text-decoration: underline;
-        }
-        
-        @media (max-width: 480px) {
-            .admin-container {
-                padding: 30px 25px;
-                margin: 20px;
-            }
-            
-            .admin-header h2 {
-                font-size: 24px;
-            }
-        }
-        
-        /* Password strength indicator */
-        .password-strength {
-            height: 5px;
-            background: #eee;
-            margin-top: 5px;
-            border-radius: 3px;
-            overflow: hidden;
-        }
-        
-        .password-strength-bar {
-            height: 100%;
-            width: 0;
-            background: #dc3545;
-            transition: width 0.3s, background 0.3s;
-        }
-        
-        .password-hint {
-            font-size: 12px;
-            color: #666;
-            margin-top: 5px;
-        }
-    </style>
+    }
+</script>
+<style>
+    .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+    body {
+        background-color: #f5f5f5;
+        font-family: 'Inter', sans-serif;
+    }
+    .form-card {
+        box-shadow: 0px 4px 32px rgba(0,0,0,0.08);
+    }
+    .auth-bg-gradient {
+        background: radial-gradient(circle at top left, rgba(0, 69, 13, 0.05), transparent),
+                    radial-gradient(circle at bottom right, rgba(128, 0, 0, 0.05), transparent);
+    }
+    .header-accent-gradient {
+        background: linear-gradient(90deg, #00450d 0%, #800000 50%, #00450d 100%);
+    }
+    .password-strength-bar {
+        transition: width 0.3s, background 0.3s;
+    }
+    input:focus, select:focus {
+        outline: none;
+    }
+</style>
 </head>
-<body>
-    <div class="admin-container">
-        <div class="admin-header">
-            <div class="logo">
-                <i class="fas fa-user-shield"></i>
-            </div>
-            <h2>Create Admin Account</h2>
-            <p>RATIN Trade Analytics</p>
+<body class="bg-surface text-on-surface min-h-screen flex items-center justify-center auth-bg-gradient">
+<main class="flex-grow flex items-center justify-center px-container-padding py-12 relative z-10">
+<div class="w-full max-w-2xl bg-surface-container-lowest rounded-xl border border-outline-variant/30 form-card overflow-hidden">
+    <div class="h-1.5 w-full header-accent-gradient"></div>
+
+    <div class="p-8 md:p-10">
+        <div class="mb-6">
+            <a href="manage_admin.php" class="inline-flex items-center gap-2 text-on-surface-variant hover:text-maroon-accent transition-colors font-body-md">
+                <span class="material-symbols-outlined text-lg">arrow_back</span>
+                Manage Admins
+            </a>
         </div>
-        
+
+        <div class="flex flex-col items-center mb-8 text-center">
+            <div class="p-4 bg-primary/5 rounded-full border border-primary/10 mb-6">
+                <span class="material-symbols-outlined text-primary text-4xl">person_add</span>
+            </div>
+            <h2 class="font-headline-lg text-headline-lg text-on-surface mb-2">Add New Admin User</h2>
+            <p class="font-body-md text-body-md text-on-surface-variant max-w-md">Create a new administrative account with specific permissions for the RATIN Analytics platform.</p>
+        </div>
+
         <?php if (!empty($error_message)): ?>
-            <div class="alert alert-danger">
-                <i class="fas fa-exclamation-triangle"></i>
-                <?= htmlspecialchars($error_message) ?>
+            <div class="mb-6 p-4 bg-error-container text-on-error-container rounded-lg flex items-center gap-3">
+                <span class="material-symbols-outlined text-error">error</span>
+                <span class="text-sm font-medium"><?= htmlspecialchars($error_message) ?></span>
             </div>
         <?php endif; ?>
-        
+
         <?php if (!empty($success_message)): ?>
-            <div class="alert alert-success">
-                <i class="fas fa-check-circle"></i>
-                <?= htmlspecialchars($success_message) ?>
+            <div class="mb-6 p-4 bg-primary-container text-on-primary-container rounded-lg flex items-center gap-3">
+                <span class="material-symbols-outlined text-primary">check_circle</span>
+                <span class="text-sm font-medium"><?= htmlspecialchars($success_message) ?></span>
             </div>
-        <?php endif; ?>
-        
-        <form method="POST" action="" id="adminForm">
-            <div class="form-group">
-                <label for="username">Username <span class="text-danger">*</span></label>
-                <div class="input-wrapper">
-                    <input type="text" 
-                           name="username" 
-                           id="username" 
-                           placeholder="Enter username"
-                           value="<?= isset($_POST['username']) ? htmlspecialchars($_POST['username']) : '' ?>"
-                           required>
-                    <i class="fas fa-user input-icon"></i>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label for="full_name">Full Name <span class="text-danger">*</span></label>
-                <div class="input-wrapper">
-                    <input type="text" 
-                           name="full_name" 
-                           id="full_name" 
-                           placeholder="Enter full name"
-                           value="<?= isset($_POST['full_name']) ? htmlspecialchars($_POST['full_name']) : '' ?>"
-                           required>
-                    <i class="fas fa-id-card input-icon"></i>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label for="email">Email</label>
-                <div class="input-wrapper">
-                    <input type="email" 
-                           name="email" 
-                           id="email" 
-                           placeholder="Enter email"
-                           value="<?= isset($_POST['email']) ? htmlspecialchars($_POST['email']) : '' ?>">
-                    <i class="fas fa-envelope input-icon"></i>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label for="role">Role <span class="text-danger">*</span></label>
-                <div class="input-wrapper">
-                    <select name="role" id="role" required>
-                        <option value="">Select Role</option>
-                        <option value="admin" <?= (isset($_POST['role']) && $_POST['role'] === 'admin') ? 'selected' : '' ?>>Admin</option>
-                        <option value="editor" <?= (isset($_POST['role']) && $_POST['role'] === 'editor') ? 'selected' : '' ?>>Editor</option>
-                        <option value="viewer" <?= (isset($_POST['role']) && $_POST['role'] === 'viewer') ? 'selected' : '' ?>>Viewer</option>
-                    </select>
-                    <i class="fas fa-user-tag input-icon"></i>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label for="password">Password <span class="text-danger">*</span></label>
-                <div class="input-wrapper">
-                    <input type="password" 
-                           name="password" 
-                           id="password" 
-                           placeholder="Enter password"
-                           required
-                           minlength="8">
-                    <i class="fas fa-lock input-icon"></i>
-                    <i class="fas fa-eye password-toggle" id="togglePassword"></i>
-                </div>
-                <div class="password-strength">
-                    <div class="password-strength-bar" id="passwordStrengthBar"></div>
-                </div>
-                <div class="password-hint">Password must be at least 8 characters long</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="confirm_password">Confirm Password <span class="text-danger">*</span></label>
-                <div class="input-wrapper">
-                    <input type="password" 
-                           name="confirm_password" 
-                           id="confirm_password" 
-                           placeholder="Confirm password"
-                           required
-                           minlength="8">
-                    <i class="fas fa-lock input-icon"></i>
-                    <i class="fas fa-eye password-toggle" id="toggleConfirmPassword"></i>
-                </div>
-            </div>
-            
-            <button type="submit" name="create_admin" class="create-btn" id="createBtn">
-                <i class="fas fa-spinner spinner"></i>
-                <span class="btn-text">Create Admin</span>
-            </button>
-            
             <div class="text-center">
-                <a href="../base/commodities_boilerplate.php" class="back-link">
-                    <i class="fas fa-arrow-left"></i> Back to Dashboard
+                <a href="../base/landing_page.php" class="inline-flex items-center gap-2 px-6 py-3 bg-maroon-accent text-white rounded-lg hover:bg-[#660000] transition-colors">
+                    <span class="material-symbols-outlined text-lg">dashboard</span>
+                    Go to Dashboard
+                </a>
+            </div>
+        <?php else: ?>
+        <form method="POST" action="" id="adminForm">
+            <!-- FIX: Hidden field ensures create_admin is always in POST regardless of button state -->
+            <input type="hidden" name="create_admin" value="1">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="space-y-2">
+                    <label class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider block px-1">Username <span class="text-error">*</span></label>
+                    <div class="relative group">
+                        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline transition-colors group-focus-within:text-primary">alternate_email</span>
+                        <input class="w-full pl-12 pr-4 py-3.5 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-body-md text-body-md outline-none"
+                               name="username" id="username" placeholder="e.g. jdoe_admin" type="text"
+                               value="<?= isset($_POST['username']) ? htmlspecialchars($_POST['username']) : '' ?>" required>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider block px-1">Full Name <span class="text-error">*</span></label>
+                    <div class="relative group">
+                        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline transition-colors group-focus-within:text-primary">badge</span>
+                        <input class="w-full pl-12 pr-4 py-3.5 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-body-md text-body-md outline-none"
+                               name="full_name" id="full_name" placeholder="John Doe" type="text"
+                               value="<?= isset($_POST['full_name']) ? htmlspecialchars($_POST['full_name']) : '' ?>" required>
+                    </div>
+                </div>
+
+                <div class="space-y-2 md:col-span-2">
+                    <label class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider block px-1">Email Address</label>
+                    <div class="relative group">
+                        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline transition-colors group-focus-within:text-primary">mail</span>
+                        <input class="w-full pl-12 pr-4 py-3.5 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-body-md text-body-md outline-none"
+                               name="email" id="email" placeholder="john.doe@ratin.com" type="email"
+                               value="<?= isset($_POST['email']) ? htmlspecialchars($_POST['email']) : '' ?>">
+                    </div>
+                </div>
+
+                <div class="space-y-2 md:col-span-2">
+                    <label class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider block px-1">Administrative Role <span class="text-error">*</span></label>
+                    <div class="relative group">
+                        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline transition-colors group-focus-within:text-primary">shield_person</span>
+                        <select class="w-full pl-12 pr-10 py-3.5 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-body-md text-body-md appearance-none outline-none"
+                                name="role" id="role" required>
+                            <option value="">Select a role...</option>
+                            <option value="super_admin" <?= (isset($_POST['role']) && $_POST['role'] === 'super_admin') ? 'selected' : '' ?>>Super Admin</option>
+                            <option value="admin" <?= (isset($_POST['role']) && $_POST['role'] === 'admin') ? 'selected' : '' ?>>Admin</option>
+                            <option value="content_manager" <?= (isset($_POST['role']) && $_POST['role'] === 'content_manager') ? 'selected' : '' ?>>Content Manager</option>
+                        </select>
+                        <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-outline pointer-events-none">expand_more</span>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider block px-1">Password <span class="text-error">*</span></label>
+                    <div class="relative group">
+                        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline transition-colors group-focus-within:text-primary">lock</span>
+                        <input class="w-full pl-12 pr-12 py-3.5 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-body-md text-body-md outline-none"
+                               name="password" id="password" placeholder="••••••••" type="password" required minlength="8">
+                        <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-outline cursor-pointer hover:text-primary transition-colors" id="togglePassword">visibility</span>
+                    </div>
+                    <div class="mt-1 h-1 bg-outline-variant/30 rounded-full overflow-hidden">
+                        <div class="password-strength-bar h-full w-0 rounded-full" id="passwordStrengthBar"></div>
+                    </div>
+                    <p class="text-xs text-on-surface-variant mt-1">Password must be at least 8 characters long</p>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider block px-1">Confirm Password <span class="text-error">*</span></label>
+                    <div class="relative group">
+                        <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline transition-colors group-focus-within:text-primary">lock_reset</span>
+                        <input class="w-full pl-12 pr-12 py-3.5 bg-surface border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-body-md text-body-md outline-none"
+                               name="confirm_password" id="confirm_password" placeholder="••••••••" type="password" required minlength="8">
+                        <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-outline cursor-pointer hover:text-primary transition-colors" id="toggleConfirmPassword">visibility</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-5 bg-surface border border-outline-variant/30 rounded-xl flex gap-4 mt-6">
+                <span class="material-symbols-outlined text-primary">info</span>
+                <p class="font-body-md text-body-md text-on-surface-variant leading-relaxed text-sm">
+                    Password must contain at least 8 characters, including a capital letter, a number, and a special character.
+                </p>
+            </div>
+
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4 pt-6">
+                <button class="w-full sm:w-auto px-10 py-4 font-bold text-white bg-maroon-accent rounded-lg shadow-sm hover:bg-[#660000] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                        type="submit" id="createBtn">
+                    <span class="material-symbols-outlined text-xl">check_circle</span>
+                    Create User
+                </button>
+                <a href="../base/landing_page.php" class="w-full sm:w-auto px-10 py-4 font-label-md text-label-md text-on-surface-variant border border-outline-variant rounded-lg hover:bg-surface transition-all text-center">
+                    Cancel
                 </a>
             </div>
         </form>
-        
-        <div class="footer-text">
-            <p>&copy; <?= date('Y') ?> RATIN Trade Analytics All rights reserved.</p>
-        </div>
+        <?php endif; ?>
     </div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const togglePassword = document.getElementById('togglePassword');
-            const toggleConfirmPassword = document.getElementById('toggleConfirmPassword');
-            const passwordInput = document.getElementById('password');
-            const confirmPasswordInput = document.getElementById('confirm_password');
-            const adminForm = document.getElementById('adminForm');
-            const createBtn = document.getElementById('createBtn');
-            const passwordStrengthBar = document.getElementById('passwordStrengthBar');
-            
-            // Toggle password visibility
-            togglePassword.addEventListener('click', function() {
-                const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
-                passwordInput.setAttribute('type', type);
-                
-                // Toggle icon
-                this.classList.toggle('fa-eye');
-                this.classList.toggle('fa-eye-slash');
-            });
-            
-            // Toggle confirm password visibility
-            toggleConfirmPassword.addEventListener('click', function() {
-                const type = confirmPasswordInput.getAttribute('type') === 'password' ? 'text' : 'password';
-                confirmPasswordInput.setAttribute('type', type);
-                
-                // Toggle icon
-                this.classList.toggle('fa-eye');
-                this.classList.toggle('fa-eye-slash');
-            });
-            
-            // Form submission with loading state
-            adminForm.addEventListener('submit', function(e) {
-                const password = passwordInput.value;
-                const confirmPassword = confirmPasswordInput.value;
-                
-                if (password !== confirmPassword) {
-                    e.preventDefault();
-                    alert('Passwords do not match.');
-                    return;
-                }
-                
-                if (password.length < 8) {
-                    e.preventDefault();
-                    alert('Password must be at least 8 characters long.');
-                    return;
-                }
-                
-                // Show loading state
-                createBtn.classList.add('loading');
-                createBtn.querySelector('.btn-text').textContent = 'Creating...';
-            });
-            
-            // Password strength indicator
-            passwordInput.addEventListener('input', function() {
-                const password = this.value;
-                let strength = 0;
-                
-                // Length
-                if (password.length >= 8) strength += 25;
-                if (password.length >= 12) strength += 25;
-                
-                // Complexity
-                if (/[A-Z]/.test(password)) strength += 15;
-                if (/[0-9]/.test(password)) strength += 15;
-                if (/[^A-Za-z0-9]/.test(password)) strength += 20;
-                
-                // Update strength bar
-                passwordStrengthBar.style.width = strength + '%';
-                
-                // Change color based on strength
-                if (strength < 50) {
-                    passwordStrengthBar.style.background = '#dc3545'; // Red
-                } else if (strength < 75) {
-                    passwordStrengthBar.style.background = '#ffc107'; // Yellow
-                } else {
-                    passwordStrengthBar.style.background = '#28a745'; // Green
-                }
-            });
-            
-            // Remove loading state on page load (in case of form errors)
-            createBtn.classList.remove('loading');
-            createBtn.querySelector('.btn-text').textContent = 'Create Admin';
-            
-            // Input validation feedback
-            const requiredInputs = document.querySelectorAll('input[required], select[required]');
-            requiredInputs.forEach(input => {
-                input.addEventListener('blur', function() {
-                    if (this.value.trim() === '') {
-                        this.style.borderColor = '#dc3545';
-                    } else {
-                        this.style.borderColor = '#28a745';
-                    }
-                });
-                
-                input.addEventListener('input', function() {
-                    if (this.style.borderColor === '#dc3545' && this.value.trim() !== '') {
-                        this.style.borderColor = '#e1e5e9';
-                    }
-                });
-            });
+    <div class="p-6 border-t border-outline-variant/30 bg-surface-container-low text-center">
+        <p class="font-label-md text-label-md text-on-surface-variant opacity-60">
+            © <?= date('Y') ?> RATIN Analytics Data &amp; Logistics Portal.
+        </p>
+    </div>
+</div>
+</main>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const togglePassword = document.getElementById('togglePassword');
+    const toggleConfirmPassword = document.getElementById('toggleConfirmPassword');
+    const passwordInput = document.getElementById('password');
+    const confirmPasswordInput = document.getElementById('confirm_password');
+    const adminForm = document.getElementById('adminForm');
+    const createBtn = document.getElementById('createBtn');
+    const passwordStrengthBar = document.getElementById('passwordStrengthBar');
+
+    if (togglePassword) {
+        togglePassword.addEventListener('click', function () {
+            const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
+            passwordInput.setAttribute('type', type);
+            this.textContent = type === 'password' ? 'visibility' : 'visibility_off';
         });
-    </script>
+    }
+
+    if (toggleConfirmPassword) {
+        toggleConfirmPassword.addEventListener('click', function () {
+            const type = confirmPasswordInput.getAttribute('type') === 'password' ? 'text' : 'password';
+            confirmPasswordInput.setAttribute('type', type);
+            this.textContent = type === 'password' ? 'visibility' : 'visibility_off';
+        });
+    }
+
+    if (passwordInput) {
+        passwordInput.addEventListener('input', function () {
+            const password = this.value;
+            let strength = 0;
+            if (password.length >= 8) strength += 25;
+            if (password.length >= 12) strength += 25;
+            if (/[A-Z]/.test(password)) strength += 15;
+            if (/[0-9]/.test(password)) strength += 15;
+            if (/[^A-Za-z0-9]/.test(password)) strength += 20;
+            strength = Math.min(strength, 100);
+            passwordStrengthBar.style.width = strength + '%';
+            if (strength < 50) {
+                passwordStrengthBar.style.background = '#dc3545';
+            } else if (strength < 75) {
+                passwordStrengthBar.style.background = '#ffc107';
+            } else {
+                passwordStrengthBar.style.background = '#28a745';
+            }
+        });
+    }
+
+    if (adminForm) {
+        adminForm.addEventListener('submit', function (e) {
+            const password = passwordInput.value;
+            const confirmPassword = confirmPasswordInput.value;
+
+            if (password !== confirmPassword) {
+                e.preventDefault();
+                alert('Passwords do not match.');
+                return;
+            }
+
+            if (password.length < 8) {
+                e.preventDefault();
+                alert('Password must be at least 8 characters long.');
+                return;
+            }
+
+            // FIX: Only disable AFTER submit goes through — button state no longer
+            // affects the hidden field that carries the create_admin flag.
+            if (createBtn) {
+                createBtn.disabled = true;
+                createBtn.innerHTML = '<span class="material-symbols-outlined text-xl">progress_activity</span> Creating...';
+            }
+        });
+    }
+});
+</script>
 </body>
 </html>
