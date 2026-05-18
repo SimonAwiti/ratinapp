@@ -444,13 +444,20 @@ body { font-family:'Inter',sans-serif; }
                     </div>
                     <ul class="dropdown-menu hidden ml-4 space-y-1">
                         <li><a href="../admin/user_management.php" class="submenu-item flex items-center gap-3 px-4 py-2 text-primary-fixed hover:text-white transition-all rounded-lg text-sm"><span class="material-symbols-outlined text-sm">manage_accounts</span>User subscription</a></li>
+                        <li><a href="../admin/manage_admin.php" class="submenu-item flex items-center gap-3 px-4 py-2 text-primary-fixed hover:text-white transition-all rounded-lg text-sm"><span class="material-symbols-outlined text-sm">admin_panel_settings</span>Admin Management</a></li>
                     </ul>
                 </li>
 
             </ul>
         </nav>
     </div>
-
+    <!-- SETTINGS MENU - Just above logout button -->
+    <div class="px-4 mb-2">
+        <a href="../admin/user_settings.php" class="settings-btn flex items-center gap-3 px-4 py-2.5 rounded-lg text-primary-fixed hover:text-white transition-all">
+            <span class="material-symbols-outlined text-lg">settings</span>
+            <span class="font-body-md text-body-md">Settings</span>
+        </a>
+    </div>
     <!-- LOGOUT -->
     <div class="px-4 mt-4 mb-2">
         <a href="../admin/logout.php" class="logout-btn flex items-center justify-center gap-2 w-full py-2.5 rounded-lg text-white font-medium transition-all">
