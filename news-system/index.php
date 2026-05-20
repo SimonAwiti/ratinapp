@@ -16,7 +16,19 @@ if (file_exists('includes/config.php')) {
     include '../admin/includes/config.php';
 }
 
-// Get quick counts with simple queries (fast)
+// Get pagination parameters
+$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 20;
+$valid_limits = [10, 20, 50, 100];
+if (!in_array($limit, $valid_limits)) $limit = 20;
+
+// Get sort parameters
+$sort_column = isset($_GET['sort']) ? $_GET['sort'] : 'created_at';
+$sort_direction = isset($_GET['dir']) && $_GET['dir'] == 'asc' ? 'ASC' : 'DESC';
+$allowed_sort_columns = ['id', 'title', 'category', 'status', 'created_at'];
+if (!in_array($sort_column, $allowed_sort_columns)) $sort_column = 'created_at';
+
+// Get quick counts
 $total_articles = 0;
 $published_count = 0;
 $draft_count = 0;
@@ -82,6 +94,7 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
 }
 .table-row-hover:hover {
     background-color: #fefaf5;
+    transition: all 0.2s ease;
 }
 .stat-card {
     transition: all 0.2s ease;
@@ -91,28 +104,13 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.1);
 }
-.pagination-btn {
-    min-width: 34px;
-    height: 34px;
-    transition: all 0.2s ease;
-}
-.pagination-btn:hover:not(:disabled):not(.active-page) {
-    background-color: #fef3e7;
-    border-color: #800000;
-    color: #800000;
-}
-.pagination-btn.active-page {
-    background-color: #800000;
-    border-color: #800000;
-    color: white;
-}
 .status-badge {
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.25rem 0.7rem;
+    gap: 0.2rem;
+    padding: 0.2rem 0.5rem;
     border-radius: 9999px;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 500;
 }
 .status-published { background-color: #d1fae5; color: #065f46; }
@@ -120,9 +118,9 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
 .status-archived { background-color: #f3f4f6; color: #374151; }
 .category-badge {
     display: inline-flex;
-    padding: 0.25rem 0.7rem;
+    padding: 0.2rem 0.5rem;
     border-radius: 9999px;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 500;
     background-color: #f3f4f6;
     color: #4b5563;
@@ -140,8 +138,62 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
-.checkbox-col {
-    width: 32px;
+.search-input:focus {
+    border-color: #800000;
+    outline: none;
+    ring: 2px solid rgba(128,0,0,0.2);
+}
+.action-btn {
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.375rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.pagination-btn {
+    min-width: 32px;
+    height: 32px;
+    transition: all 0.2s ease;
+}
+.pagination-btn:hover:not(:disabled):not(.active-page) {
+    background-color: #fef3e7;
+    border-color: #800000;
+    color: #800000;
+}
+.pagination-btn.active-page {
+    background-color: #800000;
+    border-color: #800000;
+    color: white;
+}
+.page-size-select {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid #e5e7eb;
+    background-color: white;
+    cursor: pointer;
+}
+.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.sortable:hover {
+    color: #800000;
+}
+.sort-icon {
+    font-size: 0.7rem;
+    margin-left: 0.2rem;
+    vertical-align: middle;
+}
+.tab-btn {
+    transition: all 0.2s ease;
+}
+.tab-btn:hover {
+    color: #800000;
+}
+.modal-gradient-header {
+    background: linear-gradient(135deg, #800000 0%, #00450d 100%);
 }
 </style>
 
@@ -150,7 +202,7 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
 
         <!-- Messages -->
         <?php if (isset($message) && !empty($message)): ?>
-            <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $message_type == 'success' ? 'bg-green-50 text-green-700 border-l-4 border-green-500' : 'bg-red-50 text-red-700 border-l-4 border-red-500' ?>">
+            <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $message_type == 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
                 <span class="material-symbols-outlined text-base"><?= $message_type == 'success' ? 'check_circle' : 'error' ?></span>
                 <span><?= htmlspecialchars($message) ?></span>
             </div>
@@ -160,81 +212,81 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
         <div class="mb-6">
             <div class="flex justify-between items-center flex-wrap gap-4">
                 <div>
-                    <h1 class="text-2xl font-semibold text-gray-800">Website Content Management</h1>
-                    <p class="text-sm text-gray-500 mt-0.5">Manage articles, insights, and grainwatch publications</p>
+                    <h1 class="text-2xl font-bold text-maroon">Website Content Management</h1>
+                    <p class="text-gray-600 text-sm mt-1">Manage articles, insights, and grainwatch publications</p>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="showCreateModal()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                    <button onclick="showCreateModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
                         <span class="material-symbols-outlined text-base">article</span>
                         New Article
                     </button>
-                    <button onclick="showCreateInsightModal()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                    <button onclick="showCreateInsightModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
                         <span class="material-symbols-outlined text-base">lightbulb</span>
                         New Insight
                     </button>
-                    <button onclick="showCreateGrainWatchModal()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                    <button onclick="showCreateGrainWatchModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
                         <i class="fas fa-seedling text-base"></i>
                         New GrainWatch
                     </button>
                 </div>
             </div>
-            <div class="h-0.5 w-full header-accent-gradient mt-4 rounded-full"></div>
+            <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
         </div>
 
-        <!-- Statistics Cards -->
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-            <div class="stat-card bg-white rounded-xl p-4 shadow-sm border-l-4 border-maroon">
+        <!-- Statistics Cards - Compact -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-xs text-gray-400 uppercase tracking-wider">Total Articles</p>
-                        <p class="text-2xl font-semibold text-gray-700 mt-1"><?= number_format($total_articles) ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Total Articles</p>
+                        <p class="text-xl font-bold text-gray-800 mt-1"><?= number_format($total_articles) ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-3xl text-maroon/40">article</span>
+                    <span class="material-symbols-outlined text-2xl text-maroon/40">article</span>
                 </div>
             </div>
-            <div class="stat-card bg-white rounded-xl p-4 shadow-sm border-l-4 border-green-500">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-xs text-gray-400 uppercase tracking-wider">Published</p>
-                        <p class="text-2xl font-semibold text-gray-700 mt-1"><?= number_format($published_count) ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Published</p>
+                        <p class="text-xl font-bold text-gray-800 mt-1"><?= number_format($published_count) ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-3xl text-green-500/40">check_circle</span>
+                    <span class="material-symbols-outlined text-2xl text-green-600/40">check_circle</span>
                 </div>
             </div>
-            <div class="stat-card bg-white rounded-xl p-4 shadow-sm border-l-4 border-amber-500">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-amber-500">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-xs text-gray-400 uppercase tracking-wider">Drafts</p>
-                        <p class="text-2xl font-semibold text-gray-700 mt-1"><?= number_format($draft_count) ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Drafts</p>
+                        <p class="text-xl font-bold text-gray-800 mt-1"><?= number_format($draft_count) ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-3xl text-amber-500/40">edit_note</span>
+                    <span class="material-symbols-outlined text-2xl text-amber-500/40">edit_note</span>
                 </div>
             </div>
-            <div class="stat-card bg-white rounded-xl p-4 shadow-sm border-l-4 border-gray-400">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-gray-400">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-xs text-gray-400 uppercase tracking-wider">Archived</p>
-                        <p class="text-2xl font-semibold text-gray-700 mt-1"><?= number_format($archived_count) ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Archived</p>
+                        <p class="text-xl font-bold text-gray-800 mt-1"><?= number_format($archived_count) ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-3xl text-gray-400/40">archive</span>
+                    <span class="material-symbols-outlined text-2xl text-gray-400/40">archive</span>
                 </div>
             </div>
-            <div class="stat-card bg-white rounded-xl p-4 shadow-sm border-l-4 border-blue-500">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-blue-500">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-xs text-gray-400 uppercase tracking-wider">Insights</p>
-                        <p class="text-2xl font-semibold text-gray-700 mt-1"><?= number_format($total_insights) ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Insights</p>
+                        <p class="text-xl font-bold text-gray-800 mt-1"><?= number_format($total_insights) ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-3xl text-blue-500/40">lightbulb</span>
+                    <span class="material-symbols-outlined text-2xl text-blue-500/40">lightbulb</span>
                 </div>
             </div>
-            <div class="stat-card bg-white rounded-xl p-4 shadow-sm border-l-4 border-purple-500">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-purple-500">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-xs text-gray-400 uppercase tracking-wider">GrainWatch</p>
-                        <p class="text-2xl font-semibold text-gray-700 mt-1"><?= number_format($total_grainwatch) ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">GrainWatch</p>
+                        <p class="text-xl font-bold text-gray-800 mt-1"><?= number_format($total_grainwatch) ?></p>
                     </div>
-                    <i class="fas fa-seedling text-2xl text-purple-500/40"></i>
+                    <i class="fas fa-seedling text-xl text-purple-500/40"></i>
                 </div>
             </div>
         </div>
@@ -270,42 +322,44 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
         </div>
 
         <!-- Filter Bar -->
-        <div class="bg-white rounded-xl shadow-sm mb-5 p-3">
-            <div class="flex flex-wrap gap-3 items-center">
+        <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
+            <div class="flex flex-wrap gap-3 items-center justify-between">
                 <div class="flex-1 min-w-[200px]">
                     <div class="relative">
                         <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">search</span>
                         <input type="text" id="searchInput" placeholder="Search by title, category, or location..." 
-                               class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon">
+                               class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
                     </div>
                 </div>
-                <select id="categoryFilter" class="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon bg-white">
-                    <option value="">All Categories</option>
-                    <option value="Market Policy">Market Policy</option>
-                    <option value="Export">Export</option>
-                    <option value="Import">Import</option>
-                    <option value="Agriculture">Agriculture</option>
-                    <option value="Trade">Trade</option>
-                </select>
-                <select id="statusFilter" class="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon bg-white">
-                    <option value="">All Status</option>
-                    <option value="published">Published</option>
-                    <option value="draft">Draft</option>
-                    <option value="archived">Archived</option>
-                </select>
-                <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all">
-                    <span class="material-symbols-outlined text-base align-middle">filter_list</span>
-                    Filter
-                </button>
-                <button id="bulkDeleteBtn" class="px-3 py-1.5 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                    <span class="material-symbols-outlined text-base align-middle">delete</span>
-                    Delete Selected
-                </button>
+                <div class="flex gap-2">
+                    <select id="categoryFilter" class="px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20 bg-white">
+                        <option value="">All Categories</option>
+                        <option value="Market Policy">Market Policy</option>
+                        <option value="Export">Export</option>
+                        <option value="Import">Import</option>
+                        <option value="Agriculture">Agriculture</option>
+                        <option value="Trade">Trade</option>
+                    </select>
+                    <select id="statusFilter" class="px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20 bg-white">
+                        <option value="">All Status</option>
+                        <option value="published">Published</option>
+                        <option value="draft">Draft</option>
+                        <option value="archived">Archived</option>
+                    </select>
+                    <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all">
+                        <span class="material-symbols-outlined text-base align-middle">filter_list</span>
+                        Filter
+                    </button>
+                    <button id="bulkDeleteBtn" class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        <span class="material-symbols-outlined text-base align-middle">delete</span>
+                        Delete
+                    </button>
+                </div>
             </div>
         </div>
 
         <!-- Content Container -->
-        <div id="contentContainer" class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div id="contentContainer" class="bg-white rounded-lg shadow-sm overflow-hidden">
             <div class="text-center py-12">
                 <div class="loading-spinner"></div>
                 <p class="text-gray-500 text-sm mt-2">Loading articles...</p>
@@ -319,27 +373,27 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
 <div id="articleModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
     <div class="min-h-screen flex items-center justify-center p-4">
         <div class="bg-white rounded-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-xl">
-            <div class="sticky top-0 bg-white border-b border-gray-100 px-5 py-3 flex justify-between items-center">
-                <h3 id="articleModalTitle" class="text-lg font-semibold text-gray-800">Create New Article</h3>
-                <button onclick="closeModal('articleModal')" class="text-gray-400 hover:text-gray-600">
-                    <span class="material-symbols-outlined">close</span>
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center sticky top-0">
+                <h3 id="articleModalTitle" class="text-base font-semibold text-white">Create New Article</h3>
+                <button onclick="closeModal('articleModal')" class="text-white/80 hover:text-white">
+                    <span class="material-symbols-outlined text-base">close</span>
                 </button>
             </div>
             <div class="p-5">
                 <form id="articleForm">
                     <input type="hidden" id="articleId" name="id">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
-                        <div><label class="block text-sm text-gray-600 mb-1">Title <span class="text-red-500">*</span></label><input type="text" id="articleTitle" name="title" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon"></div>
-                        <div><label class="block text-sm text-gray-600 mb-1">Category</label><input type="text" id="articleCategory" name="category" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" placeholder="e.g., Agriculture"></div>
-                        <div><label class="block text-sm text-gray-600 mb-1">Location</label><input type="text" id="articleLocation" name="location" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" placeholder="e.g., Kenya"></div>
-                        <div><label class="block text-sm text-gray-600 mb-1">Source</label><input type="text" id="articleSource" name="source" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" placeholder="e.g., Reuters"></div>
-                        <div class="md:col-span-2"><label class="block text-sm text-gray-600 mb-1">Cover Image URL</label><input type="url" id="articleImage" name="image" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" onchange="previewImage('articleImage', 'articleImagePreview')"><img id="articleImagePreview" class="image-preview hidden mt-2 max-h-12 rounded"></div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div><label class="block text-xs text-gray-600 mb-1">Title <span class="text-red-500">*</span></label><input type="text" id="articleTitle" name="title" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon"></div>
+                        <div><label class="block text-xs text-gray-600 mb-1">Category</label><input type="text" id="articleCategory" name="category" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" placeholder="e.g., Agriculture"></div>
+                        <div><label class="block text-xs text-gray-600 mb-1">Location</label><input type="text" id="articleLocation" name="location" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" placeholder="e.g., Kenya"></div>
+                        <div><label class="block text-xs text-gray-600 mb-1">Source</label><input type="text" id="articleSource" name="source" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" placeholder="e.g., Reuters"></div>
+                        <div class="md:col-span-2"><label class="block text-xs text-gray-600 mb-1">Cover Image URL</label><input type="url" id="articleImage" name="image" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" onchange="previewImage('articleImage', 'articleImagePreview')"><img id="articleImagePreview" class="image-preview hidden mt-2 max-h-12 rounded"></div>
                     </div>
-                    <div class="mb-5"><label class="block text-sm text-gray-600 mb-1">Content <span class="text-red-500">*</span></label><div id="articleEditor" class="border border-gray-200 rounded-lg" style="height: 350px;"></div></div>
+                    <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Content <span class="text-red-500">*</span></label><div id="articleEditor" class="border border-gray-200 rounded-lg" style="height: 350px;"></div></div>
                     <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
-                        <button type="button" onclick="closeModal('articleModal')" class="px-4 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-                        <button type="button" onclick="saveArticle('draft')" class="px-4 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600">Save Draft</button>
-                        <button type="button" onclick="saveArticle('published')" class="px-4 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Publish</button>
+                        <button type="button" onclick="closeModal('articleModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="button" onclick="saveArticle('draft')" class="px-3 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600">Save Draft</button>
+                        <button type="button" onclick="saveArticle('published')" class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Publish</button>
                     </div>
                 </form>
             </div>
@@ -351,18 +405,18 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
 <div id="insightModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
     <div class="min-h-screen flex items-center justify-center p-4">
         <div class="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-xl">
-            <div class="sticky top-0 bg-white border-b border-gray-100 px-5 py-3 flex justify-between items-center">
-                <h3 id="insightModalTitle" class="text-lg font-semibold text-gray-800">Create New Insight</h3>
-                <button onclick="closeModal('insightModal')" class="text-gray-400 hover:text-gray-600"><span class="material-symbols-outlined">close</span></button>
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center sticky top-0">
+                <h3 id="insightModalTitle" class="text-base font-semibold text-white">Create New Insight</h3>
+                <button onclick="closeModal('insightModal')" class="text-white/80 hover:text-white"><span class="material-symbols-outlined text-base">close</span></button>
             </div>
             <div class="p-5">
                 <form id="insightForm">
                     <input type="hidden" id="insightId" name="id">
-                    <div class="mb-5"><label class="block text-sm text-gray-600 mb-1">Title <span class="text-red-500">*</span></label><input type="text" id="insightTitle" name="title" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon"></div>
-                    <div class="mb-5"><label class="block text-sm text-gray-600 mb-1">Content <span class="text-red-500">*</span></label><div id="insightEditor" class="border border-gray-200 rounded-lg" style="height: 350px;"></div></div>
+                    <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Title <span class="text-red-500">*</span></label><input type="text" id="insightTitle" name="title" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon"></div>
+                    <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Content <span class="text-red-500">*</span></label><div id="insightEditor" class="border border-gray-200 rounded-lg" style="height: 350px;"></div></div>
                     <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
-                        <button type="button" onclick="closeModal('insightModal')" class="px-4 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-                        <button type="button" onclick="saveInsight()" class="px-4 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Save Insight</button>
+                        <button type="button" onclick="closeModal('insightModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="button" onclick="saveInsight()" class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Save Insight</button>
                     </div>
                 </form>
             </div>
@@ -374,23 +428,23 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
 <div id="grainwatchModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
     <div class="min-h-screen flex items-center justify-center p-4">
         <div class="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-xl">
-            <div class="sticky top-0 bg-white border-b border-gray-100 px-5 py-3 flex justify-between items-center">
-                <h3 id="grainwatchModalTitle" class="text-lg font-semibold text-gray-800">Create New GrainWatch</h3>
-                <button onclick="closeModal('grainwatchModal')" class="text-gray-400 hover:text-gray-600"><span class="material-symbols-outlined">close</span></button>
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center sticky top-0">
+                <h3 id="grainwatchModalTitle" class="text-base font-semibold text-white">Create New GrainWatch</h3>
+                <button onclick="closeModal('grainwatchModal')" class="text-white/80 hover:text-white"><span class="material-symbols-outlined text-base">close</span></button>
             </div>
             <div class="p-5">
                 <form id="grainwatchForm" enctype="multipart/form-data">
                     <input type="hidden" id="grainwatchId" name="id">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
-                        <div><label class="block text-sm text-gray-600 mb-1">Heading <span class="text-red-500">*</span></label><input type="text" id="grainwatchHeading" name="heading" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon"></div>
-                        <div><label class="block text-sm text-gray-600 mb-1">Category <span class="text-red-500">*</span></label><select id="grainwatchCategory" name="category" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon bg-white"><option value="">Select Category</option><option value="grain watch">Grain Watch</option><option value="grain standards">Grain Standards</option><option value="policy briefs">Policy Briefs</option><option value="reports">Reports</option></select></div>
-                        <div><label class="block text-sm text-gray-600 mb-1">Cover Image URL</label><input type="url" id="grainwatchImage" name="image" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" onchange="previewImage('grainwatchImage', 'grainwatchImagePreview')"><img id="grainwatchImagePreview" class="image-preview hidden mt-2 max-h-12 rounded"></div>
-                        <div><label class="block text-sm text-gray-600 mb-1">PDF Document</label><input type="file" id="grainwatchDocument" name="document" accept=".pdf" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" onchange="previewDocument()"><div id="documentPreview" class="document-preview hidden mt-2 text-sm text-gray-500"><span class="material-symbols-outlined text-red-500 text-base align-middle">picture_as_pdf</span><span id="documentName" class="ml-1"></span></div></div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div><label class="block text-xs text-gray-600 mb-1">Heading <span class="text-red-500">*</span></label><input type="text" id="grainwatchHeading" name="heading" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon"></div>
+                        <div><label class="block text-xs text-gray-600 mb-1">Category <span class="text-red-500">*</span></label><select id="grainwatchCategory" name="category" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon bg-white"><option value="">Select Category</option><option value="grain watch">Grain Watch</option><option value="grain standards">Grain Standards</option><option value="policy briefs">Policy Briefs</option><option value="reports">Reports</option></select></div>
+                        <div><label class="block text-xs text-gray-600 mb-1">Cover Image URL</label><input type="url" id="grainwatchImage" name="image" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" onchange="previewImage('grainwatchImage', 'grainwatchImagePreview')"><img id="grainwatchImagePreview" class="image-preview hidden mt-2 max-h-12 rounded"></div>
+                        <div><label class="block text-xs text-gray-600 mb-1">PDF Document</label><input type="file" id="grainwatchDocument" name="document" accept=".pdf" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon" onchange="previewDocument()"><div id="documentPreview" class="document-preview hidden mt-2 text-sm text-gray-500"><span class="material-symbols-outlined text-red-500 text-base align-middle">picture_as_pdf</span><span id="documentName" class="ml-1"></span></div></div>
                     </div>
-                    <div class="mb-5"><label class="block text-sm text-gray-600 mb-1">Description <span class="text-red-500">*</span></label><textarea id="grainwatchDescription" name="description" rows="4" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon"></textarea></div>
+                    <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Description <span class="text-red-500">*</span></label><textarea id="grainwatchDescription" name="description" rows="4" required class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon"></textarea></div>
                     <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
-                        <button type="button" onclick="closeModal('grainwatchModal')" class="px-4 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-                        <button type="button" onclick="saveGrainWatch()" class="px-4 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Save GrainWatch</button>
+                        <button type="button" onclick="closeModal('grainwatchModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="button" onclick="saveGrainWatch()" class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Save GrainWatch</button>
                     </div>
                 </form>
             </div>
@@ -400,13 +454,16 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
 
 <!-- Delete Confirmation Modal -->
 <div id="deleteModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center">
-    <div class="bg-white rounded-xl w-full max-w-md shadow-xl">
-        <div class="p-5">
-            <div class="flex items-center gap-2 mb-3"><span class="material-symbols-outlined text-red-500">warning</span><h3 id="deleteModalTitle" class="text-lg font-semibold text-gray-800">Delete Item</h3></div>
+    <div class="bg-white rounded-lg w-full max-w-md shadow-xl">
+        <div class="p-4">
+            <div class="flex items-center gap-2 mb-3">
+                <span class="material-symbols-outlined text-red-500">warning</span>
+                <h3 class="text-base font-semibold text-gray-800">Delete Item</h3>
+            </div>
             <p id="deleteModalText" class="text-sm text-gray-500 mb-3">Are you sure you want to delete this item? This action cannot be undone.</p>
             <div class="flex justify-end gap-2">
-                <button onclick="closeModal('deleteModal')" class="px-4 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-                <button onclick="confirmDelete()" class="px-4 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
+                <button onclick="closeModal('deleteModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                <button onclick="confirmDelete()" class="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
             </div>
         </div>
     </div>
@@ -426,12 +483,52 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_items']) && !empty($_
 // Global variables
 let currentTab = 'articles';
 let currentPage = 1;
-let itemsPerPage = 20;
+let itemsPerPage = <?php echo $limit; ?>;
 let totalPages = 1;
 let totalItems = 0;
 let articleQuill, insightQuill;
 let selectedItems = new Set();
 let currentDeleteId = null, currentDeleteType = null;
+
+// Sorting function
+function sortTable(column) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort');
+    const currentDir = urlParams.get('dir');
+    let newDir = 'asc';
+    
+    if (currentSort === column && currentDir === 'asc') {
+        newDir = 'desc';
+    }
+    
+    window.location.href = '?page=1&limit=' + itemsPerPage + '&sort=' + column + '&dir=' + newDir;
+}
+
+// Pagination functions
+function goToPage(page) {
+    if (page < 1 || page > totalPages) return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort') || '';
+    const currentDir = urlParams.get('dir') || '';
+    let url = '?page=' + page + '&limit=' + itemsPerPage;
+    if (currentSort) url += '&sort=' + currentSort;
+    if (currentDir) url += '&dir=' + currentDir;
+    window.location.href = url;
+}
+
+function changeItemsPerPage() {
+    const select = document.getElementById('itemsPerPageSelect');
+    if (select) {
+        const newLimit = parseInt(select.value);
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentSort = urlParams.get('sort') || '';
+        const currentDir = urlParams.get('dir') || '';
+        let url = '?page=1&limit=' + newLimit;
+        if (currentSort) url += '&sort=' + currentSort;
+        if (currentDir) url += '&dir=' + currentDir;
+        window.location.href = url;
+    }
+}
 
 // Initialize Quill editors
 document.addEventListener('DOMContentLoaded', function() {
@@ -465,7 +562,7 @@ async function loadArticles() {
     else if (currentTab === 'drafts') status = 'draft';
     else if (currentTab === 'archived') status = 'archived';
     
-    let url = `api/articles_optimized.php?page=${currentPage}&limit=${itemsPerPage}`;
+    let url = `api/articles_optimized.php?page=${currentPage}&limit=${itemsPerPage}&sort=${encodeURIComponent('<?php echo $sort_column; ?>')}&dir=${encodeURIComponent('<?php echo $sort_direction; ?>')}`;
     if (searchTerm) url += `&search=${encodeURIComponent(searchTerm)}`;
     if (category) url += `&category=${encodeURIComponent(category)}`;
     if (status) url += `&status=${encodeURIComponent(status)}`;
@@ -483,7 +580,6 @@ async function loadArticles() {
         }
     } catch (error) {
         console.error('Error loading articles:', error);
-        // Fallback to original API if optimized fails
         try {
             const fallbackUrl = `api/articles.php`;
             const response = await fetch(fallbackUrl);
@@ -547,31 +643,33 @@ function renderArticlesOptimized(articles) {
         return;
     }
     
-    let html = `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50 border-b border-gray-100"><tr>
-        <th class="checkbox-col px-3 py-3 text-left"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="rounded border-gray-300"></th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Title</th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
-        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase w-24">Actions</th>
-    <tr></thead><tbody class="divide-y divide-gray-50">`;
+    let html = `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50 border-b border-gray-200"><tr>
+        <th class="w-8 px-3 py-2 text-left"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="rounded border-gray-300"></th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="id">ID <span class="sort-icon"><?php echo $sort_column == 'id' ? ($sort_direction == 'ASC' ? '↑' : '↓') : ''; ?></span></th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="title">Title <span class="sort-icon"><?php echo $sort_column == 'title' ? ($sort_direction == 'ASC' ? '↑' : '↓') : ''; ?></span></th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="category">Category <span class="sort-icon"><?php echo $sort_column == 'category' ? ($sort_direction == 'ASC' ? '↑' : '↓') : ''; ?></span></th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Location</th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="status">Status <span class="sort-icon"><?php echo $sort_column == 'status' ? ($sort_direction == 'ASC' ? '↑' : '↓') : ''; ?></span></th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="created_at">Created <span class="sort-icon"><?php echo $sort_column == 'created_at' ? ($sort_direction == 'ASC' ? '↑' : '↓') : ''; ?></span></th>
+        <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-24">Actions</th>
+    </tr></thead><tbody class="divide-y divide-gray-100">`;
     
     for (const article of articles) {
         const statusClass = article.status === 'published' ? 'status-published' : (article.status === 'draft' ? 'status-draft' : 'status-archived');
         const statusText = article.status === 'published' ? 'Published' : (article.status === 'draft' ? 'Draft' : 'Archived');
         
-        html += `<tr class="table-row-hover">
-            <td class="px-3 py-3"><input type="checkbox" class="row-checkbox rounded border-gray-300" value="${article.id}" onchange="toggleSelectItem(this, ${article.id})"></td>
-            <td class="px-4 py-3"><div class="flex items-center gap-2">${article.image ? `<img src="${article.image}" class="w-6 h-6 object-cover rounded">` : ''}<span class="text-gray-800">${escapeHtml(article.title)}</span></div></td>
-            <td class="px-4 py-3"><span class="category-badge">${escapeHtml(article.category) || '-'}</span></td>
-            <td class="px-4 py-3 text-gray-500">${escapeHtml(article.location) || '-'}</td>
-            <td class="px-4 py-3"><span class="status-badge ${statusClass}">${statusText}</span></td>
-            <td class="px-4 py-3 text-gray-500 text-xs">${formatDate(article.created_at)}</span></div></td>
-            <td class="px-4 py-3"><div class="flex items-center justify-center gap-1">
-                <button onclick="editArticle(${article.id})" class="p-1 rounded hover:bg-blue-50" title="Edit"><span class="material-symbols-outlined text-blue-500 text-sm">edit</span></button>
-                <button onclick="archiveArticle(${article.id})" class="p-1 rounded hover:bg-yellow-50" title="Archive"><span class="material-symbols-outlined text-yellow-500 text-sm">archive</span></button>
-                <button onclick="deleteArticle(${article.id})" class="p-1 rounded hover:bg-red-50" title="Delete"><span class="material-symbols-outlined text-red-400 text-sm">delete</span></button>
+        html += `<tr class="table-row-hover" data-id="${article.id}">
+            <td class="px-3 py-2"><input type="checkbox" class="row-checkbox rounded border-gray-300" value="${article.id}" onchange="toggleSelectItem(this, ${article.id})"></td>
+            <td class="px-3 py-2 text-xs text-gray-600">${article.id}</td>
+            <td class="px-3 py-2"><div class="flex items-center gap-1">${article.image ? `<img src="${article.image}" class="w-5 h-5 object-cover rounded">` : '<span class="material-symbols-outlined text-gray-400 text-sm">article</span>'}<span class="text-gray-800 text-xs">${escapeHtml(article.title).substring(0, 50)}${escapeHtml(article.title).length > 50 ? '...' : ''}</span></div></td>
+            <td class="px-3 py-2"><span class="category-badge">${escapeHtml(article.category) || '-'}</span></td>
+            <td class="px-3 py-2 text-xs text-gray-500">${escapeHtml(article.location) || '-'}</td>
+            <td class="px-3 py-2"><span class="status-badge ${statusClass}">${statusText}</span></td>
+            <td class="px-3 py-2 text-xs text-gray-500">${formatDate(article.created_at)}</td>
+            <td class="px-3 py-2"><div class="flex items-center justify-center gap-1">
+                <button onclick="editArticle(${article.id})" class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200" title="Edit"><span class="material-symbols-outlined text-sm">edit</span></button>
+                <button onclick="archiveArticle(${article.id})" class="action-btn bg-yellow-100 text-yellow-700 hover:bg-yellow-200" title="Archive"><span class="material-symbols-outlined text-sm">archive</span></button>
+                <button onclick="deleteArticle(${article.id})" class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete"><span class="material-symbols-outlined text-sm">delete</span></button>
             </div></td>
         </tr>`;
     }
@@ -585,6 +683,7 @@ function renderArticlesOptimized(articles) {
     document.getElementById('contentContainer').innerHTML = html;
     selectedItems.clear();
     updateBulkDeleteButton();
+    attachSortListeners();
 }
 
 function renderInsightsOptimized(insights) {
@@ -593,21 +692,23 @@ function renderInsightsOptimized(insights) {
         return;
     }
     
-    let html = `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50 border-b border-gray-100"><tr>
-        <th class="checkbox-col px-3 py-3 text-left"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="rounded border-gray-300"></th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Title</th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
-        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase w-24">Actions</th>
-    </tr></thead><tbody class="divide-y divide-gray-50">`;
+    let html = `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50 border-b border-gray-200"><tr>
+        <th class="w-8 px-3 py-2 text-left"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="rounded border-gray-300"></th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">ID</th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Title</th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Created</th>
+        <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-24">Actions</th>
+    </tr></thead><tbody class="divide-y divide-gray-100">`;
     
     for (const insight of insights) {
         html += `<tr class="table-row-hover">
-            <td class="px-3 py-3"><input type="checkbox" class="row-checkbox rounded border-gray-300" value="${insight.id}" onchange="toggleSelectItem(this, ${insight.id})"></td>
-            <td class="px-4 py-3"><span class="text-gray-800">${escapeHtml(insight.title)}</span><br><span class="text-gray-400 text-xs">${stripHtml(insight.body).substring(0, 80)}...</span></td>
-            <td class="px-4 py-3 text-gray-500 text-xs">${formatDate(insight.created_at)}</span></div></td>
-            <td class="px-4 py-3"><div class="flex items-center justify-center gap-1">
-                <button onclick="editInsight(${insight.id})" class="p-1 rounded hover:bg-blue-50"><span class="material-symbols-outlined text-blue-500 text-sm">edit</span></button>
-                <button onclick="deleteInsight(${insight.id})" class="p-1 rounded hover:bg-red-50"><span class="material-symbols-outlined text-red-400 text-sm">delete</span></button>
+            <td class="px-3 py-2"><input type="checkbox" class="row-checkbox rounded border-gray-300" value="${insight.id}" onchange="toggleSelectItem(this, ${insight.id})"></td>
+            <td class="px-3 py-2 text-xs text-gray-600">${insight.id}</td>
+            <td class="px-3 py-2"><span class="text-gray-800 text-xs font-medium">${escapeHtml(insight.title)}</span><br><span class="text-gray-400 text-xs">${stripHtml(insight.body).substring(0, 60)}...</span></td>
+            <td class="px-3 py-2 text-xs text-gray-500">${formatDate(insight.created_at)}</td>
+            <td class="px-3 py-2"><div class="flex items-center justify-center gap-1">
+                <button onclick="editInsight(${insight.id})" class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200"><span class="material-symbols-outlined text-sm">edit</span></button>
+                <button onclick="deleteInsight(${insight.id})" class="action-btn bg-red-100 text-red-700 hover:bg-red-200"><span class="material-symbols-outlined text-sm">delete</span></button>
             </div></td>
         </tr>`;
     }
@@ -621,6 +722,7 @@ function renderInsightsOptimized(insights) {
     document.getElementById('contentContainer').innerHTML = html;
     selectedItems.clear();
     updateBulkDeleteButton();
+    attachSortListeners();
 }
 
 function renderGrainWatchOptimized(grainwatch) {
@@ -629,23 +731,25 @@ function renderGrainWatchOptimized(grainwatch) {
         return;
     }
     
-    let html = `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50 border-b border-gray-100"><tr>
-        <th class="checkbox-col px-3 py-3 text-left"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="rounded border-gray-300"></th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Heading</th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase w-24">Actions</th>
-    </tr></thead><tbody class="divide-y divide-gray-50">`;
+    let html = `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50 border-b border-gray-200"><tr>
+        <th class="w-8 px-3 py-2 text-left"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)" class="rounded border-gray-300"></th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">ID</th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Heading</th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Category</th>
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Description</th>
+        <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-24">Actions</th>
+    </tr></thead><tbody class="divide-y divide-gray-100">`;
     
     for (const gw of grainwatch) {
         html += `<tr class="table-row-hover">
-            <td class="px-3 py-3"><input type="checkbox" class="row-checkbox rounded border-gray-300" value="${gw.id}" onchange="toggleSelectItem(this, ${gw.id})"></td>
-            <td class="px-4 py-3"><span class="text-gray-800">${escapeHtml(gw.heading)}</span></td>
-            <td class="px-4 py-3"><span class="category-badge">${escapeHtml(gw.category)}</span></td>
-            <td class="px-4 py-3 text-gray-500 text-xs">${escapeHtml(gw.description).substring(0, 100)}...</td>
-            <td class="px-4 py-3"><div class="flex items-center justify-center gap-1">
-                <button onclick="editGrainWatch(${gw.id})" class="p-1 rounded hover:bg-blue-50"><span class="material-symbols-outlined text-blue-500 text-sm">edit</span></button>
-                <button onclick="deleteGrainWatch(${gw.id})" class="p-1 rounded hover:bg-red-50"><span class="material-symbols-outlined text-red-400 text-sm">delete</span></button>
+            <td class="px-3 py-2"><input type="checkbox" class="row-checkbox rounded border-gray-300" value="${gw.id}" onchange="toggleSelectItem(this, ${gw.id})"></td>
+            <td class="px-3 py-2 text-xs text-gray-600">${gw.id}</td>
+            <td class="px-3 py-2"><span class="text-gray-800 text-xs font-medium">${escapeHtml(gw.heading)}</span></td>
+            <td class="px-3 py-2"><span class="category-badge">${escapeHtml(gw.category)}</span></td>
+            <td class="px-3 py-2 text-xs text-gray-500">${escapeHtml(gw.description).substring(0, 80)}...</td>
+            <td class="px-3 py-2"><div class="flex items-center justify-center gap-1">
+                <button onclick="editGrainWatch(${gw.id})" class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200"><span class="material-symbols-outlined text-sm">edit</span></button>
+                <button onclick="deleteGrainWatch(${gw.id})" class="action-btn bg-red-100 text-red-700 hover:bg-red-200"><span class="material-symbols-outlined text-sm">delete</span></button>
             </div></td>
         </tr>`;
     }
@@ -659,6 +763,7 @@ function renderGrainWatchOptimized(grainwatch) {
     document.getElementById('contentContainer').innerHTML = html;
     selectedItems.clear();
     updateBulkDeleteButton();
+    attachSortListeners();
 }
 
 function renderPaginationHTML() {
@@ -677,55 +782,65 @@ function renderPaginationHTML() {
         pages.push(totalPages);
     }
     
-    let html = `<div class="px-4 py-3 border-t border-gray-100 flex justify-between items-center flex-wrap gap-3">
-        <div class="flex items-center gap-2">
-            <select id="itemsPerPageSelect" onchange="changeItemsPerPage()" class="px-2 py-1 text-sm border border-gray-200 rounded bg-white">
-                <option value="20" ${itemsPerPage === 20 ? 'selected' : ''}>20</option>
-                <option value="50" ${itemsPerPage === 50 ? 'selected' : ''}>50</option>
-                <option value="100" ${itemsPerPage === 100 ? 'selected' : ''}>100</option>
-            </select>
-            <span class="text-xs text-gray-400">per page</span>
-        </div>
-        <div class="flex items-center gap-1">
-            <button onclick="goToPage(${currentPage - 1})" class="pagination-btn px-2 py-1 rounded border border-gray-200 ${currentPage === 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-50'}" ${currentPage === 1 ? 'disabled' : ''}>
-                <span class="material-symbols-outlined text-sm">chevron_left</span>
-            </button>`;
+    let html = `<div class="border-t border-gray-200 px-4 py-3 bg-white">
+        <div class="flex flex-wrap justify-between items-center gap-3">
+            <div class="text-xs text-gray-500">
+                Showing ${((currentPage - 1) * itemsPerPage) + 1} to ${Math.min(currentPage * itemsPerPage, totalItems)} of ${totalItems} items
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500">Rows:</span>
+                    <select id="itemsPerPageSelect" class="page-size-select" onchange="changeItemsPerPage()">
+                        <option value="10" ${itemsPerPage === 10 ? 'selected' : ''}>10</option>
+                        <option value="20" ${itemsPerPage === 20 ? 'selected' : ''}>20</option>
+                        <option value="50" ${itemsPerPage === 50 ? 'selected' : ''}>50</option>
+                        <option value="100" ${itemsPerPage === 100 ? 'selected' : ''}>100</option>
+                    </select>
+                </div>
+                <nav class="flex items-center gap-1">
+                    <button onclick="goToPage(1)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center ${currentPage === 1 ? 'opacity-40 cursor-not-allowed' : ''}" ${currentPage === 1 ? 'disabled' : ''}>
+                        <span class="material-symbols-outlined text-sm">first_page</span>
+                    </button>
+                    <button onclick="goToPage(${currentPage - 1})" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center ${currentPage === 1 ? 'opacity-40 cursor-not-allowed' : ''}" ${currentPage === 1 ? 'disabled' : ''}>
+                        <span class="material-symbols-outlined text-sm">chevron_left</span>
+                    </button>`;
     
     for (let page of pages) {
         if (page === '...') {
-            html += `<span class="pagination-ellipsis text-sm">...</span>`;
+            html += `<span class="text-gray-400 px-1 text-xs">...</span>`;
         } else {
-            html += `<button onclick="goToPage(${page})" class="pagination-btn w-8 h-8 rounded text-sm ${currentPage === page ? 'active-page bg-maroon text-white' : 'border border-gray-200 hover:bg-gray-50'}">${page}</button>`;
+            html += `<button onclick="goToPage(${page})" class="pagination-btn w-7 h-7 rounded text-xs ${currentPage === page ? 'active-page bg-maroon text-white' : 'border border-gray-200 hover:bg-gray-50'}">${page}</button>`;
         }
     }
     
-    html += `<button onclick="goToPage(${currentPage + 1})" class="pagination-btn px-2 py-1 rounded border border-gray-200 ${currentPage === totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-50'}" ${currentPage === totalPages ? 'disabled' : ''}>
-                <span class="material-symbols-outlined text-sm">chevron_right</span>
-            </button>
+    html += `<button onclick="goToPage(${currentPage + 1})" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center ${currentPage === totalPages ? 'opacity-40 cursor-not-allowed' : ''}" ${currentPage === totalPages ? 'disabled' : ''}>
+                        <span class="material-symbols-outlined text-sm">chevron_right</span>
+                    </button>
+                    <button onclick="goToPage(${totalPages})" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center ${currentPage === totalPages ? 'opacity-40 cursor-not-allowed' : ''}" ${currentPage === totalPages ? 'disabled' : ''}>
+                        <span class="material-symbols-outlined text-sm">last_page</span>
+                    </button>
+                </nav>
+            </div>
+            <a href="../base/landing_page.php" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all">
+                <span class="material-symbols-outlined text-base">arrow_back</span>
+                Back
+            </a>
         </div>
-        <span class="text-xs text-gray-400">${totalItems} total items</span>
     </div>`;
     
     return html;
 }
 
-async function goToPage(page) {
-    if (page < 1 || page > totalPages) return;
-    currentPage = page;
-    if (currentTab === 'articles') await loadArticles();
-    else if (currentTab === 'insights') await loadInsights();
-    else if (currentTab === 'grainwatch') await loadGrainWatch();
-}
-
-async function changeItemsPerPage() {
-    const select = document.getElementById('itemsPerPageSelect');
-    if (select) {
-        itemsPerPage = parseInt(select.value);
-        currentPage = 1;
-        if (currentTab === 'articles') await loadArticles();
-        else if (currentTab === 'insights') await loadInsights();
-        else if (currentTab === 'grainwatch') await loadGrainWatch();
-    }
+function attachSortListeners() {
+    const sortableHeaders = document.querySelectorAll('.sortable');
+    sortableHeaders.forEach(header => {
+        header.addEventListener('click', function() {
+            const sortColumn = this.getAttribute('data-sort');
+            if (sortColumn) {
+                sortTable(sortColumn);
+            }
+        });
+    });
 }
 
 async function applyFilters() {
@@ -809,15 +924,6 @@ async function archiveArticle(id) {
         loadArticles();
         alert('Article archived');
     } catch (error) { alert('Failed to archive'); }
-}
-
-async function restoreArticle(id) {
-    if (!confirm('Restore this article?')) return;
-    try {
-        await fetch(`api/articles.php/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'draft' }) });
-        loadArticles();
-        alert('Article restored');
-    } catch (error) { alert('Failed to restore'); }
 }
 
 async function saveInsight() {
@@ -1022,3 +1128,4 @@ document.getElementById('statusFilter')?.addEventListener('change', () => { curr
 document.getElementById('bulkDeleteBtn')?.addEventListener('click', submitBulkDelete);
 </script>
 
+<?php require_once '../admin/includes/admin_footer.php'; ?>
