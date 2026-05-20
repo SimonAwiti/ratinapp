@@ -18,6 +18,18 @@ if (file_exists('includes/config.php')) {
 $message = '';
 $message_type = '';
 
+// Get pagination parameters
+$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 20;
+$valid_limits = [10, 20, 50, 100];
+if (!in_array($limit, $valid_limits)) $limit = 20;
+
+// Get sort parameters
+$sort_column = isset($_GET['sort']) ? $_GET['sort'] : 'created_at';
+$sort_direction = isset($_GET['dir']) && $_GET['dir'] == 'asc' ? 'ASC' : 'DESC';
+$allowed_sort_columns = ['id', 'username', 'full_name', 'role', 'status', 'created_at'];
+if (!in_array($sort_column, $allowed_sort_columns)) $sort_column = 'created_at';
+
 // Handle Delete User
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     $user_id = $_GET['delete'];
@@ -108,12 +120,12 @@ if (isset($_POST['update_role']) && isset($_POST['user_id'])) {
     }
 }
 
-// Fetch all admin users
+// Fetch all admin users with sorting
 $users_query = "SELECT id, username, full_name, email, role, status, created_at, last_login 
                 FROM admin_users 
                 ORDER BY 
                     CASE WHEN role = 'super_admin' THEN 1 ELSE 2 END,
-                    created_at DESC";
+                    $sort_column $sort_direction";
 $users_result = $con->query($users_query);
 $all_admin_users = [];
 if ($users_result) {
@@ -126,262 +138,460 @@ if ($users_result) {
 $total_admins = count($all_admin_users);
 $active_count = count(array_filter($all_admin_users, function($u) { return $u['status'] == 'active'; }));
 $super_admin_count = count(array_filter($all_admin_users, function($u) { return $u['role'] == 'super_admin'; }));
+
+// Pagination calculations
+$total_pages = ceil($total_admins / $limit);
+$offset = ($page - 1) * $limit;
+$users_paged = array_slice($all_admin_users, $offset, $limit);
 ?>
 
 <style>
 .auth-bg-gradient {
-    background: radial-gradient(circle at top left, rgba(0, 69, 13, 0.05), transparent),
-                radial-gradient(circle at bottom right, rgba(128, 0, 0, 0.05), transparent);
+    background: radial-gradient(circle at top left, rgba(0, 69, 13, 0.03), transparent),
+                radial-gradient(circle at bottom right, rgba(128, 0, 0, 0.03), transparent);
 }
 .header-accent-gradient {
     background: linear-gradient(90deg, #00450d 0%, #800000 50%, #00450d 100%);
 }
 .table-row-hover:hover {
-    background-color: #fef3e7;
+    background-color: #fefaf5;
     transition: all 0.2s ease;
+}
+.stat-card {
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
 }
 .search-input:focus {
     border-color: #800000;
-    ring-color: rgba(128,0,0,0.2);
+    outline: none;
+    ring: 2px solid rgba(128,0,0,0.2);
+}
+.action-btn {
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.375rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.pagination-btn {
+    min-width: 32px;
+    height: 32px;
+    transition: all 0.2s ease;
+}
+.pagination-btn:hover:not(:disabled):not(.active-page) {
+    background-color: #fef3e7;
+    border-color: #800000;
+    color: #800000;
+}
+.pagination-btn.active-page {
+    background-color: #800000;
+    border-color: #800000;
+    color: white;
+}
+.page-size-select {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid #e5e7eb;
+    background-color: white;
+    cursor: pointer;
+}
+.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.sortable:hover {
+    color: #800000;
+}
+.sort-icon {
+    font-size: 0.7rem;
+    margin-left: 0.2rem;
+    vertical-align: middle;
+}
+.role-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.65rem;
+    font-weight: 500;
+}
+.role-super-admin { background-color: #fef3c7; color: #92400e; }
+.role-admin { background-color: #dbeafe; color: #1e40af; }
+.role-content-manager { background-color: #d1fae5; color: #065f46; }
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.65rem;
+    font-weight: 500;
+}
+.status-active { background-color: #d1fae5; color: #065f46; }
+.status-inactive { background-color: #fee2e2; color: #991b1b; }
+.modal-gradient-header {
+    background: linear-gradient(135deg, #800000 0%, #00450d 100%);
 }
 </style>
 
 <div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
     <div class="max-w-7xl mx-auto">
         <!-- Header Section -->
-        <div class="mb-8">
+        <div class="mb-6">
             <div class="flex justify-between items-center flex-wrap gap-4">
                 <div>
-                    <h1 class="text-3xl font-bold text-maroon">Admin Users Management</h1>
-                    <p class="text-gray-600 mt-1">Manage all administrator accounts and permissions</p>
+                    <h1 class="text-2xl font-bold text-maroon">Admin Users Management</h1>
+                    <p class="text-gray-600 text-sm mt-1">Manage administrator accounts and permissions</p>
                 </div>
-                <div class="flex gap-3">
-                    <button onclick="exportToCSV()" class="inline-flex items-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all shadow-sm">
-                        <span class="material-symbols-outlined text-xl">download</span>
+                <div class="flex gap-2">
+                    <button onclick="exportToCSV()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
+                        <span class="material-symbols-outlined text-base">download</span>
                         Export CSV
                     </button>
-                    <a href="create_admin.php" class="inline-flex items-center gap-2 px-6 py-3 bg-maroon text-white rounded-lg hover:bg-[#660000] transition-all shadow-sm">
-                        <span class="material-symbols-outlined text-xl">person_add</span>
-                        Add New Admin
+                    <a href="create_admin.php" class="inline-flex items-center gap-1.5 px-4 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                        <span class="material-symbols-outlined text-base">person_add</span>
+                        Add Admin
                     </a>
                 </div>
             </div>
-            <div class="h-1 w-full header-accent-gradient mt-4 rounded-full"></div>
+            <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
         </div>
 
-        <!-- Statistics Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-            <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-maroon">
+        <!-- Statistics Cards - Compact -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-gray-500 text-sm uppercase tracking-wide">Total Admins</p>
-                        <p class="text-3xl font-bold text-gray-800"><?= $total_admins ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Total Admins</p>
+                        <p class="text-xl font-bold text-gray-800"><?= $total_admins ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-4xl text-maroon/50">admin_panel_settings</span>
+                    <span class="material-symbols-outlined text-2xl text-maroon/40">admin_panel_settings</span>
                 </div>
             </div>
-            <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-green-600">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-gray-500 text-sm uppercase tracking-wide">Active Users</p>
-                        <p class="text-3xl font-bold text-gray-800"><?= $active_count ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Active Users</p>
+                        <p class="text-xl font-bold text-gray-800"><?= $active_count ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-4xl text-green-600/50">check_circle</span>
+                    <span class="material-symbols-outlined text-2xl text-green-600/40">check_circle</span>
                 </div>
             </div>
-            <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-yellow-600">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-yellow-500">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-gray-500 text-sm uppercase tracking-wide">Super Admins</p>
-                        <p class="text-3xl font-bold text-gray-800"><?= $super_admin_count ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Super Admins</p>
+                        <p class="text-xl font-bold text-gray-800"><?= $super_admin_count ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-4xl text-yellow-600/50">star</span>
+                    <span class="material-symbols-outlined text-2xl text-yellow-500/40">star</span>
                 </div>
             </div>
-            <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-blue-600">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-blue-500">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-gray-500 text-sm uppercase tracking-wide">Standard Admins</p>
-                        <p class="text-3xl font-bold text-gray-800"><?= $total_admins - $super_admin_count ?></p>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Standard Admins</p>
+                        <p class="text-xl font-bold text-gray-800"><?= $total_admins - $super_admin_count ?></p>
                     </div>
-                    <span class="material-symbols-outlined text-4xl text-blue-600/50">person</span>
+                    <span class="material-symbols-outlined text-2xl text-blue-500/40">person</span>
                 </div>
             </div>
         </div>
 
         <!-- Messages -->
         <?php if (!empty($message)): ?>
-            <div class="mb-6 p-4 rounded-lg flex items-center gap-3 <?= $message_type == 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
-                <span class="material-symbols-outlined"><?= $message_type == 'success' ? 'check_circle' : 'error' ?></span>
+            <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $message_type == 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
+                <span class="material-symbols-outlined text-base"><?= $message_type == 'success' ? 'check_circle' : 'error' ?></span>
                 <span class="text-sm font-medium"><?= htmlspecialchars($message) ?></span>
             </div>
         <?php endif; ?>
 
         <!-- Search and Filter Bar -->
-        <div class="bg-white rounded-xl shadow-sm mb-6 p-4">
-            <div class="flex flex-wrap gap-4 items-center justify-between">
+        <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
+            <div class="flex flex-wrap gap-3 items-center justify-between">
                 <div class="flex-1 min-w-[200px]">
                     <div class="relative">
-                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">search</span>
+                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">search</span>
                         <input type="text" id="searchInput" placeholder="Search by username, name, or email..." 
-                               class="search-input w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                               class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
                     </div>
                 </div>
-                <div class="flex gap-3">
-                    <select id="roleFilter" class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                <div class="flex gap-2">
+                    <select id="roleFilter" class="px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20 bg-white">
                         <option value="">All Roles</option>
                         <option value="super_admin">Super Admin</option>
                         <option value="admin">Admin</option>
                         <option value="content_manager">Content Manager</option>
                     </select>
-                    <select id="statusFilter" class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                    <select id="statusFilter" class="px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20 bg-white">
                         <option value="">All Status</option>
                         <option value="active">Active</option>
                         <option value="inactive">Inactive</option>
                     </select>
-                    <button id="bulkDeleteBtn" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <button id="bulkDeleteBtn" class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                         <span class="material-symbols-outlined text-base align-middle">delete</span>
-                        Delete Selected
+                        Delete
                     </button>
                 </div>
             </div>
         </div>
 
-        <!-- Users Table -->
-        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <!-- Users Table with Pagination at Bottom -->
+        <div class="bg-white rounded-lg shadow-sm overflow-hidden">
             <div class="overflow-x-auto">
-                <table class="w-full" id="usersTable">
+                <table class="w-full text-sm" id="usersTable">
                     <thead class="bg-gray-50 border-b border-gray-200">
                         <tr>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            <th class="w-8 px-3 py-2 text-left">
                                 <input type="checkbox" id="selectAllCheckbox" class="rounded border-gray-300 text-maroon focus:ring-maroon/20">
                             </th>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-maroon sortable" data-sort="id">
-                                ID <span class="material-symbols-outlined text-sm align-middle">unfold_more</span>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="id">
+                                ID 
+                                <?php if ($sort_column == 'id'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
                             </th>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-maroon sortable" data-sort="username">
-                                Username <span class="material-symbols-outlined text-sm align-middle">unfold_more</span>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="username">
+                                Username
+                                <?php if ($sort_column == 'username'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
                             </th>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-maroon sortable" data-sort="full_name">
-                                Full Name <span class="material-symbols-outlined text-sm align-middle">unfold_more</span>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="full_name">
+                                Full Name
+                                <?php if ($sort_column == 'full_name'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
                             </th>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Created</th>
-                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Last Login</th>
-                            <th class="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Email</th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="role">
+                                Role
+                                <?php if ($sort_column == 'role'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
+                            </th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="status">
+                                Status
+                                <?php if ($sort_column == 'status'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
+                            </th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="created_at">
+                                Created
+                                <?php if ($sort_column == 'created_at'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
+                            </th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Last Login</th>
+                            <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-36">Actions</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100" id="tableBody">
-                        <?php foreach ($all_admin_users as $user): ?>
-                            <tr class="table-row-hover" data-id="<?= $user['id'] ?>" data-username="<?= htmlspecialchars($user['username']) ?>" data-fullname="<?= htmlspecialchars($user['full_name']) ?>" data-email="<?= htmlspecialchars($user['email']) ?>" data-role="<?= $user['role'] ?>" data-status="<?= $user['status'] ?>">
-                                <td class="px-6 py-4">
-                                    <input type="checkbox" class="row-checkbox rounded border-gray-300 text-maroon focus:ring-maroon/20" value="<?= $user['id'] ?>">
-                                </td>
-                                <td class="px-6 py-4 text-sm text-gray-600"><?= $user['id'] ?></td>
-                                <td class="px-6 py-4">
-                                    <div class="flex items-center gap-2">
-                                        <span class="material-symbols-outlined text-gray-400 text-sm">person</span>
-                                        <span class="font-medium text-gray-800"><?= htmlspecialchars($user['username']) ?></span>
-                                    </div>
-                                </td>
-                                <td class="px-6 py-4 text-sm text-gray-700"><?= htmlspecialchars($user['full_name']) ?></td>
-                                <td class="px-6 py-4 text-sm text-gray-600"><?= !empty($user['email']) ? htmlspecialchars($user['email']) : '<span class="text-gray-400">—</span>' ?></td>
-                                <td class="px-6 py-4">
-                                    <?php if ($user['role'] == 'super_admin'): ?>
-                                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                            <span class="material-symbols-outlined text-sm">star</span>
-                                            Super Admin
-                                        </span>
-                                    <?php elseif ($user['role'] == 'admin'): ?>
-                                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                            <span class="material-symbols-outlined text-sm">shield</span>
-                                            Admin
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                            <span class="material-symbols-outlined text-sm">edit_note</span>
-                                            Content Manager
-                                        </span>
-                                    <?php endif; ?>
-                                </td>
-                                <td class="px-6 py-4">
-                                    <?php if ($user['status'] == 'active'): ?>
-                                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                            <span class="material-symbols-outlined text-sm">check_circle</span>
-                                            Active
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                                            <span class="material-symbols-outlined text-sm">cancel</span>
-                                            Inactive
-                                        </span>
-                                    <?php endif; ?>
-                                </td>
-                                <td class="px-6 py-4 text-sm text-gray-500"><?= date('M d, Y', strtotime($user['created_at'])) ?></td>
-                                <td class="px-6 py-4 text-sm text-gray-500"><?= $user['last_login'] ? date('M d, Y', strtotime($user['last_login'])) : 'Never' ?></td>
-                                <td class="px-6 py-4">
-                                    <div class="flex items-center justify-center gap-2">
-                                        <form method="POST" action="" class="inline" onsubmit="return confirm('Change role for <?= htmlspecialchars($user['username']) ?>?')">
-                                            <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
-                                            <select name="new_role" onchange="this.form.submit()" class="text-xs border rounded px-2 py-1 focus:ring-1 focus:ring-maroon">
-                                                <option value="super_admin" <?= $user['role'] == 'super_admin' ? 'selected' : '' ?>>Super Admin</option>
-                                                <option value="admin" <?= $user['role'] == 'admin' ? 'selected' : '' ?>>Admin</option>
-                                                <option value="content_manager" <?= $user['role'] == 'content_manager' ? 'selected' : '' ?>>Content Manager</option>
-                                            </select>
-                                            <input type="hidden" name="update_role" value="1">
-                                        </form>
-
-                                        <form method="POST" action="" class="inline" onsubmit="return confirm('Toggle status for <?= htmlspecialchars($user['username']) ?>?')">
-                                            <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
-                                            <input type="hidden" name="new_status" value="<?= $user['status'] == 'active' ? 'inactive' : 'active' ?>">
-                                            <button type="submit" name="toggle_status" class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" title="<?= $user['status'] == 'active' ? 'Deactivate' : 'Activate' ?>">
-                                                <span class="material-symbols-outlined text-sm <?= $user['status'] == 'active' ? 'text-red-500' : 'text-green-500' ?>">
-                                                    <?= $user['status'] == 'active' ? 'block' : 'check_circle' ?>
-                                                </span>
-                                            </button>
-                                        </form>
-
-                                        <?php if ($user['id'] != $_SESSION['admin_id']): ?>
-                                            <a href="?delete=<?= $user['id'] ?>" onclick="return confirm('Delete <?= htmlspecialchars($user['username']) ?>? This action cannot be undone.')" class="p-1.5 rounded-lg hover:bg-red-50 transition-colors" title="Delete User">
-                                                <span class="material-symbols-outlined text-sm text-red-500">delete</span>
-                                            </a>
-                                        <?php else: ?>
-                                            <span class="p-1.5 opacity-40 cursor-not-allowed" title="Cannot delete your own account">
-                                                <span class="material-symbols-outlined text-sm text-gray-400">delete</span>
-                                            </span>
-                                        <?php endif; ?>
-                                    </div>
+                        <?php if (empty($users_paged)): ?>
+                            <tr>
+                                <td colspan="10" class="px-3 py-8 text-center text-gray-400">
+                                    <span class="material-symbols-outlined text-3xl">people</span>
+                                    <p class="text-sm mt-1">No admin users found</p>
                                 </td>
                             </tr>
-                        <?php endforeach; ?>
+                        <?php else: ?>
+                            <?php foreach ($users_paged as $user): ?>
+                                <tr class="table-row-hover" data-id="<?= $user['id'] ?>" data-username="<?= htmlspecialchars($user['username']) ?>" 
+                                    data-fullname="<?= htmlspecialchars($user['full_name']) ?>" data-email="<?= htmlspecialchars($user['email']) ?>" 
+                                    data-role="<?= $user['role'] ?>" data-status="<?= $user['status'] ?>">
+                                    <td class="px-3 py-2">
+                                        <input type="checkbox" class="row-checkbox rounded border-gray-300 text-maroon focus:ring-maroon/20" value="<?= $user['id'] ?>">
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-gray-600"><?= $user['id'] ?></td>
+                                    <td class="px-3 py-2">
+                                        <div class="flex items-center gap-1">
+                                            <span class="material-symbols-outlined text-gray-400 text-sm">person</span>
+                                            <span class="font-medium text-gray-800 text-xs"><?= htmlspecialchars($user['username']) ?></span>
+                                        </div>
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-gray-700"><?= htmlspecialchars($user['full_name']) ?></td>
+                                    <td class="px-3 py-2 text-xs text-gray-600"><?= !empty($user['email']) ? htmlspecialchars($user['email']) : '<span class="text-gray-400">—</span>' ?></td>
+                                    <td class="px-3 py-2">
+                                        <?php if ($user['role'] == 'super_admin'): ?>
+                                            <span class="role-badge role-super-admin">
+                                                <span class="material-symbols-outlined text-xs">star</span>
+                                                Super Admin
+                                            </span>
+                                        <?php elseif ($user['role'] == 'admin'): ?>
+                                            <span class="role-badge role-admin">
+                                                <span class="material-symbols-outlined text-xs">shield</span>
+                                                Admin
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="role-badge role-content-manager">
+                                                <span class="material-symbols-outlined text-xs">edit_note</span>
+                                                Content Mgr
+                                            </span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        <?php if ($user['status'] == 'active'): ?>
+                                            <span class="status-badge status-active">
+                                                <span class="material-symbols-outlined text-xs">check_circle</span>
+                                                Active
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="status-badge status-inactive">
+                                                <span class="material-symbols-outlined text-xs">cancel</span>
+                                                Inactive
+                                            </span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-gray-500"><?= date('M d, Y', strtotime($user['created_at'])) ?></td>
+                                    <td class="px-3 py-2 text-xs text-gray-500"><?= $user['last_login'] ? date('M d, Y', strtotime($user['last_login'])) : 'Never' ?></td>
+                                    <td class="px-3 py-2">
+                                        <div class="flex items-center justify-center gap-1">
+                                            <form method="POST" action="" class="inline" onsubmit="return confirm('Change role for <?= htmlspecialchars($user['username']) ?>?')">
+                                                <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                                <select name="new_role" onchange="this.form.submit()" class="text-xs border rounded px-1 py-0.5 focus:ring-1 focus:ring-maroon bg-white">
+                                                    <option value="super_admin" <?= $user['role'] == 'super_admin' ? 'selected' : '' ?>>Super</option>
+                                                    <option value="admin" <?= $user['role'] == 'admin' ? 'selected' : '' ?>>Admin</option>
+                                                    <option value="content_manager" <?= $user['role'] == 'content_manager' ? 'selected' : '' ?>>Content</option>
+                                                </select>
+                                                <input type="hidden" name="update_role" value="1">
+                                            </form>
+
+                                            <form method="POST" action="" class="inline" onsubmit="return confirm('Toggle status for <?= htmlspecialchars($user['username']) ?>?')">
+                                                <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                                <input type="hidden" name="new_status" value="<?= $user['status'] == 'active' ? 'inactive' : 'active' ?>">
+                                                <button type="submit" name="toggle_status" class="action-btn <?= $user['status'] == 'active' ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200' : 'bg-green-100 text-green-700 hover:bg-green-200' ?>" title="<?= $user['status'] == 'active' ? 'Deactivate' : 'Activate' ?>">
+                                                    <span class="material-symbols-outlined text-sm">
+                                                        <?= $user['status'] == 'active' ? 'pause_circle' : 'play_circle' ?>
+                                                    </span>
+                                                </button>
+                                            </form>
+
+                                            <?php if ($user['id'] != $_SESSION['admin_id']): ?>
+                                                <a href="?delete=<?= $user['id'] ?>&page=<?= $page ?>&limit=<?= $limit ?>&sort=<?= $sort_column ?>&dir=<?= strtolower($sort_direction) ?>" onclick="return confirm('Delete <?= htmlspecialchars($user['username']) ?>? This action cannot be undone.')" class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete User">
+                                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                                </a>
+                                            <?php else: ?>
+                                                <span class="action-btn opacity-40 cursor-not-allowed bg-gray-100 text-gray-400" title="Cannot delete your own account">
+                                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>
-        </div>
-
-        <!-- Quick Actions Footer -->
-        <div class="mt-8 flex justify-between items-center flex-wrap gap-4">
-            <div class="text-sm text-gray-500" id="resultCount">
-                Showing <span id="visibleCount"><?= count($all_admin_users) ?></span> of <?= $total_admins ?> admin users
-            </div>
-            <div class="flex gap-3">
-                <a href="create_admin.php" class="inline-flex items-center gap-2 px-4 py-2 bg-maroon text-white rounded-lg hover:bg-[#660000] transition-all text-sm">
-                    <span class="material-symbols-outlined text-base">person_add</span>
-                    Add New Admin
-                </a>
-                <a href="../base/landing_page.php" class="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all text-sm">
-                    <span class="material-symbols-outlined text-base">arrow_back</span>
-                    Back to Dashboard
-                </a>
+            
+            <!-- PAGINATION SECTION - AT THE BOTTOM OF THE TABLE -->
+            <div class="border-t border-gray-200 px-4 py-3 bg-white">
+                <div class="flex flex-wrap justify-between items-center gap-3">
+                    <div class="text-xs text-gray-500">
+                        Showing <?= $offset + 1 ?> to <?= min($offset + $limit, $total_admins) ?> of <?= $total_admins ?> admin users
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-gray-500">Rows:</span>
+                            <select id="rowsPerPage" class="page-size-select" onchange="changeRowsPerPage()">
+                                <option value="10" <?= $limit == 10 ? 'selected' : '' ?>>10</option>
+                                <option value="20" <?= $limit == 20 ? 'selected' : '' ?>>20</option>
+                                <option value="50" <?= $limit == 50 ? 'selected' : '' ?>>50</option>
+                                <option value="100" <?= $limit == 100 ? 'selected' : '' ?>>100</option>
+                            </select>
+                        </div>
+                        
+                        <nav class="flex items-center gap-1">
+                            <button onclick="goToPage(1)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center <?= $page <= 1 ? 'opacity-40 cursor-not-allowed' : '' ?>" <?= $page <= 1 ? 'disabled' : '' ?>>
+                                <span class="material-symbols-outlined text-sm">first_page</span>
+                            </button>
+                            <button onclick="goToPage(<?= $page - 1 ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center <?= $page <= 1 ? 'opacity-40 cursor-not-allowed' : '' ?>" <?= $page <= 1 ? 'disabled' : '' ?>>
+                                <span class="material-symbols-outlined text-sm">chevron_left</span>
+                            </button>
+                            
+                            <?php
+                            $start_page = max(1, $page - 2);
+                            $end_page = min($total_pages, $page + 2);
+                            if ($start_page > 1) {
+                                echo '<button onclick="goToPage(1)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 text-xs">1</button>';
+                                if ($start_page > 2) echo '<span class="text-gray-400 px-1">...</span>';
+                            }
+                            for ($i = $start_page; $i <= $end_page; $i++) {
+                                $active_class = ($i == $page) ? 'active-page bg-maroon text-white' : 'border border-gray-200 hover:bg-gray-50';
+                                echo '<button onclick="goToPage(' . $i . ')" class="pagination-btn w-7 h-7 rounded text-xs ' . $active_class . '">' . $i . '</button>';
+                            }
+                            if ($end_page < $total_pages) {
+                                if ($end_page < $total_pages - 1) echo '<span class="text-gray-400 px-1">...</span>';
+                                echo '<button onclick="goToPage(' . $total_pages . ')" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 text-xs">' . $total_pages . '</button>';
+                            }
+                            ?>
+                            
+                            <button onclick="goToPage(<?= $page + 1 ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center <?= $page >= $total_pages ? 'opacity-40 cursor-not-allowed' : '' ?>" <?= $page >= $total_pages ? 'disabled' : '' ?>>
+                                <span class="material-symbols-outlined text-sm">chevron_right</span>
+                            </button>
+                            <button onclick="goToPage(<?= $total_pages ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center <?= $page >= $total_pages ? 'opacity-40 cursor-not-allowed' : '' ?>" <?= $page >= $total_pages ? 'disabled' : '' ?>>
+                                <span class="material-symbols-outlined text-sm">last_page</span>
+                            </button>
+                        </nav>
+                    </div>
+                    
+                    <a href="create_admin.php" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all">
+                        <span class="material-symbols-outlined text-base">person_add</span>
+                        Add Admin
+                    </a>
+                </div>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-// Search, Filter, Sort, Select, and Export functionality
+// Pagination functions
+function goToPage(page) {
+    const limit = document.getElementById('rowsPerPage').value;
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort') || '';
+    const currentDir = urlParams.get('dir') || '';
+    let url = '?page=' + page + '&limit=' + limit;
+    if (currentSort) url += '&sort=' + currentSort;
+    if (currentDir) url += '&dir=' + currentDir;
+    window.location.href = url;
+}
+
+function changeRowsPerPage() {
+    const limit = document.getElementById('rowsPerPage').value;
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort') || '';
+    const currentDir = urlParams.get('dir') || '';
+    let url = '?page=1&limit=' + limit;
+    if (currentSort) url += '&sort=' + currentSort;
+    if (currentDir) url += '&dir=' + currentDir;
+    window.location.href = url;
+}
+
+// Sorting function
+function sortTable(column) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort');
+    const currentDir = urlParams.get('dir');
+    const limit = document.getElementById('rowsPerPage')?.value || 20;
+    let newDir = 'asc';
+    
+    if (currentSort === column && currentDir === 'asc') {
+        newDir = 'desc';
+    }
+    
+    window.location.href = '?page=1&limit=' + limit + '&sort=' + column + '&dir=' + newDir;
+}
+
+// Search, Filter, Select, and Export functionality
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('searchInput');
     const roleFilter = document.getElementById('roleFilter');
@@ -392,10 +602,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
     const visibleCountSpan = document.getElementById('visibleCount');
     
-    let currentSortColumn = null;
-    let currentSortDirection = 'asc';
+    // Attach sort listeners
+    const sortableHeaders = document.querySelectorAll('.sortable');
+    sortableHeaders.forEach(header => {
+        header.addEventListener('click', function() {
+            const sortColumn = this.getAttribute('data-sort');
+            if (sortColumn) {
+                sortTable(sortColumn);
+            }
+        });
+    });
     
-    // Search and Filter function
     function filterRows() {
         const searchTerm = searchInput.value.toLowerCase();
         const roleValue = roleFilter.value;
@@ -422,42 +639,15 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
         
-        visibleCountSpan.textContent = visibleCount;
+        if (visibleCountSpan) visibleCountSpan.textContent = visibleCount;
         updateSelectAllCheckbox();
         updateBulkDeleteButton();
     }
     
-    // Sorting function
-    function sortTable(column, sortDirection) {
-        const rowsArray = Array.from(rows);
-        const columnIndex = {
-            'id': 0,
-            'username': 1,
-            'full_name': 2
-        }[column];
-        
-        if (columnIndex === undefined) return;
-        
-        rowsArray.sort((a, b) => {
-            const aValue = a.children[columnIndex + 1].textContent.trim();
-            const bValue = b.children[columnIndex + 1].textContent.trim();
-            
-            if (column === 'id') {
-                return sortDirection === 'asc' ? parseInt(aValue) - parseInt(bValue) : parseInt(bValue) - parseInt(aValue);
-            } else {
-                return sortDirection === 'asc' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
-            }
-        });
-        
-        // Reorder rows
-        rowsArray.forEach(row => tableBody.appendChild(row));
-    }
-    
-    // Update select all checkbox state
     function updateSelectAllCheckbox() {
         const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
-        const checkboxes = visibleRows.map(row => row.querySelector('.row-checkbox'));
-        const checkedCheckboxes = checkboxes.filter(cb => cb && cb.checked);
+        const checkboxes = visibleRows.map(row => row.querySelector('.row-checkbox')).filter(cb => cb);
+        const checkedCheckboxes = checkboxes.filter(cb => cb.checked);
         
         if (selectAllCheckbox) {
             if (checkboxes.length === 0) {
@@ -476,42 +666,31 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Update bulk delete button state
     function updateBulkDeleteButton() {
         const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
-        const checkboxes = visibleRows.map(row => row.querySelector('.row-checkbox'));
-        const checkedCheckboxes = checkboxes.filter(cb => cb && cb.checked);
-        
-        if (bulkDeleteBtn) {
-            bulkDeleteBtn.disabled = checkedCheckboxes.length === 0;
-        }
+        const checkboxes = visibleRows.map(row => row.querySelector('.row-checkbox')).filter(cb => cb);
+        const checkedCheckboxes = checkboxes.filter(cb => cb.checked);
+        if (bulkDeleteBtn) bulkDeleteBtn.disabled = checkedCheckboxes.length === 0;
     }
     
-    // Get selected user IDs
     function getSelectedUserIds() {
         const selectedIds = [];
         rows.forEach(row => {
             if (row.style.display !== 'none') {
                 const checkbox = row.querySelector('.row-checkbox');
-                if (checkbox && checkbox.checked) {
-                    const userId = checkbox.value;
-                    selectedIds.push(userId);
-                }
+                if (checkbox && checkbox.checked) selectedIds.push(checkbox.value);
             }
         });
         return selectedIds;
     }
     
-    // Bulk delete form submission
     function submitBulkDelete() {
         const selectedIds = getSelectedUserIds();
         if (selectedIds.length === 0) return;
-        
-        if (confirm(`Are you sure you want to delete ${selectedIds.length} selected user(s)? This action cannot be undone.`)) {
+        if (confirm('Delete ' + selectedIds.length + ' selected user(s)? This action cannot be undone.')) {
             const form = document.createElement('form');
             form.method = 'POST';
             form.action = '';
-            
             selectedIds.forEach(id => {
                 const input = document.createElement('input');
                 input.type = 'hidden';
@@ -519,80 +698,46 @@ document.addEventListener('DOMContentLoaded', function() {
                 input.value = id;
                 form.appendChild(input);
             });
-            
             const bulkInput = document.createElement('input');
             bulkInput.type = 'hidden';
             bulkInput.name = 'bulk_delete';
             bulkInput.value = '1';
             form.appendChild(bulkInput);
-            
             document.body.appendChild(form);
             form.submit();
         }
     }
     
-    // Export to CSV function - stays on same page
     window.exportToCSV = function() {
-        // Get all visible rows after filtering
         const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
+        if (visibleRows.length === 0) { alert('No data to export.'); return; }
         
-        if (visibleRows.length === 0) {
-            alert('No data to export.');
-            return;
-        }
-        
-        // Prepare CSV headers
         const headers = ['ID', 'Username', 'Full Name', 'Email', 'Role', 'Status', 'Created At', 'Last Login'];
-        
-        // Collect data from visible rows
         const data = [];
         visibleRows.forEach(row => {
             const cells = row.querySelectorAll('td');
             if (cells.length >= 9) {
-                const rowData = [
-                    cells[1]?.innerText.trim() || '',      // ID
-                    cells[2]?.innerText.trim() || '',      // Username
-                    cells[3]?.innerText.trim() || '',      // Full Name
-                    cells[4]?.innerText.trim() || '',      // Email
-                    cells[5]?.innerText.trim() || '',      // Role
-                    cells[6]?.innerText.trim() || '',      // Status
-                    cells[7]?.innerText.trim() || '',      // Created At
-                    cells[8]?.innerText.trim() || ''       // Last Login
-                ];
-                data.push(rowData);
+                data.push([
+                    cells[1]?.innerText.trim() || '',
+                    cells[2]?.innerText.trim() || '',
+                    cells[3]?.innerText.trim() || '',
+                    cells[4]?.innerText.trim() || '',
+                    cells[5]?.innerText.trim() || '',
+                    cells[6]?.innerText.trim() || '',
+                    cells[7]?.innerText.trim() || '',
+                    cells[8]?.innerText.trim() || ''
+                ]);
             }
         });
         
-        // Add statistics summary at the top of CSV
-        const stats = [
-            ['RATIN Analytics - Admin Users Export'],
-            ['Generated on:', new Date().toLocaleString()],
-            ['Total Admins:', '<?= $total_admins ?>'],
-            ['Active Users:', '<?= $active_count ?>'],
-            ['Super Admins:', '<?= $super_admin_count ?>'],
-            ['Standard Admins:', '<?= $total_admins - $super_admin_count ?>'],
-            [],
-            []  // Empty row before data
-        ];
+        const csvContent = [headers, ...data].map(row => row.map(cell => {
+            if (typeof cell === 'string' && (cell.includes(',') || cell.includes('"'))) {
+                return '"' + cell.replace(/"/g, '""') + '"';
+            }
+            return cell;
+        }).join(',')).join('\n');
         
-        // Combine stats and data
-        const csvData = [...stats, headers, ...data];
-        
-        // Convert to CSV
-        const csvContent = csvData.map(row => {
-            return row.map(cell => {
-                // Escape quotes and wrap in quotes if contains comma or newline
-                if (typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))) {
-                    return '"' + cell.replace(/"/g, '""') + '"';
-                }
-                return cell;
-            }).join(',');
-        }).join('\n');
-        
-        // Add BOM for UTF-8 to handle special characters
         const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-        
-        // Create download link
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
         link.href = url;
@@ -608,7 +753,6 @@ document.addEventListener('DOMContentLoaded', function() {
     if (roleFilter) roleFilter.addEventListener('change', filterRows);
     if (statusFilter) statusFilter.addEventListener('change', filterRows);
     
-    // Select All functionality
     if (selectAllCheckbox) {
         selectAllCheckbox.addEventListener('change', function() {
             const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
@@ -620,7 +764,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Individual row checkboxes
     rows.forEach(row => {
         const checkbox = row.querySelector('.row-checkbox');
         if (checkbox) {
@@ -631,40 +774,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // Bulk delete button
-    if (bulkDeleteBtn) {
-        bulkDeleteBtn.addEventListener('click', submitBulkDelete);
-    }
+    if (bulkDeleteBtn) bulkDeleteBtn.addEventListener('click', submitBulkDelete);
     
-    // Sorting functionality
-    const sortableHeaders = document.querySelectorAll('.sortable');
-    sortableHeaders.forEach(header => {
-        header.addEventListener('click', function() {
-            const sortColumn = this.getAttribute('data-sort');
-            
-            if (currentSortColumn === sortColumn) {
-                currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
-            } else {
-                currentSortColumn = sortColumn;
-                currentSortDirection = 'asc';
-            }
-            
-            // Update sort icons
-            sortableHeaders.forEach(h => {
-                const icon = h.querySelector('.material-symbols-outlined');
-                if (icon) icon.textContent = 'unfold_more';
-            });
-            
-            const currentIcon = this.querySelector('.material-symbols-outlined');
-            if (currentIcon) {
-                currentIcon.textContent = currentSortDirection === 'asc' ? 'arrow_upward' : 'arrow_downward';
-            }
-            
-            sortTable(currentSortColumn, currentSortDirection);
-        });
-    });
-    
-    // Initial filter to show proper count
     filterRows();
 });
 </script>
