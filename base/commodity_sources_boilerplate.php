@@ -1,5 +1,22 @@
 <?php
 session_start();
+require_once '../admin/includes/admin_header.php';
+
+// Check admin authentication
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    header("Location: ../admin/login.php");
+    exit;
+}
+
+// Include config
+if (file_exists('includes/config.php')) {
+    include 'includes/config.php';
+} elseif (file_exists('../admin/includes/config.php')) {
+    include '../admin/includes/config.php';
+}
+
+$message = '';
+$message_type = '';
 
 // Initialize selected commodity sources in session if not exists
 if (!isset($_SESSION['selected_commodity_sources'])) {
@@ -19,11 +36,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
         $key = array_search($id, $_SESSION['selected_commodity_sources']);
         if ($key !== false) {
             unset($_SESSION['selected_commodity_sources'][$key]);
-            $_SESSION['selected_commodity_sources'] = array_values($_SESSION['selected_commodity_sources']); // Re-index
+            $_SESSION['selected_commodity_sources'] = array_values($_SESSION['selected_commodity_sources']);
         }
     }
     
-    // Clear all selections
     if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
         $_SESSION['selected_commodity_sources'] = [];
     }
@@ -32,897 +48,856 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
     exit;
 }
 
-// Clear all selections if requested via GET
+// Clear all selections if requested
 if (isset($_GET['clear_selections'])) {
     $_SESSION['selected_commodity_sources'] = [];
 }
 
-// Include the configuration file first
-include '../admin/includes/config.php';
-
-// Include the shared header with the sidebar and initial HTML
-include '../admin/includes/header.php';
-
-// Handle delete action
-if (isset($_POST['delete_selected']) && isset($_POST['selected_ids'])) {
-    $selected_ids = $_POST['selected_ids'];
-    
-    // Convert all IDs to integers for safety
-    $ids = array_map('intval', $selected_ids);
-    $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    
-    $delete_sql = "DELETE FROM commodity_sources WHERE id IN ($placeholders)";
-    $stmt = $con->prepare($delete_sql);
-    
-    if ($stmt) {
-        // Build the types string (all integers)
-        $types = str_repeat('i', count($ids));
-        $stmt->bind_param($types, ...$ids);
+// Handle Add/Edit via POST
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    if (isset($_POST['add_source'])) {
+        $admin0_country = trim($_POST['admin0_country']);
+        $admin1_county_district = trim($_POST['admin1_county_district']);
+        $created_at = date('Y-m-d H:i:s');
         
-        if ($stmt->execute()) {
-            $delete_message = "Successfully deleted " . $stmt->affected_rows . " source(s).";
-            $delete_status = 'success';
-            
-            // Clear selections after deletion
-            $_SESSION['selected_commodity_sources'] = [];
-            
-            // Refresh the page to show updated data
-            echo '<script>setTimeout(function() { window.location.href = window.location.pathname + "?' . http_build_query($_GET) . '"; }, 1000);</script>';
+        // Check for duplicate
+        $check_stmt = $con->prepare("SELECT id FROM commodity_sources WHERE admin0_country = ? AND admin1_county_district = ?");
+        $check_stmt->bind_param("ss", $admin0_country, $admin1_county_district);
+        $check_stmt->execute();
+        $check_stmt->store_result();
+        
+        if ($check_stmt->num_rows > 0) {
+            $message = "This commodity source already exists!";
+            $message_type = "error";
         } else {
-            $delete_message = "Error deleting sources: " . $stmt->error;
-            $delete_status = 'danger';
+            $stmt = $con->prepare("INSERT INTO commodity_sources (admin0_country, admin1_county_district, created_at) VALUES (?, ?, ?)");
+            $stmt->bind_param("sss", $admin0_country, $admin1_county_district, $created_at);
+            if ($stmt->execute()) {
+                $message = "Commodity source added successfully!";
+                $message_type = "success";
+            } else {
+                $message = "Error adding source: " . $stmt->error;
+                $message_type = "error";
+            }
+            $stmt->close();
         }
-        $stmt->close();
-    } else {
-        $delete_message = "Error preparing delete statement: " . $con->error;
-        $delete_status = 'danger';
+        $check_stmt->close();
+    }
+    
+    if (isset($_POST['edit_source'])) {
+        $id = $_POST['source_id'];
+        $admin0_country = trim($_POST['admin0_country']);
+        $admin1_county_district = trim($_POST['admin1_county_district']);
+        
+        // Check for duplicate excluding current
+        $check_stmt = $con->prepare("SELECT id FROM commodity_sources WHERE admin0_country = ? AND admin1_county_district = ? AND id != ?");
+        $check_stmt->bind_param("ssi", $admin0_country, $admin1_county_district, $id);
+        $check_stmt->execute();
+        $check_stmt->store_result();
+        
+        if ($check_stmt->num_rows > 0) {
+            $message = "This commodity source already exists!";
+            $message_type = "error";
+        } else {
+            $stmt = $con->prepare("UPDATE commodity_sources SET admin0_country = ?, admin1_county_district = ? WHERE id = ?");
+            $stmt->bind_param("ssi", $admin0_country, $admin1_county_district, $id);
+            if ($stmt->execute()) {
+                $message = "Commodity source updated successfully!";
+                $message_type = "success";
+            } else {
+                $message = "Error updating source: " . $stmt->error;
+                $message_type = "error";
+            }
+            $stmt->close();
+        }
+        $check_stmt->close();
+    }
+    
+    // Handle Delete
+    if (isset($_POST['delete_selected']) && isset($_POST['selected_ids'])) {
+        $selected_ids = $_POST['selected_ids'];
+        $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+        $delete_sql = "DELETE FROM commodity_sources WHERE id IN ($placeholders)";
+        $stmt = $con->prepare($delete_sql);
+        if ($stmt) {
+            $types = str_repeat('i', count($selected_ids));
+            $stmt->bind_param($types, ...$selected_ids);
+            if ($stmt->execute()) {
+                $message = "Successfully deleted " . $stmt->affected_rows . " source(s).";
+                $message_type = "success";
+                $_SESSION['selected_commodity_sources'] = [];
+            } else {
+                $message = "Error deleting sources: " . $stmt->error;
+                $message_type = "error";
+            }
+            $stmt->close();
+        }
     }
 }
 
-// Handle filters
-$filters = [
-    'id' => isset($_GET['filter_id']) ? trim($_GET['filter_id']) : '',
-    'admin0' => isset($_GET['filter_admin0']) ? trim($_GET['filter_admin0']) : '',
-    'admin1' => isset($_GET['filter_admin1']) ? trim($_GET['filter_admin1']) : '',
-    'created_at' => isset($_GET['filter_created_at']) ? trim($_GET['filter_created_at']) : ''
-];
+// Get pagination parameters
+$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 20;
+$valid_limits = [10, 20, 50, 100];
+if (!in_array($limit, $valid_limits)) $limit = 20;
 
-// Build query with filters and sorting
-$query = "
-    SELECT
-        id,
-        admin0_country,
-        admin1_county_district,
-        created_at
-    FROM
-        commodity_sources
-    WHERE 1=1
-";
+// Get sort parameters
+$sort_column = isset($_GET['sort']) ? $_GET['sort'] : 'admin0_country';
+$sort_direction = isset($_GET['dir']) && $_GET['dir'] == 'asc' ? 'ASC' : 'DESC';
+$allowed_sort_columns = ['id', 'admin0_country', 'admin1_county_district', 'created_at'];
+if (!in_array($sort_column, $allowed_sort_columns)) $sort_column = 'admin0_country';
 
+// Get search parameters
+$search_country = isset($_GET['search_country']) ? $_GET['search_country'] : '';
+$search_county = isset($_GET['search_county']) ? $_GET['search_county'] : '';
+
+// Build query (removed date_updated)
+$sql = "SELECT id, admin0_country, admin1_county_district, created_at FROM commodity_sources WHERE 1=1";
 $params = [];
-$types = '';
+$types = "";
 
-if (!empty($filters['id'])) {
-    $query .= " AND id LIKE ?";
-    $params[] = '%' . $filters['id'] . '%';
-    $types .= 's';
+if (!empty($search_country)) {
+    $sql .= " AND admin0_country LIKE ?";
+    $params[] = '%' . $search_country . '%';
+    $types .= "s";
+}
+if (!empty($search_county)) {
+    $sql .= " AND admin1_county_district LIKE ?";
+    $params[] = '%' . $search_county . '%';
+    $types .= "s";
 }
 
-if (!empty($filters['admin0'])) {
-    $query .= " AND admin0_country LIKE ?";
-    $params[] = '%' . $filters['admin0'] . '%';
-    $types .= 's';
+// Count total records
+$count_sql = str_replace("SELECT id, admin0_country, admin1_county_district, created_at", "SELECT COUNT(*) as total", $sql);
+$count_stmt = $con->prepare($count_sql);
+if (!empty($params)) {
+    $count_stmt->bind_param($types, ...$params);
 }
+$count_stmt->execute();
+$total_records = $count_stmt->get_result()->fetch_assoc()['total'];
+$count_stmt->close();
 
-if (!empty($filters['admin1'])) {
-    $query .= " AND admin1_county_district LIKE ?";
-    $params[] = '%' . $filters['admin1'] . '%';
-    $types .= 's';
+// Add sorting and pagination
+$sql .= " ORDER BY $sort_column $sort_direction LIMIT ? OFFSET ?";
+$params[] = $limit;
+$params[] = ($page - 1) * $limit;
+$types .= "ii";
+
+$stmt = $con->prepare($sql);
+if (!empty($params)) {
+    $stmt->bind_param($types, ...$params);
 }
+$stmt->execute();
+$sources_data = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
 
-if (!empty($filters['created_at'])) {
-    $query .= " AND DATE(created_at) LIKE ?";
-    $params[] = '%' . $filters['created_at'] . '%';
-    $types .= 's';
-}
+$total_pages = ceil($total_records / $limit);
 
-// Apply sorting
-$sortable_columns = ['id', 'admin0_country', 'admin1_county_district', 'created_at'];
-$default_sort_column = 'admin0_country';
-$default_sort_order = 'ASC';
+// Fetch statistics
+$total_sources = $total_records;
+$distinct_countries = 0;
+$distinct_counties = 0;
+$kenya_sources = 0;
 
-$sort_column = isset($_GET['sort']) && in_array($_GET['sort'], $sortable_columns) ? $_GET['sort'] : $default_sort_column;
-$sort_order = isset($_GET['order']) && in_array(strtoupper($_GET['order']), ['ASC', 'DESC']) ? strtoupper($_GET['order']) : $default_sort_order;
+$country_stmt = $con->query("SELECT COUNT(DISTINCT admin0_country) as total FROM commodity_sources");
+if ($country_stmt) $distinct_countries = $country_stmt->fetch_assoc()['total'];
 
-// Map column names for database
-$db_column_map = [
-    'id' => 'id',
-    'admin0_country' => 'admin0_country',
-    'admin1_county_district' => 'admin1_county_district',
-    'created_at' => 'created_at'
-];
+$county_stmt = $con->query("SELECT COUNT(DISTINCT admin1_county_district) as total FROM commodity_sources");
+if ($county_stmt) $distinct_counties = $county_stmt->fetch_assoc()['total'];
 
-$db_sort_column = isset($db_column_map[$sort_column]) ? $db_column_map[$sort_column] : $db_column_map[$default_sort_column];
-$query .= " ORDER BY $db_sort_column $sort_order";
-
-// Get all data with filters and sorting
-$stmt = $con->prepare($query);
-if ($stmt) {
-    if (!empty($params)) {
-        $stmt->bind_param($types, ...$params);
-    }
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $commodity_sources = $result->fetch_all(MYSQLI_ASSOC);
-    $stmt->close();
-} else {
-    $commodity_sources = [];
-}
-
-// Pagination Logic (AFTER filtering and sorting)
-$itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
-$totalItems = count($commodity_sources);
-$totalPages = ceil($totalItems / $itemsPerPage);
-$page = isset($_GET['page']) ? max(1, min($totalPages, intval($_GET['page']))) : 1;
-$startIndex = ($page - 1) * $itemsPerPage;
-
-$commodity_sources_paged = array_slice($commodity_sources, $startIndex, $itemsPerPage);
-
-// --- Fetch counts for summary boxes ---
-$total_sources_query = "SELECT COUNT(*) AS total FROM commodity_sources";
-$total_sources_result = $con->query($total_sources_query);
-$total_sources_row = $total_sources_result->fetch_assoc();
-$total_sources = $total_sources_row['total'];
-
-$distinct_countries_query = "SELECT COUNT(DISTINCT admin0_country) AS total FROM commodity_sources";
-$distinct_countries_result = $con->query($distinct_countries_query);
-$distinct_countries_row = $distinct_countries_result->fetch_assoc();
-$distinct_countries_count = $distinct_countries_row['total'];
-
-$distinct_counties_query = "SELECT COUNT(DISTINCT admin1_county_district) AS total FROM commodity_sources";
-$distinct_counties_result = $con->query($distinct_counties_query);
-$distinct_counties_row = $distinct_counties_result->fetch_assoc();
-$distinct_counties_count = $distinct_counties_row['total'];
-
-$kenya_sources_query = "SELECT COUNT(*) AS total FROM commodity_sources WHERE admin0_country = 'Kenya'";
-$kenya_sources_result = $con->query($kenya_sources_query);
-$kenya_sources_row = $kenya_sources_result->fetch_assoc();
-$kenya_sources_count = $kenya_sources_row['total'];
+$kenya_stmt = $con->query("SELECT COUNT(*) as total FROM commodity_sources WHERE admin0_country = 'Kenya'");
+if ($kenya_stmt) $kenya_sources = $kenya_stmt->fetch_assoc()['total'];
 ?>
 
 <style>
-    .table-container {
-        background: white;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-    }
-    .filter-row {
-        background-color: white;
-    }
-    .btn-group {
-        margin-bottom: 15px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-    .btn-add-new {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        padding: 10px 20px;
-        font-size: 16px;
-        border: none;
-    }
-    .btn-add-new:hover {
-        background-color: darkred;
-    }
-    .btn-delete, .btn-export, .btn-bulk-export, .btn-clear-selections {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-        padding: 8px 16px;
-    }
-    .btn-delete:hover, .btn-export:hover, .btn-bulk-export:hover, .btn-clear-selections:hover {
-        background-color: #f8f9fa;
-    }
-    .btn-clear-selections {
-        background-color: #ffc107;
-        color: black;
-    }
-    .btn-clear-selections:hover {
-        background-color: #e0a800;
-    }
-    .btn-bulk-export {
-        background-color: #17a2b8;
-        color: white;
-    }
-    .btn-bulk-export:hover {
-        background-color: #138496;
-    }
-    .dropdown-menu {
-        min-width: 120px;
-    }
-    .dropdown-item {
-        cursor: pointer;
-    }
-    .filter-input {
-        width: 100%;
-        border: none;
-        background: white;
-        padding: 5px;
-        border-radius: 5px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    .filter-input:focus {
-        outline: none;
-        background: white;
-    }
-    .stats-container {
-        display: flex;
-        gap: 15px;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: nowrap;
-        width: 87%;
-        max-width: 100%;
-        margin: 0 auto 20px auto;
-        margin-left: 0.7%;
-    }
-    .stats-container > div {
-        flex: 1;
-        background: white;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        text-align: center;
-        min-height: 120px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-    }
-    .stats-icon {
-        width: 40px;
-        height: 40px;
-        margin-bottom: 10px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-    }
-    .total-sources-icon {
-        background-color: #3498db;
-        color: white;
-    }
-    .distinct-countries-icon {
-        background-color: #8e44ad;
-        color: white;
-    }
-    .distinct-counties-icon {
-        background-color: #1abc9c;
-        color: white;
-    }
-    .kenya-sources-icon {
-        background-color: #e67e22;
-        color: white;
-    }
-    .stats-section {
-        text-align: left;
-        margin-left: 11%;
-    }
-    .stats-title {
-        font-size: 16px;
-        font-weight: 600;
-        color: #2c3e50;
-        margin: 8px 0 5px 0;
-    }
-    .stats-number {
-        font-size: 24px;
-        font-weight: 700;
-        color: #34495e;
-    }
-    .modal-content {
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-    }
-    .modal-header {
-        background-color: #2c3e50;
-        color: white;
-        border-top-left-radius: 10px;
-        border-top-right-radius: 10px;
-    }
-    .modal-header .btn-close {
-        color: white;
-        filter: invert(1);
-    }
-    .form-control {
-        margin-bottom: 15px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        padding: 8px;
-    }
-    .form-control:focus {
-        outline: none;
-        border-color: rgba(180, 80, 50, 1);
-        box-shadow: 0 0 5px rgba(180, 80, 50, 0.5);
-    }
-    .btn-primary {
-        background-color: rgba(180, 80, 50, 1);
-        border: none;
-        padding: 10px 20px;
-        font-size: 16px;
-        border-radius: 5px;
-        color: white;
-        cursor: pointer;
-    }
-    .btn-primary:hover {
-        background-color: darkred;
-    }
-    .alert {
-        padding: 12px 20px;
-        border-radius: 8px;
-        margin-bottom: 20px;
-        border: 1px solid transparent;
-    }
-    .alert-success {
-        background-color: #d4edda;
-        border-color: #c3e6cb;
-        color: #155724;
-    }
-    .alert-danger {
-        background-color: #f8d7da;
-        border-color: #f5c6cb;
-        color: #721c24;
-    }
-    /* Sorting styles */
-    .sortable {
-        cursor: pointer;
-        position: relative;
-        user-select: none;
-    }
-    .sortable:hover {
-        background-color: #f0f0f0;
-    }
-    .sort-icon {
-        display: inline-block;
-        margin-left: 5px;
-        font-size: 0.8em;
-        opacity: 0.7;
-    }
-    .sort-asc .sort-icon::after {
-        content: "↑";
-    }
-    .sort-desc .sort-icon::after {
-        content: "↓";
-    }
-    .sortable.sort-asc,
-    .sortable.sort-desc {
-        background-color: #e9ecef;
-        font-weight: bold;
-    }
-    .date-added {
-        font-size: 0.85em;
-        color: #6c757d;
-    }
-    .selected-count {
-        display: inline-block;
-        background-color: rgba(180, 80, 50, 0.1);
-        color: rgba(180, 80, 50, 1);
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.85rem;
-        margin-left: 5px;
-        font-weight: bold;
-    }
+.auth-bg-gradient {
+    background: radial-gradient(circle at top left, rgba(0, 69, 13, 0.03), transparent),
+                radial-gradient(circle at bottom right, rgba(128, 0, 0, 0.03), transparent);
+}
+.header-accent-gradient {
+    background: linear-gradient(90deg, #00450d 0%, #800000 50%, #00450d 100%);
+}
+.table-row-hover:hover {
+    background-color: #fefaf5;
+    transition: all 0.2s ease;
+}
+.stat-card {
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.search-input:focus {
+    border-color: #800000;
+    outline: none;
+    ring: 2px solid rgba(128,0,0,0.2);
+}
+.action-btn {
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.375rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.pagination-btn {
+    min-width: 32px;
+    height: 32px;
+    transition: all 0.2s ease;
+}
+.pagination-btn:hover:not(:disabled):not(.active-page) {
+    background-color: #fef3e7;
+    border-color: #800000;
+    color: #800000;
+}
+.pagination-btn.active-page {
+    background-color: #800000;
+    border-color: #800000;
+    color: white;
+}
+.page-size-select {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid #e5e7eb;
+    background-color: white;
+    cursor: pointer;
+}
+.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.sortable:hover {
+    color: #800000;
+}
+.sort-icon {
+    font-size: 0.7rem;
+    margin-left: 0.2rem;
+    vertical-align: middle;
+}
+.modal-gradient-header {
+    background: linear-gradient(135deg, #800000 0%, #00450d 100%);
+}
+.selected-count {
+    display: inline-block;
+    background-color: rgba(180, 80, 50, 0.15);
+    color: #800000;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    margin-left: 0.5rem;
+}
 </style>
 
-<div class="stats-section">
-    <div class="text-wrapper-8"><h3>Commodity Sources Management</h3></div>
-    <p class="p">Manage geographical origins of commodities</p>
-
-    <div class="stats-container">
-        <div class="overlap-6">
-            <div class="stats-icon total-sources-icon">
-                <i class="fas fa-globe-americas"></i>
+<div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header Section -->
+        <div class="mb-6">
+            <div class="flex justify-between items-center flex-wrap gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-maroon">Commodity Sources Management</h1>
+                    <p class="text-gray-600 text-sm mt-1">Manage geographical origins of commodities</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="exportToCSV()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
+                        <span class="material-symbols-outlined text-base">download</span>
+                        Export CSV
+                    </button>
+                    <button onclick="openAddModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                        <span class="material-symbols-outlined text-base">add_location</span>
+                        Add Source
+                    </button>
+                </div>
             </div>
-            <div class="stats-title">Total Sources</div>
-            <div class="stats-number"><?php echo $total_sources; ?></div>
+            <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
         </div>
-        
-        <div class="overlap-6">
-            <div class="stats-icon distinct-countries-icon">
-                <i class="fas fa-flag"></i>
+
+        <!-- Messages -->
+        <?php if (!empty($message)): ?>
+            <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $message_type == 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
+                <span class="material-symbols-outlined text-base"><?= $message_type == 'success' ? 'check_circle' : 'error' ?></span>
+                <span class="text-sm font-medium"><?= htmlspecialchars($message) ?></span>
             </div>
-            <div class="stats-title">Distinct Countries</div>
-            <div class="stats-number"><?php echo $distinct_countries_count; ?></div>
-        </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon distinct-counties-icon">
-                <i class="fas fa-city"></i>
+        <?php endif; ?>
+
+        <!-- Statistics Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Total Sources</p>
+                        <p class="text-xl font-bold text-gray-800"><?= number_format($total_sources) ?></p>
+                    </div>
+                    <span class="material-symbols-outlined text-2xl text-maroon/40">inventory</span>
+                </div>
             </div>
-            <div class="stats-title">Distinct Counties/Districts</div>
-            <div class="stats-number"><?php echo $distinct_counties_count; ?></div>
-        </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon kenya-sources-icon">
-                <i class="fas fa-map-marker-alt"></i>
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-purple-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Distinct Countries</p>
+                        <p class="text-xl font-bold text-gray-800"><?= number_format($distinct_countries) ?></p>
+                    </div>
+                    <span class="material-symbols-outlined text-2xl text-purple-500/40">flag</span>
+                </div>
             </div>
-            <div class="stats-title">Sources from Kenya</div>
-            <div class="stats-number"><?php echo $kenya_sources_count; ?></div>
-        </div>
-    </div>
-</div>
-
-<?php if (isset($delete_message)): ?>
-    <div class="alert alert-<?php echo $delete_status; ?>" style="margin: 20px; width: auto;">
-        <?php echo $delete_message; ?>
-    </div>
-<?php endif; ?>
-
-<div class="container">
-    <div class="table-container">
-        <div class="btn-group">
-            <a href="add_commodity_sources.php" class="btn btn-add-new">
-                <i class="fas fa-plus" style="margin-right: 5px;"></i>
-                Add New
-            </a>
-
-            <button class="btn btn-delete" onclick="deleteSelected()">
-                <i class="fas fa-trash" style="margin-right: 3px;"></i>
-                Delete
-                <?php if (count($_SESSION['selected_commodity_sources']) > 0): ?>
-                    <span class="selected-count"><?php echo count($_SESSION['selected_commodity_sources']); ?></span>
-                <?php endif; ?>
-            </button>
-
-            <button class="btn btn-clear-selections" onclick="clearAllSelections()">
-                <i class="fas fa-times-circle" style="margin-right: 3px;"></i>
-                Clear Selections
-            </button>
-
-            <form method="POST" action="export_current_page_sources.php" style="display: inline;">
-                <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
-                <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
-                <input type="hidden" name="filters" value="<?php echo htmlspecialchars(json_encode($filters)); ?>">
-                <input type="hidden" name="sort" value="<?php echo $sort_column; ?>">
-                <input type="hidden" name="order" value="<?php echo $sort_order; ?>">
-                <button type="submit" class="btn-export">
-                    <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
-                </button>
-            </form>
-
-            <form method="POST" action="bulk_export_sources.php" style="display: inline;">
-                <input type="hidden" name="filters" value="<?php echo htmlspecialchars(json_encode($filters)); ?>">
-                <input type="hidden" name="sort" value="<?php echo $sort_column; ?>">
-                <input type="hidden" name="order" value="<?php echo $sort_order; ?>">
-                <button type="submit" class="btn-bulk-export">
-                    <i class="fas fa-database" style="margin-right: 3px;"></i> Bulk Export (All)
-                </button>
-            </form>
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-teal-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Distinct Counties</p>
+                        <p class="text-xl font-bold text-gray-800"><?= number_format($distinct_counties) ?></p>
+                    </div>
+                    <span class="material-symbols-outlined text-2xl text-teal-500/40">location_city</span>
+                </div>
+            </div>
+            <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-orange-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs text-gray-400 uppercase tracking-wide">Sources from Kenya</p>
+                        <p class="text-xl font-bold text-gray-800"><?= number_format($kenya_sources) ?></p>
+                    </div>
+                    <span class="material-symbols-outlined text-2xl text-orange-500/40">map</span>
+                </div>
+            </div>
         </div>
 
-        <table class="table table-striped table-hover">
-            <thead>
-                <tr style="background-color: #d3d3d3 !important; color: black !important;">
-                    <th><input type="checkbox" id="selectAll"></th>
-                    <th class="sortable <?php echo getSortClass('id'); ?>" onclick="sortTable('id')">
-                        ID
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('admin0_country'); ?>" onclick="sortTable('admin0_country')">
-                        Admin-0 (Country)
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('admin1_county_district'); ?>" onclick="sortTable('admin1_county_district')">
-                        Admin-1 (County/District)
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('created_at'); ?>" onclick="sortTable('created_at')">
-                        Created On
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th>Actions</th>
-                </tr>
-                <tr class="filter-row" style="background-color: white !important; color: black !important;">
-                    <th></th>
-                    <th>
-                        <input type="text" 
-                               class="filter-input" 
-                               id="filterId" 
-                               placeholder="Filter ID"
-                               value="<?php echo htmlspecialchars($filters['id']); ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" 
-                               class="filter-input" 
-                               id="filterAdmin0" 
-                               placeholder="Filter Country"
-                               value="<?php echo htmlspecialchars($filters['admin0']); ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" 
-                               class="filter-input" 
-                               id="filterAdmin1" 
-                               placeholder="Filter County/District"
-                               value="<?php echo htmlspecialchars($filters['admin1']); ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" 
-                               class="filter-input" 
-                               id="filterCreatedAt" 
-                               placeholder="YYYY-MM-DD"
-                               value="<?php echo htmlspecialchars($filters['created_at']); ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <?php if (!empty($filters['id']) || !empty($filters['admin0']) || !empty($filters['admin1']) || !empty($filters['created_at'])): ?>
-                            <a href="?" class="btn btn-sm" style="background-color: #6c757d; color: white; text-decoration: none;">
-                                <i class="fas fa-times"></i> Clear
-                            </a>
-                        <?php endif; ?>
-                    </th>
-                </tr>
-            </thead>
-            <tbody id="commoditySourceTable">
-                <?php if (empty($commodity_sources_paged)): ?>
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 40px; color: #666;">
-                            <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; display: block; color: #ccc;"></i>
-                            No commodity sources found<?php echo (!empty($filters['id']) || !empty($filters['admin0']) || !empty($filters['admin1']) || !empty($filters['created_at'])) ? ' matching your filters' : ''; ?>.
-                        </td>
-                    </tr>
-                <?php else: ?>
-                    <?php foreach ($commodity_sources_paged as $source): ?>
+        <!-- Search and Filter Bar -->
+        <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
+            <div class="flex flex-wrap gap-3 items-center justify-between">
+                <div class="flex-1 min-w-[150px]">
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">search</span>
+                        <input type="text" id="searchCountry" placeholder="Search country..." 
+                               class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                               value="<?= htmlspecialchars($search_country) ?>">
+                    </div>
+                </div>
+                <div class="flex-1 min-w-[150px]">
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">location_on</span>
+                        <input type="text" id="searchCounty" placeholder="Search county/district..." 
+                               class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                               value="<?= htmlspecialchars($search_county) ?>">
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all">
+                        <span class="material-symbols-outlined text-base align-middle">filter_list</span>
+                        Filter
+                    </button>
+                    <button id="clearSelectionsBtn" class="px-3 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition-all">
+                        <span class="material-symbols-outlined text-base align-middle">clear</span>
+                        Clear Selected
+                    </button>
+                    <button id="bulkDeleteBtn" class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        <span class="material-symbols-outlined text-base align-middle">delete</span>
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sources Table -->
+        <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm" id="sourcesTable">
+                    <thead class="bg-gray-50 border-b border-gray-200">
                         <tr>
-                            <td>
-                                <input type="checkbox" 
-                                       class="row-checkbox" 
-                                       name="selected_ids[]" 
-                                       value="<?php echo htmlspecialchars($source['id']); ?>"
-                                       <?php echo in_array($source['id'], $_SESSION['selected_commodity_sources']) ? 'checked' : ''; ?>
-                                       onchange="updateSelection(this, <?php echo $source['id']; ?>)">
-                            </td>
-                            <td><?php echo htmlspecialchars($source['id']); ?></td>
-                            <td><?php echo htmlspecialchars($source['admin0_country']); ?></td>
-                            <td><?php echo htmlspecialchars($source['admin1_county_district']); ?></td>
-                            <td class="date-added">
-                                <?php 
-                                if (!empty($source['created_at'])) {
-                                    echo date('Y-m-d', strtotime($source['created_at']));
-                                } else {
-                                    echo 'N/A';
-                                }
-                                ?>
-                            </td>
-                            <td>
-                                <a href="edit_commodity_sources.php?id=<?php echo htmlspecialchars($source['id']); ?>">
-                                    <button class="btn btn-sm btn-warning">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                </a>
-                            </td>
+                            <th class="w-8 px-3 py-2 text-left">
+                                <input type="checkbox" id="selectAllCheckbox" class="rounded border-gray-300 text-maroon focus:ring-maroon/20">
+                            </th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="id">
+                                ID 
+                                <?php if ($sort_column == 'id'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
+                            </th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="admin0_country">
+                                Country
+                                <?php if ($sort_column == 'admin0_country'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
+                            </th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="admin1_county_district">
+                                County/District
+                                <?php if ($sort_column == 'admin1_county_district'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
+                            </th>
+                            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="created_at">
+                                Date Added
+                                <?php if ($sort_column == 'created_at'): ?>
+                                    <span class="sort-icon"><?= $sort_direction == 'ASC' ? '↑' : '↓' ?></span>
+                                <?php endif; ?>
+                            </th>
+                            <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-24">Actions</th>
                         </tr>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </tbody>
-        </table>
-
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
-                <?php if (count($_SESSION['selected_commodity_sources']) > 0): ?>
-                    <span class="selected-count"><?php echo count($_SESSION['selected_commodity_sources']); ?> selected across all pages</span>
-                <?php endif; ?>
-                <?php if (!empty($sort_column)): ?>
-                    <span class="text-muted ms-2">Sorted by: <?php echo ucfirst(str_replace('_', ' ', $sort_column)); ?> (<?php echo $sort_order; ?>)</span>
-                <?php endif; ?>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100" id="tableBody">
+                        <?php if (empty($sources_data)): ?>
+                            <tr>
+                                <td colspan="6" class="px-3 py-8 text-center text-gray-400">
+                                    <span class="material-symbols-outlined text-3xl">inventory_2</span>
+                                    <p class="text-sm mt-1">No commodity sources found</p>
+                                </td>
+                            </tr>
+                        <?php else: ?>
+                            <?php foreach ($sources_data as $source): ?>
+                                <tr class="table-row-hover" data-id="<?= $source['id'] ?>" 
+                                    data-country="<?= htmlspecialchars($source['admin0_country']) ?>" 
+                                    data-county="<?= htmlspecialchars($source['admin1_county_district']) ?>">
+                                    <td class="px-3 py-2">
+                                        <input type="checkbox" class="row-checkbox rounded border-gray-300 text-maroon focus:ring-maroon/20" value="<?= $source['id'] ?>"
+                                            <?= in_array($source['id'], $_SESSION['selected_commodity_sources']) ? 'checked' : '' ?>>
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-gray-600"><?= $source['id'] ?></td>
+                                    <td class="px-3 py-2">
+                                        <div class="flex items-center gap-1">
+                                            <span class="material-symbols-outlined text-gray-400 text-sm">flag</span>
+                                            <span class="text-gray-800 text-xs font-medium"><?= htmlspecialchars($source['admin0_country']) ?></span>
+                                        </div>
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        <div class="flex items-center gap-1">
+                                            <span class="material-symbols-outlined text-gray-400 text-sm">location_on</span>
+                                            <span class="text-gray-700 text-xs"><?= htmlspecialchars($source['admin1_county_district']) ?></span>
+                                        </div>
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-gray-500"><?= date('M d, Y', strtotime($source['created_at'])) ?></span></div></td>
+                                    <td class="px-3 py-2">
+                                        <div class="flex items-center justify-center gap-1">
+                                            <button onclick="editSource(<?= $source['id'] ?>, '<?= htmlspecialchars($source['admin0_country']) ?>', '<?= htmlspecialchars($source['admin1_county_district']) ?>')" 
+                                                    class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200" title="Edit">
+                                                <span class="material-symbols-outlined text-sm">edit</span>
+                                            </button>
+                                            <button onclick="deleteSource(<?= $source['id'] ?>, '<?= htmlspecialchars($source['admin0_country']) ?>', '<?= htmlspecialchars($source['admin1_county_district']) ?>')" 
+                                                    class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete">
+                                                <span class="material-symbols-outlined text-sm">delete</span>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
-            <div>
-                <label for="itemsPerPage">Show:</label>
-                <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                    <option value="7" <?php echo ($itemsPerPage == 7) ? 'selected' : ''; ?>>7</option>
-                    <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
-                    <option value="20" <?php echo ($itemsPerPage == 20) ? 'selected' : ''; ?>>20</option>
-                    <option value="50" <?php echo ($itemsPerPage == 50) ? 'selected' : ''; ?>>50</option>
-                </select>
+            
+            <!-- Pagination Section -->
+            <div class="border-t border-gray-200 px-4 py-3 bg-white">
+                <div class="flex flex-wrap justify-between items-center gap-3">
+                    <div class="text-xs text-gray-500">
+                        Showing <?= ($page - 1) * $limit + 1 ?> to <?= min($page * $limit, $total_records) ?> of <?= $total_records ?> sources
+                        <?php if (count($_SESSION['selected_commodity_sources']) > 0): ?>
+                            <span class="selected-count"><?= count($_SESSION['selected_commodity_sources']) ?> selected</span>
+                        <?php endif; ?>
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-gray-500">Rows:</span>
+                            <select id="rowsPerPage" class="page-size-select" onchange="changeRowsPerPage()">
+                                <option value="10" <?= $limit == 10 ? 'selected' : '' ?>>10</option>
+                                <option value="20" <?= $limit == 20 ? 'selected' : '' ?>>20</option>
+                                <option value="50" <?= $limit == 50 ? 'selected' : '' ?>>50</option>
+                                <option value="100" <?= $limit == 100 ? 'selected' : '' ?>>100</option>
+                            </select>
+                        </div>
+                        
+                        <nav class="flex items-center gap-1">
+                            <button onclick="goToPage(1)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center <?= $page <= 1 ? 'opacity-40 cursor-not-allowed' : '' ?>" <?= $page <= 1 ? 'disabled' : '' ?>>
+                                <span class="material-symbols-outlined text-sm">first_page</span>
+                            </button>
+                            <button onclick="goToPage(<?= $page - 1 ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center <?= $page <= 1 ? 'opacity-40 cursor-not-allowed' : '' ?>" <?= $page <= 1 ? 'disabled' : '' ?>>
+                                <span class="material-symbols-outlined text-sm">chevron_left</span>
+                            </button>
+                            
+                            <?php
+                            $start_page = max(1, $page - 2);
+                            $end_page = min($total_pages, $page + 2);
+                            if ($start_page > 1) {
+                                echo '<button onclick="goToPage(1)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 text-xs">1</button>';
+                                if ($start_page > 2) echo '<span class="text-gray-400 px-1">...</span>';
+                            }
+                            for ($i = $start_page; $i <= $end_page; $i++) {
+                                $active_class = ($i == $page) ? 'active-page bg-maroon text-white' : 'border border-gray-200 hover:bg-gray-50';
+                                echo '<button onclick="goToPage(' . $i . ')" class="pagination-btn w-7 h-7 rounded text-xs ' . $active_class . '">' . $i . '</button>';
+                            }
+                            if ($end_page < $total_pages) {
+                                if ($end_page < $total_pages - 1) echo '<span class="text-gray-400 px-1">...</span>';
+                                echo '<button onclick="goToPage(' . $total_pages . ')" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 text-xs">' . $total_pages . '</button>';
+                            }
+                            ?>
+                            
+                            <button onclick="goToPage(<?= $page + 1 ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center <?= $page >= $total_pages ? 'opacity-40 cursor-not-allowed' : '' ?>" <?= $page >= $total_pages ? 'disabled' : '' ?>>
+                                <span class="material-symbols-outlined text-sm">chevron_right</span>
+                            </button>
+                            <button onclick="goToPage(<?= $total_pages ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 flex items-center justify-center <?= $page >= $total_pages ? 'opacity-40 cursor-not-allowed' : '' ?>" <?= $page >= $total_pages ? 'disabled' : '' ?>>
+                                <span class="material-symbols-outlined text-sm">last_page</span>
+                            </button>
+                        </nav>
+                    </div>
+                    
+                    <a href="../base/landing_page.php" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all">
+                        <span class="material-symbols-outlined text-base">arrow_back</span>
+                        Back
+                    </a>
+                </div>
             </div>
-            <nav>
-                <ul class="pagination mb-0">
-                    <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $itemsPerPage, $sort_column, $sort_order); ?>">Prev</a>
-                    </li>
-                    <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
-                            <a class="page-link" href="<?php echo getPageUrl($i, $itemsPerPage, $sort_column, $sort_order); ?>"><?php echo $i; ?></a>
-                        </li>
-                    <?php endfor; ?>
-                    <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : getPageUrl($page + 1, $itemsPerPage, $sort_column, $sort_order); ?>">Next</a>
-                    </li>
-                </ul>
-            </nav>
         </div>
     </div>
 </div>
 
-<!-- Delete form (separate from filter form) -->
-<form method="POST" action="" id="deleteForm" style="display: none;">
-    <input type="hidden" name="delete_selected" value="1">
-</form>
+<!-- Add/Edit Source Modal -->
+<div id="sourceModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center sticky top-0">
+                <h3 id="modalTitle" class="text-base font-semibold text-white">Add Commodity Source</h3>
+                <button onclick="closeModal('sourceModal')" class="text-white/80 hover:text-white">
+                    <span class="material-symbols-outlined text-base">close</span>
+                </button>
+            </div>
+            <div class="p-5">
+                <form method="POST" action="" id="sourceForm">
+                    <input type="hidden" name="source_id" id="sourceId">
+                    <div class="mb-4">
+                        <label class="block text-xs text-gray-600 mb-1">Country <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">flag</span>
+                            <input type="text" name="admin0_country" id="countryInput" required 
+                                   class="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                                   placeholder="e.g., Kenya">
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-xs text-gray-600 mb-1">County/District <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">location_on</span>
+                            <input type="text" name="admin1_county_district" id="countyInput" required 
+                                   class="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                                   placeholder="e.g., Nairobi">
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                        <button type="button" onclick="closeModal('sourceModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="submit" name="add_source" id="submitBtn" class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Add Source</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
 
-<?php
-// Helper function to generate page URLs with filters and sorting
-function getPageUrl($pageNum, $itemsPerPage, $sortColumn = null, $sortOrder = null) {
-    $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
-    
-    // Add sort parameters if provided
-    if ($sortColumn) {
-        $url .= '&sort=' . urlencode($sortColumn);
-    }
-    if ($sortOrder) {
-        $url .= '&order=' . urlencode($sortOrder);
-    }
-    
-    // Add filter parameters if they exist
-    $filterParams = ['filter_id', 'filter_admin0', 'filter_admin1', 'filter_created_at'];
-    foreach ($filterParams as $param) {
-        if (isset($_GET[$param]) && !empty($_GET[$param])) {
-            $url .= '&' . $param . '=' . urlencode($_GET[$param]);
-        }
-    }
-    
-    return $url;
-}
-
-// Helper function to get sort CSS class
-function getSortClass($column) {
-    $current_sort = isset($_GET['sort']) ? $_GET['sort'] : 'admin0_country';
-    $current_order = isset($_GET['order']) ? strtoupper($_GET['order']) : 'ASC';
-    
-    if ($current_sort === $column) {
-        return $current_order === 'ASC' ? 'sort-asc' : 'sort-desc';
-    }
-    return '';
-}
-?>
+<!-- Delete Confirmation Modal -->
+<div id="deleteModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center">
+    <div class="bg-white rounded-lg w-full max-w-md shadow-xl">
+        <div class="p-4">
+            <div class="flex items-center gap-2 mb-3">
+                <span class="material-symbols-outlined text-red-500">warning</span>
+                <h3 class="text-base font-semibold text-gray-800">Confirm Deletion</h3>
+            </div>
+            <p id="deleteModalText" class="text-sm text-gray-500 mb-3">Are you sure you want to delete this source?</p>
+            <div class="bg-red-50 border-l-4 border-red-500 p-2 mb-3 text-xs text-red-700">
+                <span class="material-symbols-outlined text-xs align-middle">info</span>
+                This action cannot be undone.
+            </div>
+            <form method="POST" action="" id="deleteForm">
+                <input type="hidden" name="delete_selected" value="1">
+                <input type="hidden" name="selected_ids[]" id="deleteId">
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('deleteModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <script>
-document.addEventListener("DOMContentLoaded", function() {
-    // Initialize select all checkbox based on current page selections
-    updateSelectAllCheckbox();
-    
-    // Update breadcrumb
-    if (typeof updateBreadcrumb === 'function') {
-        updateBreadcrumb('Base', 'Commodity Sources');
-    }
-});
+// Pagination functions
+function goToPage(page) {
+    const limit = document.getElementById('rowsPerPage').value;
+    const searchCountry = document.getElementById('searchCountry').value;
+    const searchCounty = document.getElementById('searchCounty').value;
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort') || '';
+    const currentDir = urlParams.get('dir') || '';
+    let url = '?page=' + page + '&limit=' + limit;
+    if (searchCountry) url += '&search_country=' + encodeURIComponent(searchCountry);
+    if (searchCounty) url += '&search_county=' + encodeURIComponent(searchCounty);
+    if (currentSort) url += '&sort=' + currentSort;
+    if (currentDir) url += '&dir=' + currentDir;
+    window.location.href = url;
+}
 
-// Update selection function
+function changeRowsPerPage() {
+    const limit = document.getElementById('rowsPerPage').value;
+    const searchCountry = document.getElementById('searchCountry').value;
+    const searchCounty = document.getElementById('searchCounty').value;
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort') || '';
+    const currentDir = urlParams.get('dir') || '';
+    let url = '?page=1&limit=' + limit;
+    if (searchCountry) url += '&search_country=' + encodeURIComponent(searchCountry);
+    if (searchCounty) url += '&search_county=' + encodeURIComponent(searchCounty);
+    if (currentSort) url += '&sort=' + currentSort;
+    if (currentDir) url += '&dir=' + currentDir;
+    window.location.href = url;
+}
+
+function applyFilters() {
+    const searchCountry = document.getElementById('searchCountry').value;
+    const searchCounty = document.getElementById('searchCounty').value;
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort') || '';
+    const currentDir = urlParams.get('dir') || '';
+    let url = '?page=1&limit=' + document.getElementById('rowsPerPage').value;
+    if (searchCountry) url += '&search_country=' + encodeURIComponent(searchCountry);
+    if (searchCounty) url += '&search_county=' + encodeURIComponent(searchCounty);
+    if (currentSort) url += '&sort=' + currentSort;
+    if (currentDir) url += '&dir=' + currentDir;
+    window.location.href = url;
+}
+
+function sortTable(column) {
+    const limit = document.getElementById('rowsPerPage').value;
+    const searchCountry = document.getElementById('searchCountry').value;
+    const searchCounty = document.getElementById('searchCounty').value;
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort');
+    const currentDir = urlParams.get('dir');
+    let newDir = 'asc';
+    if (currentSort === column && currentDir === 'asc') newDir = 'desc';
+    let url = '?page=1&limit=' + limit + '&sort=' + column + '&dir=' + newDir;
+    if (searchCountry) url += '&search_country=' + encodeURIComponent(searchCountry);
+    if (searchCounty) url += '&search_county=' + encodeURIComponent(searchCounty);
+    window.location.href = url;
+}
+
+// Modal functions
+function openAddModal() {
+    document.getElementById('modalTitle').innerHTML = 'Add Commodity Source';
+    document.getElementById('sourceId').value = '';
+    document.getElementById('countryInput').value = '';
+    document.getElementById('countyInput').value = '';
+    document.getElementById('submitBtn').name = 'add_source';
+    openModal('sourceModal');
+}
+
+function editSource(id, country, county) {
+    document.getElementById('modalTitle').innerHTML = 'Edit Commodity Source';
+    document.getElementById('sourceId').value = id;
+    document.getElementById('countryInput').value = country;
+    document.getElementById('countyInput').value = county;
+    document.getElementById('submitBtn').name = 'edit_source';
+    openModal('sourceModal');
+}
+
+function deleteSource(id, country, county) {
+    document.getElementById('deleteModalText').innerHTML = 'Are you sure you want to delete <strong>' + country + ' - ' + county + '</strong>?';
+    document.getElementById('deleteId').value = id;
+    openModal('deleteModal');
+}
+
+function openModal(modalId) { document.getElementById(modalId).classList.remove('hidden'); }
+function closeModal(modalId) { document.getElementById(modalId).classList.add('hidden'); }
+
+// Selection management
 function updateSelection(checkbox, id) {
     const isSelected = checkbox.checked;
     
     fetch(window.location.href, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `action=update_selection&id=${id}&selected=${isSelected}`
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'action=update_selection&id=' + id + '&selected=' + isSelected
     })
     .then(response => response.json())
     .then(data => {
-        console.log('Selection updated:', data);
         updateSelectAllCheckbox();
-        updateSelectionCount();
+        updateBulkDeleteButton();
+        updateSelectionCount(data.count);
     })
     .catch(error => console.error('Error updating selection:', error));
 }
 
-function updateSelectionCount() {
-    // This would refresh the selection count display
-    console.log('Selection count updated');
-}
-
-function sortTable(column) {
-    const url = new URL(window.location);
-    const currentSort = url.searchParams.get('sort');
-    const currentOrder = url.searchParams.get('order');
-    
-    // Toggle order if clicking the same column
-    if (currentSort === column) {
-        const newOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
-        url.searchParams.set('order', newOrder);
-    } else {
-        // New column, default to ASC for most, DESC for created_at
-        const defaultOrder = column === 'created_at' ? 'DESC' : 'ASC';
-        url.searchParams.set('sort', column);
-        url.searchParams.set('order', defaultOrder);
-    }
-    
-    // Reset to page 1 when sorting
-    url.searchParams.set('page', '1');
-    
-    window.location.href = url.toString();
-}
-
-function applyFilters() {
-    const filters = {
-        id: document.getElementById('filterId').value,
-        admin0: document.getElementById('filterAdmin0').value,
-        admin1: document.getElementById('filterAdmin1').value,
-        createdAt: document.getElementById('filterCreatedAt').value
-    };
-
-    // Build URL with filter parameters
-    const url = new URL(window.location);
-    
-    // Set filter parameters
-    if (filters.id) url.searchParams.set('filter_id', filters.id);
-    else url.searchParams.delete('filter_id');
-    
-    if (filters.admin0) url.searchParams.set('filter_admin0', filters.admin0);
-    else url.searchParams.delete('filter_admin0');
-    
-    if (filters.admin1) url.searchParams.set('filter_admin1', filters.admin1);
-    else url.searchParams.delete('filter_admin1');
-    
-    if (filters.createdAt) url.searchParams.set('filter_created_at', filters.createdAt);
-    else url.searchParams.delete('filter_created_at');
-    
-    // Reset to page 1 when filtering
-    url.searchParams.set('page', '1');
-    
-    // Navigate to filtered URL
-    window.location.href = url.toString();
-}
-
-function updateItemsPerPage(value) {
-    const url = new URL(window.location);
-    url.searchParams.set('limit', value);
-    url.searchParams.set('page', '1');
-    window.location.href = url.toString();
-}
-
-function updateSelectAllCheckbox() {
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    const selectAll = document.getElementById('selectAll');
-    
-    if (checkboxes.length === 0) {
-        selectAll.checked = false;
-        return;
-    }
-    
-    // Check if all checkboxes on current page are checked
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
-    
-    selectAll.checked = allChecked;
-    selectAll.indeterminate = !allChecked && someChecked;
-}
-
-document.getElementById('selectAll').addEventListener('change', function() {
-    const isChecked = this.checked;
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    
-    // Update all checkboxes on current page
-    checkboxes.forEach(checkbox => {
-        if (checkbox.checked !== isChecked) {
-            checkbox.checked = isChecked;
-            // Trigger the update for each checkbox
-            if (checkbox.onchange) {
-                checkbox.onchange();
-            }
+function updateSelectionCount(count) {
+    const countSpan = document.querySelector('.selected-count');
+    if (countSpan) {
+        if (count > 0) {
+            countSpan.textContent = count + ' selected';
+            countSpan.style.display = 'inline-block';
+        } else {
+            countSpan.style.display = 'none';
         }
-    });
-    
-    // Clear all selections if unchecking
-    if (!isChecked) {
-        clearAllSelectionsSilent();
     }
-});
+}
 
 function clearAllSelections() {
     if (confirm('Clear all selections across all pages?')) {
-        clearAllSelectionsSilent();
-        alert('All selections cleared.');
-        location.reload();
+        fetch(window.location.href, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=update_selection&clear_all=true'
+        })
+        .then(() => {
+            document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+            updateSelectAllCheckbox();
+            updateBulkDeleteButton();
+            updateSelectionCount(0);
+        })
+        .catch(error => console.error('Error clearing selections:', error));
     }
 }
 
-function clearAllSelectionsSilent() {
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: 'action=update_selection&clear_all=true'
-    })
-    .catch(error => console.error('Error clearing selections:', error));
-}
-
-function deleteSelected() {
-    // Get count from session (across all pages)
-    const selectedCount = <?php echo count($_SESSION['selected_commodity_sources']); ?>;
+// Table interaction functions
+document.addEventListener('DOMContentLoaded', function() {
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+    const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+    const clearSelectionsBtn = document.getElementById('clearSelectionsBtn');
+    const tableBody = document.getElementById('tableBody');
+    const rows = tableBody.querySelectorAll('tr');
     
-    if (selectedCount === 0) {
-        alert('Please select at least one source to delete.');
+    // Attach sort listeners
+    const sortableHeaders = document.querySelectorAll('.sortable');
+    sortableHeaders.forEach(header => {
+        header.addEventListener('click', function() {
+            const sortColumn = this.getAttribute('data-sort');
+            if (sortColumn) sortTable(sortColumn);
+        });
+    });
+    
+    function updateSelectAllCheckbox() {
+        const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
+        const checkboxes = visibleRows.map(row => row.querySelector('.row-checkbox')).filter(cb => cb);
+        const checkedCheckboxes = checkboxes.filter(cb => cb.checked);
+        
+        if (selectAllCheckbox) {
+            if (checkboxes.length === 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            } else if (checkedCheckboxes.length === checkboxes.length) {
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.indeterminate = false;
+            } else if (checkedCheckboxes.length > 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = true;
+            } else {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            }
+        }
+    }
+    
+    function updateBulkDeleteButton() {
+        const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
+        const checkboxes = visibleRows.map(row => row.querySelector('.row-checkbox')).filter(cb => cb);
+        const checkedCheckboxes = checkboxes.filter(cb => cb.checked);
+        if (bulkDeleteBtn) bulkDeleteBtn.disabled = checkedCheckboxes.length === 0;
+    }
+    
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', function() {
+            const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
+            visibleRows.forEach(row => {
+                const checkbox = row.querySelector('.row-checkbox');
+                if (checkbox) {
+                    checkbox.checked = selectAllCheckbox.checked;
+                    if (checkbox.onchange) checkbox.onchange();
+                }
+            });
+            updateBulkDeleteButton();
+        });
+    }
+    
+    rows.forEach(row => {
+        const checkbox = row.querySelector('.row-checkbox');
+        if (checkbox) {
+            checkbox.addEventListener('change', function() {
+                updateSelectAllCheckbox();
+                updateBulkDeleteButton();
+                if (checkbox.onchange) checkbox.onchange();
+            });
+        }
+    });
+    
+    if (bulkDeleteBtn) {
+        bulkDeleteBtn.addEventListener('click', function() {
+            const selectedIds = [];
+            const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
+            visibleRows.forEach(row => {
+                const checkbox = row.querySelector('.row-checkbox');
+                if (checkbox && checkbox.checked) selectedIds.push(checkbox.value);
+            });
+            
+            if (selectedIds.length === 0) {
+                alert('Please select at least one source to delete.');
+                return;
+            }
+            
+            if (confirm('Delete ' + selectedIds.length + ' selected source(s)? This cannot be undone.')) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '';
+                form.innerHTML = '<input type="hidden" name="delete_selected" value="1">' +
+                    selectedIds.map(id => '<input type="hidden" name="selected_ids[]" value="' + id + '">').join('');
+                document.body.appendChild(form);
+                form.submit();
+            }
+        });
+    }
+    
+    if (clearSelectionsBtn) {
+        clearSelectionsBtn.addEventListener('click', clearAllSelections);
+    }
+    
+    updateSelectAllCheckbox();
+    updateBulkDeleteButton();
+});
+
+// Export to CSV
+function exportToCSV() {
+    const rows = document.querySelectorAll('#tableBody tr');
+    const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
+    
+    if (visibleRows.length === 0) {
+        alert('No data to export.');
         return;
     }
-
-    if (confirm('Are you sure you want to delete ' + selectedCount + ' selected source(s) across all pages?')) {
-        // Get the delete form
-        const deleteForm = document.getElementById('deleteForm');
-        
-        // Remove any existing selected_ids inputs
-        const existingInputs = deleteForm.querySelectorAll('input[name="selected_ids[]"]');
-        existingInputs.forEach(input => input.remove());
-        
-        // Add selected IDs from session
-        <?php foreach ($_SESSION['selected_commodity_sources'] as $id): ?>
-            const idInput<?php echo $id; ?> = document.createElement('input');
-            idInput<?php echo $id; ?>.type = 'hidden';
-            idInput<?php echo $id; ?>.name = 'selected_ids[]';
-            idInput<?php echo $id; ?>.value = '<?php echo $id; ?>';
-            deleteForm.appendChild(idInput<?php echo $id; ?>);
-        <?php endforeach; ?>
-        
-        // Submit the delete form
-        deleteForm.submit();
-    }
-}
-
-function exportSelected(format) {
-    const selectedCount = <?php echo count($_SESSION['selected_commodity_sources']); ?>;
     
-    if (selectedCount === 0) {
-        alert('Please select at least one source to export.');
-        return;
-    }
+    const headers = ['ID', 'Country', 'County/District', 'Date Added'];
+    const data = [];
+    visibleRows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 5) {
+            data.push([
+                cells[1]?.innerText.trim() || '',
+                cells[2]?.innerText.trim() || '',
+                cells[3]?.innerText.trim() || '',
+                cells[4]?.innerText.trim() || ''
+            ]);
+        }
+    });
     
-    // Create a form to submit the export request
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = 'export_sources.php';
+    const csvContent = [headers, ...data].map(row => row.map(cell => {
+        if (typeof cell === 'string' && (cell.includes(',') || cell.includes('"'))) {
+            return '"' + cell.replace(/"/g, '""') + '"';
+        }
+        return cell;
+    }).join(',')).join('\n');
     
-    // Add format parameter
-    const formatInput = document.createElement('input');
-    formatInput.type = 'hidden';
-    formatInput.name = 'export_format';
-    formatInput.value = format;
-    form.appendChild(formatInput);
-    
-    // Add sort parameters
-    const sortInput = document.createElement('input');
-    sortInput.type = 'hidden';
-    sortInput.name = 'sort';
-    sortInput.value = '<?php echo $sort_column; ?>';
-    form.appendChild(sortInput);
-    
-    const orderInput = document.createElement('input');
-    orderInput.type = 'hidden';
-    orderInput.name = 'order';
-    orderInput.value = '<?php echo $sort_order; ?>';
-    form.appendChild(orderInput);
-    
-    // Add selected IDs from session
-    <?php foreach ($_SESSION['selected_commodity_sources'] as $id): ?>
-        const idInput<?php echo $id; ?> = document.createElement('input');
-        idInput<?php echo $id; ?>.type = 'hidden';
-        idInput<?php echo $id; ?>.name = 'selected_ids[]';
-        idInput<?php echo $id; ?>.value = '<?php echo $id; ?>';
-        form.appendChild(idInput<?php echo $id; ?>);
-    <?php endforeach; ?>
-    
-    // Submit the form
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.setAttribute('download', 'commodity_sources_export_' + new Date().toISOString().split('T')[0] + '.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 </script>
 
-<?php include '../admin/includes/footer.php'; ?>
+<?php require_once '../admin/includes/admin_footer.php'; ?>
