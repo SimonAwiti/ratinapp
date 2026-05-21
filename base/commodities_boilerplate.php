@@ -1,1343 +1,892 @@
 <?php
 session_start();
 
-// Initialize selected commodities in session if not exists
-if (!isset($_SESSION['selected_commodities'])) {
-    $_SESSION['selected_commodities'] = [];
-}
-
-// Handle selection updates via AJAX
-if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
-    $id = $_POST['id'];
-    $isSelected = $_POST['selected'] === 'true';
-    
-    if ($isSelected) {
-        if (!in_array($id, $_SESSION['selected_commodities'])) {
-            $_SESSION['selected_commodities'][] = $id;
-        }
+// ============================================================
+// API HANDLER - Must be at very top before ANY output
+// ============================================================
+if (isset($_GET['get_commodity']) && is_numeric($_GET['get_commodity'])) {
+    // Include config before DB access
+    if (file_exists('includes/config.php')) {
+        include 'includes/config.php';
+    } elseif (file_exists('../admin/includes/config.php')) {
+        include '../admin/includes/config.php';
+    }
+    header('Content-Type: application/json');
+    $get_id = (int)$_GET['get_commodity'];
+    $api_stmt = $con->prepare("SELECT id, commodity_name, category_id, variety, hs_code, units, commodity_alias, country, image_url FROM commodities WHERE id = ?");
+    $api_stmt->bind_param("i", $get_id);
+    $api_stmt->execute();
+    $api_result = $api_stmt->get_result();
+    if ($api_row = $api_result->fetch_assoc()) {
+        $api_row['units']           = json_decode($api_row['units'], true) ?: [];
+        $api_row['commodity_alias'] = json_decode($api_row['commodity_alias'], true) ?: [];
+        $api_row['country']         = json_decode($api_row['country'], true) ?: [];
+        echo json_encode($api_row);
     } else {
-        $key = array_search($id, $_SESSION['selected_commodities']);
-        if ($key !== false) {
-            unset($_SESSION['selected_commodities'][$key]);
-            $_SESSION['selected_commodities'] = array_values($_SESSION['selected_commodities']); // Re-index
-        }
+        http_response_code(404);
+        echo json_encode(['error' => 'Commodity not found']);
     }
-    
-    // Clear all selections
-    if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
-        $_SESSION['selected_commodities'] = [];
-    }
-    
-    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_commodities'])]);
+    $api_stmt->close();
+    $con->close();
     exit;
 }
 
-// Clear all selections if requested via GET
-if (isset($_GET['clear_selections'])) {
-    $_SESSION['selected_commodities'] = [];
-}
-
-// Include the configuration file first
-include '../admin/includes/config.php';
-
-// Include the shared header with the sidebar and initial HTML
-include '../admin/includes/header.php';
-
-// Handle CSV import
-if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
-    $file = $_FILES['csv_file']['tmp_name'];
-    $handle = fopen($file, "r");
-    
-    // Skip header row
-    fgetcsv($handle);
-    
-    $successCount = 0;
-    $errorCount = 0;
-    $errors = array();
-    
-    // Start transaction
-    $con->begin_transaction();
-    
-    try {
-        $rowNumber = 1; // Track row numbers for better error reporting
-        
-        while (($data = fgetcsv($handle, 1000, ","))) {
-            $rowNumber++;
-            
-            // Skip completely empty rows
-            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
-                continue; // Skip empty rows without counting as errors
-            }
-            
-            // Validate required fields
-            if (empty(trim($data[0]))) { // HS Code
-                $errors[] = "Row $rowNumber: HS Code is required (found: '" . (isset($data[0]) ? $data[0] : 'null') . "')";
-                $errorCount++;
-                continue;
-            }
-            
-            if (empty(trim($data[1]))) { // Category
-                $errors[] = "Row $rowNumber: Category is required (found: '" . (isset($data[1]) ? $data[1] : 'null') . "')";
-                $errorCount++;
-                continue;
-            }
-            
-            if (empty(trim($data[2]))) { // Commodity Name
-                $errors[] = "Row $rowNumber: Commodity Name is required (found: '" . (isset($data[2]) ? $data[2] : 'null') . "')";
-                $errorCount++;
-                continue;
-            }
-            
-            // Get or create category
-            $category_name = trim($data[1]);
-            $category_query = "SELECT id FROM commodity_categories WHERE name = ?";
-            $category_stmt = $con->prepare($category_query);
-            $category_stmt->bind_param('s', $category_name);
-            $category_stmt->execute();
-            $category_result = $category_stmt->get_result();
-            
-            if ($category_result->num_rows > 0) {
-                $category_row = $category_result->fetch_assoc();
-                $category_id = $category_row['id'];
-            } else {
-                // Create new category
-                $insert_category = "INSERT INTO commodity_categories (name) VALUES (?)";
-                $insert_stmt = $con->prepare($insert_category);
-                $insert_stmt->bind_param('s', $category_name);
-                $insert_stmt->execute();
-                $category_id = $con->insert_id;
-            }
-            
-            // Prepare commodity data
-            $hs_code = trim($data[0]);
-            $commodity_name = trim($data[2]);
-            $variety = isset($data[3]) ? trim($data[3]) : '';
-            
-            // Handle units JSON - FIXED VERSION
-            $units_array = [];
-            $packaging_units_csv = isset($data[4]) ? trim($data[4]) : '';
-            if (!empty($packaging_units_csv)) {
-                $packaging_units = array_map('trim', explode(',', $packaging_units_csv)); // Trim all elements
-                foreach ($packaging_units as $pu) {
-                    // Updated regex to handle optional spaces and be more flexible
-                    if (preg_match('/(\d+)\s*(\w+)/', $pu, $matches)) {
-                        $units_array[] = array(
-                            'size' => trim($matches[1]),
-                            'unit' => trim($matches[2])
-                        );
-                    } else {
-                        // Log warning for unparseable units
-                        $errors[] = "Row $rowNumber: Warning - Could not parse unit format: '$pu'";
-                    }
-                }
-            }
-            $units_json = json_encode($units_array, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if ($units_json === false) {
-                $errors[] = "Row $rowNumber: Failed to encode units as JSON - " . json_last_error_msg();
-                $errorCount++;
-                continue;
-            }
-            // Clean the JSON string of any potential invisible characters
-            $units_json = trim(preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $units_json));
-            
-            // Handle aliases and countries JSON - IMPROVED VERSION
-            $alias_country_pairs = [];
-            $aliases_countries_csv = isset($data[5]) ? trim($data[5]) : '';
-            if (!empty($aliases_countries_csv)) {
-                $aliases_countries = array_map('trim', explode(',', $aliases_countries_csv)); // Trim all elements
-                foreach ($aliases_countries as $ac) {
-                    if (strpos($ac, ':') !== false) {
-                        $parts = explode(':', $ac, 2);
-                        if (count($parts) == 2) {
-                            $alias_country_pairs[] = array(
-                                'alias' => trim($parts[0]),
-                                'country' => trim($parts[1])
-                            );
-                        }
-                    } else {
-                        // Log warning for unparseable alias:country format
-                        $errors[] = "Row $rowNumber: Warning - Could not parse alias:country format: '$ac'";
-                    }
-                }
-            }
-            $aliases_json = json_encode($alias_country_pairs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if ($aliases_json === false) {
-                $errors[] = "Row $rowNumber: Failed to encode aliases as JSON - " . json_last_error_msg();
-                $errorCount++;
-                continue;
-            }
-            // Clean the JSON string of any potential invisible characters
-            $aliases_json = trim(preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $aliases_json));
-            
-            // Get unique countries for country column
-            $unique_countries = [];
-            if (!empty($alias_country_pairs)) {
-                $countries = array_column($alias_country_pairs, 'country');
-                $unique_countries = array_values(array_unique(array_filter($countries))); // Remove empty values
-            }
-            $countries_json = json_encode($unique_countries, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if ($countries_json === false) {
-                $errors[] = "Row $rowNumber: Failed to encode countries as JSON - " . json_last_error_msg();
-                $errorCount++;
-                continue;
-            }
-            // Clean the JSON string of any potential invisible characters
-            $countries_json = trim(preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $countries_json));
-            
-            // Enhanced JSON validation with proper error checking
-            $units_decoded = json_decode($units_json);
-            $aliases_decoded = json_decode($aliases_json);
-            $countries_decoded = json_decode($countries_json);
-            
-            if ($units_json !== '[]' && $units_decoded === null) {
-                $errors[] = "Row $rowNumber: Invalid units JSON format - " . json_last_error_msg();
-                $errorCount++;
-                continue;
-            }
-            if ($aliases_json !== '[]' && $aliases_decoded === null) {
-                $errors[] = "Row $rowNumber: Invalid aliases JSON format - " . json_last_error_msg();
-                $errorCount++;
-                continue;
-            }
-            if ($countries_json !== '[]' && $countries_decoded === null) {
-                $errors[] = "Row $rowNumber: Invalid countries JSON format - " . json_last_error_msg();
-                $errorCount++;
-                continue;
-            }
-            
-            // Check if commodity already exists
-            $check_query = "SELECT id FROM commodities WHERE hs_code = ? AND commodity_name = ?";
-            $check_stmt = $con->prepare($check_query);
-            $check_stmt->bind_param('ss', $hs_code, $commodity_name);
-            $check_stmt->execute();
-            $check_result = $check_stmt->get_result();
-            
-            if ($check_result->num_rows > 0) {
-                if (isset($_POST['overwrite_existing'])) {
-                    // Update existing commodity - Direct JSON insertion without CAST
-                    $update_query = "UPDATE commodities SET 
-                        category_id = ?, 
-                        variety = ?, 
-                        units = ?, 
-                        commodity_alias = ?, 
-                        country = ? 
-                        WHERE hs_code = ? AND commodity_name = ?";
-                    
-                    $update_stmt = $con->prepare($update_query);
-                    if (!$update_stmt) {
-                        $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
-                        $errorCount++;
-                        continue;
-                    }
-                    
-                    $update_stmt->bind_param(
-                        'issssss',
-                        $category_id,
-                        $variety,
-                        $units_json,
-                        $aliases_json,
-                        $countries_json,
-                        $hs_code,
-                        $commodity_name
-                    );
-                    
-                    if ($update_stmt->execute()) {
-                        $successCount++;
-                    } else {
-                        $errors[] = "Row $rowNumber: Update failed - " . $update_stmt->error;
-                        $errorCount++;
-                    }
-                    $update_stmt->close();
-                } else {
-                    $errors[] = "Row $rowNumber: Commodity with HS Code '$hs_code' and name '$commodity_name' already exists (use overwrite option to update)";
-                    $errorCount++;
-                }
-                continue;
-            }
-            
-            // Insert commodity - Direct JSON insertion without CAST
-            $insert_query = "INSERT INTO commodities (
-                hs_code, 
-                category_id, 
-                commodity_name, 
-                variety, 
-                units, 
-                commodity_alias, 
-                country,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())";
-            
-            $insert_stmt = $con->prepare($insert_query);
-            if (!$insert_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
-                $errorCount++;
-                continue;
-            }
-            
-            // Send JSON as strings - MySQL will handle the conversion automatically
-            $insert_stmt->bind_param(
-                'sisssss',
-                $hs_code,
-                $category_id,
-                $commodity_name,
-                $variety,
-                $units_json,
-                $aliases_json,
-                $countries_json
-            );
-            
-            if ($insert_stmt->execute()) {
-                $successCount++;
-            } else {
-                $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
-                $errorCount++;
-            }
-            $insert_stmt->close();
-        }
-        
-        // Commit transaction if no critical errors (allow warnings)
-        $criticalErrors = 0;
-        foreach ($errors as $error) {
-            if (strpos($error, 'Warning') === false) {
-                $criticalErrors++;
-            }
-        }
-        
-        if ($criticalErrors === 0) {
-            $con->commit();
-            $warningCount = count($errors) - $criticalErrors;
-            if ($warningCount > 0) {
-                $import_message = "Successfully imported $successCount commodities with $warningCount warnings. Warnings: " . implode('<br>', $errors);
-                $import_status = 'warning';
-            } else {
-                $import_message = "Successfully imported $successCount commodities.";
-                $import_status = 'success';
-            }
-        } else {
-            $con->rollback();
-            $import_message = "Import rolled back due to $criticalErrors critical errors. Processed $successCount rows successfully. Errors: " . implode('<br>', $errors);
-            $import_status = 'danger';
-        }
-        
-    } catch (Exception $e) {
-        $con->rollback();
-        $import_message = "Import failed with exception: " . $e->getMessage();
-        $import_status = 'danger';
+// ============================================================
+// EXPORT HANDLER - Must be before any HTML output too
+// ============================================================
+if (isset($_GET['export_all'])) {
+    if (file_exists('includes/config.php')) {
+        include 'includes/config.php';
+    } elseif (file_exists('../admin/includes/config.php')) {
+        include '../admin/includes/config.php';
     }
-    
-    fclose($handle);
-} elseif (isset($_POST['import_csv'])) {
-    $import_message = "Please select a valid CSV file to import.";
-    $import_status = 'danger';
+    // Clear any buffered output
+    while (ob_get_level()) ob_end_clean();
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="commodities_export_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $export_sql = "SELECT c.id, c.commodity_name, cat.name as category, c.variety, c.hs_code, c.units, c.commodity_alias, c.country, c.created_at
+                   FROM commodities c
+                   LEFT JOIN commodity_categories cat ON c.category_id = cat.id
+                   ORDER BY c.id DESC";
+    $export_result = $con->query($export_sql);
+
+    $output = fopen('php://output', 'w');
+    // UTF-8 BOM for Excel compatibility
+    fputs($output, "\xEF\xBB\xBF");
+    fputcsv($output, ['ID', 'Commodity Name', 'Category', 'Variety', 'HS Code', 'Packaging/Units', 'Aliases', 'Countries', 'Date Added']);
+
+    while ($row = $export_result->fetch_assoc()) {
+        $units    = json_decode($row['units'], true) ?: [];
+        $aliases  = json_decode($row['commodity_alias'], true) ?: [];
+        $countries= json_decode($row['country'], true) ?: [];
+
+        $units_str    = implode('; ', array_map(fn($u) => ($u['size'] ?? '') . ' ' . ($u['unit'] ?? ''), $units));
+        $aliases_str  = implode(', ', $aliases);
+        $countries_str= implode(', ', $countries);
+
+        fputcsv($output, [
+            $row['id'],
+            $row['commodity_name'],
+            $row['category'] ?? '',
+            $row['variety'] ?: '',
+            $row['hs_code'] ?: '',
+            $units_str,
+            $aliases_str,
+            $countries_str,
+            date('Y-m-d', strtotime($row['created_at']))
+        ]);
+    }
+    fclose($output);
+    $con->close();
+    exit;
 }
 
-// --- Fetch all data for the table with filtering and sorting ---
-$query = "
-    SELECT
-        c.id,
-        c.hs_code,
-        cc.name AS category,
-        c.commodity_name,
-        c.variety,
-        c.image_url,
-        c.created_at
-    FROM
-        commodities c
-    JOIN
-        commodity_categories cc ON c.category_id = cc.id
-    WHERE 1=1
-";
+// ============================================================
+// NORMAL PAGE LOAD - now safe to include headers / HTML
+// ============================================================
+require_once '../admin/includes/admin_header.php';
 
-// Apply filters from GET parameters (for server-side filtering)
-$filterConditions = [];
-$params = [];
-$types = '';
-
-if (isset($_GET['filter_id']) && !empty($_GET['filter_id'])) {
-    $filterConditions[] = "c.id = ?";
-    $params[] = $_GET['filter_id'];
-    $types .= 's';
+// Check admin authentication
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    header("Location: ../admin/login.php");
+    exit;
 }
 
-if (isset($_GET['filter_hs_code']) && !empty($_GET['filter_hs_code'])) {
-    $filterConditions[] = "c.hs_code LIKE ?";
-    $params[] = '%' . $_GET['filter_hs_code'] . '%';
-    $types .= 's';
+// Include config
+if (file_exists('includes/config.php')) {
+    include 'includes/config.php';
+} elseif (file_exists('../admin/includes/config.php')) {
+    include '../admin/includes/config.php';
 }
 
-if (isset($_GET['filter_category']) && !empty($_GET['filter_category'])) {
-    $filterConditions[] = "cc.name LIKE ?";
-    $params[] = '%' . $_GET['filter_category'] . '%';
-    $types .= 's';
+$message = '';
+$message_type = '';
+
+// Handle Add via POST
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['add_commodity'])) {
+    $commodity_name  = trim($_POST['commodity_name']);
+    $category_id     = (int)$_POST['category'];
+    $variety         = trim($_POST['variety']);
+    $hs_code         = trim($_POST['hs_code']);
+    $packaging_sizes = $_POST['packaging'] ?? [];
+    $packaging_units = $_POST['unit'] ?? [];
+    $aliases         = $_POST['commodity_alias'] ?? [];
+    $countries_list  = $_POST['country'] ?? [];
+    $created_at      = date('Y-m-d H:i:s');
+
+    if (empty($commodity_name) || empty($category_id)) {
+        $message = "Please fill all required fields.";
+        $message_type = "error";
+    } else {
+        $check_stmt = $con->prepare("SELECT id FROM commodities WHERE commodity_name = ? AND category_id = ?");
+        $check_stmt->bind_param("si", $commodity_name, $category_id);
+        $check_stmt->execute();
+        $check_stmt->store_result();
+
+        if ($check_stmt->num_rows > 0) {
+            $message = "This commodity already exists in this category!";
+            $message_type = "error";
+        } else {
+            $packaging_units_arr = [];
+            for ($i = 0; $i < count($packaging_sizes); $i++) {
+                if (!empty($packaging_sizes[$i]) && !empty($packaging_units[$i])) {
+                    $packaging_units_arr[] = ['size' => trim($packaging_sizes[$i]), 'unit' => trim($packaging_units[$i])];
+                }
+            }
+            $units_json    = json_encode($packaging_units_arr);
+            $aliases_json  = json_encode(array_values(array_filter($aliases)));
+            $countries_json= json_encode(array_values(array_filter($countries_list)));
+
+            $image_url = '';
+            if (isset($_FILES['commodity_image']) && $_FILES['commodity_image']['error'] === UPLOAD_ERR_OK) {
+                $upload_dir = '../base/uploads/';
+                if (!file_exists($upload_dir)) mkdir($upload_dir, 0777, true);
+                $image_name = time() . '_' . basename($_FILES['commodity_image']['name']);
+                if (move_uploaded_file($_FILES['commodity_image']['tmp_name'], $upload_dir . $image_name)) {
+                    $image_url = 'uploads/' . $image_name;
+                }
+            }
+
+            $stmt = $con->prepare("INSERT INTO commodities (commodity_name, category_id, variety, hs_code, units, commodity_alias, country, image_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("sisssssss", $commodity_name, $category_id, $variety, $hs_code, $units_json, $aliases_json, $countries_json, $image_url, $created_at);
+            if ($stmt->execute()) { $message = "Commodity added successfully!"; $message_type = "success"; }
+            else { $message = "Error adding commodity: " . $stmt->error; $message_type = "error"; }
+            $stmt->close();
+        }
+        $check_stmt->close();
+    }
 }
 
-if (isset($_GET['filter_commodity']) && !empty($_GET['filter_commodity'])) {
-    $filterConditions[] = "c.commodity_name LIKE ?";
-    $params[] = '%' . $_GET['filter_commodity'] . '%';
-    $types .= 's';
+// Handle Edit via POST
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_commodity'])) {
+    $id              = (int)$_POST['commodity_id'];
+    $commodity_name  = trim($_POST['commodity_name']);
+    $category_id     = (int)$_POST['category'];
+    $variety         = trim($_POST['variety']);
+    $hs_code         = trim($_POST['hs_code']);
+    $packaging_sizes = $_POST['packaging'] ?? [];
+    $packaging_units = $_POST['unit'] ?? [];
+    $aliases         = $_POST['commodity_alias'] ?? [];
+    $countries_list  = $_POST['country'] ?? [];
+
+    if (empty($commodity_name) || empty($category_id)) {
+        $message = "Please fill all required fields."; $message_type = "error";
+    } else {
+        $packaging_units_arr = [];
+        for ($i = 0; $i < count($packaging_sizes); $i++) {
+            if (!empty($packaging_sizes[$i]) && !empty($packaging_units[$i])) {
+                $packaging_units_arr[] = ['size' => trim($packaging_sizes[$i]), 'unit' => trim($packaging_units[$i])];
+            }
+        }
+        $units_json    = json_encode($packaging_units_arr);
+        $aliases_json  = json_encode(array_values(array_filter($aliases)));
+        $countries_json= json_encode(array_values(array_filter($countries_list)));
+
+        // Get current image
+        $s = $con->prepare("SELECT image_url FROM commodities WHERE id = ?");
+        $s->bind_param("i", $id); $s->execute();
+        $current   = $s->get_result()->fetch_assoc();
+        $image_url = $current['image_url'] ?? '';
+        $s->close();
+
+        if (isset($_FILES['commodity_image']) && $_FILES['commodity_image']['error'] === UPLOAD_ERR_OK) {
+            $upload_dir = '../base/uploads/';
+            if (!file_exists($upload_dir)) mkdir($upload_dir, 0777, true);
+            $image_name = time() . '_' . basename($_FILES['commodity_image']['name']);
+            if (move_uploaded_file($_FILES['commodity_image']['tmp_name'], $upload_dir . $image_name)) {
+                $image_url = 'uploads/' . $image_name;
+            }
+        }
+
+        $stmt = $con->prepare("UPDATE commodities SET commodity_name=?, category_id=?, variety=?, hs_code=?, units=?, commodity_alias=?, country=?, image_url=? WHERE id=?");
+        $stmt->bind_param("sissssssi", $commodity_name, $category_id, $variety, $hs_code, $units_json, $aliases_json, $countries_json, $image_url, $id);
+        if ($stmt->execute()) { $message = "Commodity updated successfully!"; $message_type = "success"; }
+        else { $message = "Error updating commodity: " . $stmt->error; $message_type = "error"; }
+        $stmt->close();
+    }
 }
 
-if (isset($_GET['filter_variety']) && !empty($_GET['filter_variety'])) {
-    $filterConditions[] = "c.variety LIKE ?";
-    $params[] = '%' . $_GET['filter_variety'] . '%';
-    $types .= 's';
+// Handle Delete (bulk or single)
+if (isset($_POST['delete_selected']) && !empty($_POST['selected_ids'])) {
+    $selected_ids = array_map('intval', (array)$_POST['selected_ids']);
+    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+    $stmt = $con->prepare("DELETE FROM commodities WHERE id IN ($placeholders)");
+    if ($stmt) {
+        $types = str_repeat('i', count($selected_ids));
+        $stmt->bind_param($types, ...$selected_ids);
+        if ($stmt->execute()) { $message = "Successfully deleted " . $stmt->affected_rows . " commodity(ies)."; $message_type = "success"; }
+        else { $message = "Error deleting: " . $stmt->error; $message_type = "error"; }
+        $stmt->close();
+    }
 }
 
-if (!empty($filterConditions)) {
-    $query .= " AND " . implode(" AND ", $filterConditions);
-}
+// Pagination
+$page  = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 20;
+if (!in_array($limit, [10, 20, 50, 100])) $limit = 20;
 
-// Apply sorting
-$sortable_columns = ['id', 'hs_code', 'category', 'commodity_name', 'variety', 'created_at'];
-$default_sort_column = 'id';
-$default_sort_order = 'DESC';
+// Sort
+$sort_column    = isset($_GET['sort']) ? $_GET['sort'] : 'created_at';
+$sort_direction = (isset($_GET['dir']) && $_GET['dir'] == 'asc') ? 'ASC' : 'DESC';
+if (!in_array($sort_column, ['id','commodity_name','category_name','variety','created_at'])) $sort_column = 'created_at';
 
-$sort_column = isset($_GET['sort']) && in_array($_GET['sort'], $sortable_columns) ? $_GET['sort'] : $default_sort_column;
-$sort_order = isset($_GET['order']) && in_array(strtoupper($_GET['order']), ['ASC', 'DESC']) ? strtoupper($_GET['order']) : $default_sort_order;
+// Search
+$search_commodity = $_GET['search_commodity'] ?? '';
+$search_category  = $_GET['search_category'] ?? '';
 
-// Map column names for database
-$db_column_map = [
-    'id' => 'c.id',
-    'hs_code' => 'c.hs_code',
-    'category' => 'cc.name',
-    'commodity_name' => 'c.commodity_name',
-    'variety' => 'c.variety',
-    'created_at' => 'c.created_at'
-];
+// Build query
+$sql    = "SELECT c.id, c.commodity_name, c.variety, c.hs_code, c.units, c.commodity_alias, c.country, c.image_url, c.created_at, cat.name as category_name
+           FROM commodities c
+           LEFT JOIN commodity_categories cat ON c.category_id = cat.id
+           WHERE 1=1";
+$params = []; $types = "";
 
-$db_sort_column = isset($db_column_map[$sort_column]) ? $db_column_map[$sort_column] : $db_column_map[$default_sort_column];
-$query .= " ORDER BY $db_sort_column $sort_order";
+if (!empty($search_commodity)) { $sql .= " AND c.commodity_name LIKE ?"; $params[] = '%'.$search_commodity.'%'; $types .= "s"; }
+if (!empty($search_category))  { $sql .= " AND cat.name LIKE ?";          $params[] = '%'.$search_category.'%';  $types .= "s"; }
 
-// Prepare and execute query with filters and sorting
-$stmt = $con->prepare($query);
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
-}
+// Count
+$count_sql  = preg_replace('/SELECT .+ FROM/', 'SELECT COUNT(*) as total FROM', $sql);
+$count_stmt = $con->prepare($count_sql);
+if (!empty($params)) $count_stmt->bind_param($types, ...$params);
+$count_stmt->execute();
+$total_records = $count_stmt->get_result()->fetch_assoc()['total'];
+$count_stmt->close();
+
+$sql .= " ORDER BY " . ($sort_column == 'category_name' ? 'cat.name' : 'c.'.$sort_column) . " $sort_direction LIMIT ? OFFSET ?";
+$params[] = $limit; $params[] = ($page - 1) * $limit; $types .= "ii";
+
+$stmt = $con->prepare($sql);
+if (!empty($params)) $stmt->bind_param($types, ...$params);
 $stmt->execute();
-$result = $stmt->get_result();
-$commodities = $result->fetch_all(MYSQLI_ASSOC);
+$commodities_data = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+$total_pages = ceil($total_records / $limit);
 
-// Pagination Logic (AFTER filtering and sorting)
-$itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
-$totalItems = count($commodities);
-$totalPages = ceil($totalItems / $itemsPerPage);
-$page = isset($_GET['page']) ? max(1, min($totalPages, intval($_GET['page']))) : 1;
-$startIndex = ($page - 1) * $itemsPerPage;
+// Categories & Countries
+$categories = [];
+$cat_result = $con->query("SELECT id, name FROM commodity_categories ORDER BY name ASC");
+if ($cat_result) while ($r = $cat_result->fetch_assoc()) $categories[] = $r;
 
-$commodities_paged = array_slice($commodities, $startIndex, $itemsPerPage);
+$countries = [];
+$ctry_result = $con->query("SELECT country_name FROM countries ORDER BY country_name ASC");
+if ($ctry_result) while ($r = $ctry_result->fetch_assoc()) $countries[] = $r['country_name'];
 
-// --- Fetch counts for summary boxes ---
-$total_commodities_query = "SELECT COUNT(*) AS total FROM commodities";
-$total_commodities_result = $con->query($total_commodities_query);
-$total_commodities = 0;
-if ($total_commodities_result) {
-    $row = $total_commodities_result->fetch_assoc();
-    $total_commodities = $row['total'];
-}
-
-// FIXED: Use LIKE queries to count categories that start with specific patterns
-$cereals_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id IN (SELECT id FROM commodity_categories WHERE name LIKE 'Cereal%')";
-$cereals_result = $con->query($cereals_query);
-$cereals_count = 0;
-if ($cereals_result) {
-    $row = $cereals_result->fetch_assoc();
-    $cereals_count = $row['total'];
-}
-
-$pulses_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id IN (SELECT id FROM commodity_categories WHERE name LIKE 'Pulse%')";
-$pulses_result = $con->query($pulses_query);
-$pulses_count = 0;
-if ($pulses_result) {
-    $row = $pulses_result->fetch_assoc();
-    $pulses_count = $row['total'];
-}
-
-$oil_seeds_query = "SELECT COUNT(*) AS total FROM commodities WHERE category_id IN (SELECT id FROM commodity_categories WHERE name LIKE 'Oil%')";
-$oil_seeds_result = $con->query($oil_seeds_query);
-$oil_seeds_count = 0;
-if ($oil_seeds_result) {
-    $row = $oil_seeds_result->fetch_assoc();
-    $oil_seeds_count = $row['total'];
-}
+// Stats
+$total_commodities = $total_records;
+$cereals_count = $con->query("SELECT COUNT(*) as t FROM commodities c LEFT JOIN commodity_categories cat ON c.category_id=cat.id WHERE cat.name LIKE 'Cereal%'")->fetch_assoc()['t'] ?? 0;
+$pulses_count  = $con->query("SELECT COUNT(*) as t FROM commodities c LEFT JOIN commodity_categories cat ON c.category_id=cat.id WHERE cat.name LIKE 'Pulse%'")->fetch_assoc()['t'] ?? 0;
+$oil_seeds_count=$con->query("SELECT COUNT(*) as t FROM commodities c LEFT JOIN commodity_categories cat ON c.category_id=cat.id WHERE cat.name LIKE 'Oil%'")->fetch_assoc()['t'] ?? 0;
 ?>
 
 <style>
-    .table-container {
-        background: white;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-    }
-    .filter-row {
-        background-color: white;
-    }
-    .btn-group {
-        margin-bottom: 15px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-    .btn-add-new {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        padding: 10px 20px;
-        font-size: 16px;
-        border: none;
-    }
-    .btn-add-new:hover {
-        background-color: darkred;
-    }
-    .btn-delete, .btn-export, .btn-import, .btn-bulk-export, .btn-clear-selections {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-        padding: 8px 16px;
-    }
-    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover, .btn-clear-selections:hover {
-        background-color: #f8f9fa;
-    }
-    .btn-clear-selections {
-        background-color: #ffc107;
-        color: black;
-    }
-    .btn-clear-selections:hover {
-        background-color: #e0a800;
-    }
-    .btn-bulk-export {
-        background-color: #17a2b8;
-        color: white;
-    }
-    .btn-bulk-export:hover {
-        background-color: #138496;
-    }
-    .dropdown-menu {
-        min-width: 120px;
-    }
-    .dropdown-item {
-        cursor: pointer;
-    }
-    .filter-input {
-        width: 100%;
-        border: none;
-        background: white;
-        padding: 5px;
-        border-radius: 5px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    .filter-input:focus {
-        outline: none;
-        background: white;
-    }
-    .stats-container {
-        display: flex;
-        gap: 15px;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: nowrap;
-        width: 87%;
-        max-width: 100%;
-        margin: 0 auto 20px auto;
-        margin-left: 0.7%;
-    }
-    .stats-container > div {
-        flex: 1;
-        background: white;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        text-align: center;
-        min-height: 120px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-    }
-    .stats-icon {
-        width: 40px;
-        height: 40px;
-        margin-bottom: 10px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-    }
-    .total-icon {
-        background-color: #9b59b6;
-        color: white;
-    }
-    .cereals-icon {
-        background-color: #f39c12;
-        color: white;
-    }
-    .pulses-icon {
-        background-color: #27ae60;
-        color: white;
-    }
-    .oil-seeds-icon {
-        background-color: #e74c3c;
-        color: white;
-    }
-    .stats-section {
-        text-align: left;
-        margin-left: 11%;
-    }
-    .stats-title {
-        font-size: 16px;
-        font-weight: 600;
-        color: #2c3e50;
-        margin: 8px 0 5px 0;
-    }
-    .stats-number {
-        font-size: 24px;
-        font-weight: 700;
-        color: #34495e;
-    }
-    .modal-content {
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-    }
-    .modal-header {
-        background-color: #2c3e50;
-        color: white;
-        border-top-left-radius: 10px;
-        border-top-right-radius: 10px;
-    }
-    .modal-header .btn-close {
-        color: white;
-        filter: invert(1);
-    }
-    .form-control {
-        margin-bottom: 15px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        padding: 8px;
-    }
-    .form-control:focus {
-        outline: none;
-        border-color: rgba(180, 80, 50, 1);
-        box-shadow: 0 0 5px rgba(180, 80, 50, 0.5);
-    }
-    .btn-primary {
-        background-color: rgba(180, 80, 50, 1);
-        border: none;
-        padding: 10px 20px;
-        font-size: 16px;
-        border-radius: 5px;
-        color: white;
-        cursor: pointer;
-    }
-    .btn-primary:hover {
-        background-color: darkred;
-    }
-    .image-preview {
-        width: 40px;
-        height: 40px;
-        border-radius: 5px;
-        object-fit: cover;
-        cursor: pointer;
-    }
-    .no-image {
-        color: #6c757d;
-        font-style: italic;
-        font-size: 0.9em;
-    }
-    .alert {
-        margin-bottom: 20px;
-    }
-    .import-instructions {
-        background-color: #f8f9fa;
-        border-left: 4px solid rgba(180, 80, 50, 1);
-        padding: 15px;
-        margin-bottom: 20px;
-    }
-    .import-instructions h5 {
-        color: rgba(180, 80, 50, 1);
-        margin-top: 0;
-    }
-    .download-template {
-        display: inline-block;
-        margin-top: 10px;
-        color: rgba(180, 80, 50, 1);
-        text-decoration: none;
-    }
-    .download-template:hover {
-        text-decoration: underline;
-    }
-    /* Compact table rows */
-    .table {
-        font-size: 0.875rem;
-    }
-    .table thead th {
-        padding: 0.5rem;
-        vertical-align: middle;
-        line-height: 1.2;
-    }
-    .table tbody td {
-        padding: 0.4rem 0.5rem;
-        vertical-align: middle;
-        line-height: 1.3;
-    }
-    .filter-row input.filter-input {
-        padding: 0.25rem 0.5rem;
-        font-size: 0.85rem;
-        height: 28px;
-    }
-    .image-preview {
-        width: 30px;
-        height: 30px;
-    }
-    .btn-sm {
-        padding: 0.2rem 0.4rem;
-        font-size: 0.8rem;
-    }
-    .selected-count {
-        display: inline-block;
-        background-color: rgba(180, 80, 50, 0.1);
-        color: rgba(180, 80, 50, 1);
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.85rem;
-        margin-left: 5px;
-        font-weight: bold;
-    }
-    /* Sorting styles */
-    .sortable {
-        cursor: pointer;
-        position: relative;
-        user-select: none;
-    }
-    .sortable:hover {
-        background-color: #f0f0f0;
-    }
-    .sort-icon {
-        display: inline-block;
-        margin-left: 5px;
-        font-size: 0.8em;
-        opacity: 0.7;
-    }
-    .sort-asc .sort-icon::after {
-        content: "↑";
-    }
-    .sort-desc .sort-icon::after {
-        content: "↓";
-    }
-    .sortable.sort-asc,
-    .sortable.sort-desc {
-        background-color: #e9ecef;
-        font-weight: bold;
-    }
-    .date-added {
-        font-size: 0.8em;
-        color: #6c757d;
-    }
+.auth-bg-gradient{background:radial-gradient(circle at top left,rgba(0,69,13,.03),transparent),radial-gradient(circle at bottom right,rgba(128,0,0,.03),transparent)}
+.header-accent-gradient{background:linear-gradient(90deg,#00450d 0%,#800000 50%,#00450d 100%)}
+.table-row-hover:hover{background-color:#fefaf5;transition:all .2s ease}
+.stat-card{transition:all .2s ease;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.stat-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.search-input:focus{border-color:#800000;outline:none}
+.action-btn{padding:.2rem .4rem;border-radius:.375rem;font-size:.7rem;font-weight:500;transition:all .2s;cursor:pointer;border:none;display:inline-flex;align-items:center}
+.pagination-btn{min-width:32px;height:32px;transition:all .2s ease}
+.pagination-btn:hover:not(:disabled):not(.active-page){background-color:#fef3e7;border-color:#800000;color:#800000}
+.pagination-btn.active-page{background-color:#800000;border-color:#800000;color:white}
+.page-size-select{font-size:.75rem;padding:.25rem .5rem;border-radius:.375rem;border:1px solid #e5e7eb;background-color:white;cursor:pointer}
+.sortable{cursor:pointer;user-select:none}
+.sortable:hover{color:#800000}
+.sort-icon{font-size:.7rem;margin-left:.2rem;vertical-align:middle}
+.modal-gradient-header{background:linear-gradient(135deg,#800000 0%,#00450d 100%)}
+.selected-badge{display:inline-block;background-color:rgba(180,80,50,.15);color:#800000;padding:.125rem .5rem;border-radius:9999px;font-size:.65rem;font-weight:600;margin-left:.5rem}
+.image-preview{width:32px;height:32px;object-fit:cover;border-radius:4px;cursor:pointer}
+.dynamic-group{display:flex;gap:10px;margin-bottom:10px;align-items:flex-end}
+.dynamic-group>div{flex:1}
+.dynamic-group label{font-size:.65rem;margin-bottom:2px;display:block;color:#666}
+.dynamic-group input,.dynamic-group select{width:100%;padding:.4rem .5rem;font-size:.75rem;border:1px solid #e5e7eb;border-radius:.375rem}
+.remove-row-btn{padding:.3rem .5rem;background:#fee2e2;color:#dc2626;border:none;border-radius:.375rem;cursor:pointer;margin-bottom:.2rem;flex-shrink:0}
+.remove-row-btn:hover{background:#fecaca}
+.add-more-btn{padding:.4rem .8rem;background:#e0e7ff;color:#3730a3;border:none;border-radius:.375rem;font-size:.7rem;cursor:pointer;margin-top:.5rem;display:inline-flex;align-items:center;gap:4px}
+.add-more-btn:hover{background:#c7d2fe}
+/* Fix: ensure Material Symbols render as icons not text */
+.material-symbols-outlined{font-family:'Material Symbols Outlined'!important;font-style:normal;font-weight:normal;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;-webkit-font-feature-settings:'liga';font-feature-settings:'liga';-webkit-font-smoothing:antialiased}
 </style>
 
-<div class="stats-section">
-    <div class="text-wrapper-8"><h3>Commodities Management</h3></div>
-    <p class="p">Manage everything related to Agricultural Commodities</p>
+<div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
+  <div class="max-w-7xl mx-auto">
 
-    <div class="stats-container">
-        <div class="overlap-6">
-            <div class="stats-icon total-icon">
-                <i class="fas fa-seedling"></i>
-            </div>
-            <div class="stats-title">Total Commodities</div>
-            <div class="stats-number"><?php echo $total_commodities; ?></div>
+    <!-- Header -->
+    <div class="mb-6">
+      <div class="flex justify-between items-center flex-wrap gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-maroon">Commodities Management</h1>
+          <p class="text-gray-600 text-sm mt-1">Manage agricultural commodities and their details</p>
         </div>
-        
-        <div class="overlap-6">
-            <div class="stats-icon cereals-icon">
-                <i class="fas fa-wheat-awn"></i>
-            </div>
-            <div class="stats-title">Cereals</div>
-            <div class="stats-number"><?php echo $cereals_count; ?></div>
+        <div class="flex gap-2">
+          <!-- FIX 1: export opens as file download, not new window -->
+          <a href="?export_all=1"
+             class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
+            <span class="material-symbols-outlined text-base">download</span>
+            Export All CSV
+          </a>
+          <button onclick="openAddModal()"
+                  class="inline-flex items-center gap-1.5 px-4 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+            <span class="material-symbols-outlined text-base">add_circle</span>
+            Add Commodity
+          </button>
         </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon pulses-icon">
-                <i class="fas fa-dot-circle"></i>
-            </div>
-            <div class="stats-title">Pulses</div>
-            <div class="stats-number"><?php echo $pulses_count; ?></div>
-        </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon oil-seeds-icon">
-                <i class="fas fa-leaf"></i>
-            </div>
-            <div class="stats-title">Oil Seeds</div>
-            <div class="stats-number"><?php echo $oil_seeds_count; ?></div>
-        </div>
+      </div>
+      <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
     </div>
-</div>
 
-<?php if (isset($import_message)): ?>
-    <div class="alert alert-<?php echo $import_status; ?>">
-        <?php echo $import_message; ?>
+    <!-- Messages -->
+    <?php if (!empty($message)): ?>
+    <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $message_type=='success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
+      <span class="material-symbols-outlined text-base"><?= $message_type=='success' ? 'check_circle' : 'error' ?></span>
+      <span class="text-sm font-medium"><?= htmlspecialchars($message) ?></span>
     </div>
-<?php endif; ?>
+    <?php endif; ?>
 
-<div class="container">
-    <div class="table-container">
-        <div class="btn-group">
-            <a href="add_commodity.php" class="btn btn-add-new">
-                <i class="fas fa-plus" style="margin-right: 5px;"></i>
-                Add New
-            </a>
+    <!-- Stats Cards — FIX 2: replaced broken FA icons with Material Symbols -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs text-gray-400 uppercase tracking-wide">Total Commodities</p>
+            <p class="text-xl font-bold text-gray-800"><?= number_format($total_commodities) ?></p>
+          </div>
+          <span class="material-symbols-outlined text-3xl text-maroon/40">eco</span>
+        </div>
+      </div>
+      <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-amber-500">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs text-gray-400 uppercase tracking-wide">Cereals</p>
+            <p class="text-xl font-bold text-gray-800"><?= number_format($cereals_count) ?></p>
+          </div>
+          <span class="material-symbols-outlined text-3xl text-amber-400/60">grain</span>
+        </div>
+      </div>
+      <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs text-gray-400 uppercase tracking-wide">Pulses</p>
+            <p class="text-xl font-bold text-gray-800"><?= number_format($pulses_count) ?></p>
+          </div>
+          <span class="material-symbols-outlined text-3xl text-green-500/50">grass</span>
+        </div>
+      </div>
+      <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-yellow-600">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs text-gray-400 uppercase tracking-wide">Oil Seeds</p>
+            <p class="text-xl font-bold text-gray-800"><?= number_format($oil_seeds_count) ?></p>
+          </div>
+          <span class="material-symbols-outlined text-3xl text-yellow-500/50">water_drop</span>
+        </div>
+      </div>
+    </div>
 
-            <button class="btn btn-delete" onclick="deleteSelected()">
-                <i class="fas fa-trash" style="margin-right: 3px;"></i>
-                Delete
-                <?php if (count($_SESSION['selected_commodities']) > 0): ?>
-                    <span class="selected-count"><?php echo count($_SESSION['selected_commodities']); ?></span>
+    <!-- Search & Bulk Actions -->
+    <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
+      <div class="flex flex-wrap gap-3 items-center justify-between">
+        <div class="flex-1 min-w-[150px]">
+          <div class="relative">
+            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">search</span>
+            <input type="text" id="searchCommodity" placeholder="Search commodity..."
+                   class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                   value="<?= htmlspecialchars($search_commodity) ?>">
+          </div>
+        </div>
+        <div class="flex-1 min-w-[150px]">
+          <div class="relative">
+            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">category</span>
+            <input type="text" id="searchCategory" placeholder="Search category..."
+                   class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                   value="<?= htmlspecialchars($search_category) ?>">
+          </div>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="applyFilters()"
+                  class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all inline-flex items-center gap-1">
+            <span class="material-symbols-outlined text-base">filter_list</span> Filter
+          </button>
+          <!-- FIX 3: clear just unchecks visible checkboxes client-side -->
+          <button id="clearSelectionsBtn"
+                  class="px-3 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition-all inline-flex items-center gap-1">
+            <span class="material-symbols-outlined text-base">clear</span> Clear Selected
+          </button>
+          <button id="bulkDeleteBtn" disabled
+                  class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
+            <span class="material-symbols-outlined text-base">delete</span>
+            Delete (<span id="selectedCount">0</span>)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm" id="commoditiesTable">
+          <thead class="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th class="w-8 px-3 py-2 text-left">
+                <input type="checkbox" id="selectAllCheckbox" class="rounded border-gray-300 text-maroon focus:ring-maroon/20">
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="id">
+                ID<?php if($sort_column=='id') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="commodity_name">
+                Commodity<?php if($sort_column=='commodity_name') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="category_name">
+                Category<?php if($sort_column=='category_name') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="variety">
+                Variety<?php if($sort_column=='variety') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">HS Code</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Image</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="created_at">
+                Date Added<?php if($sort_column=='created_at') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+              </th>
+              <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-24">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100" id="tableBody">
+            <?php if (empty($commodities_data)): ?>
+            <tr>
+              <td colspan="9" class="px-3 py-8 text-center text-gray-400">
+                <span class="material-symbols-outlined text-5xl text-gray-300 block">eco</span>
+                <p class="text-sm mt-1">No commodities found</p>
+              </td>
+            </tr>
+            <?php else: ?>
+            <?php foreach ($commodities_data as $commodity): ?>
+            <tr class="table-row-hover" data-id="<?= $commodity['id'] ?>">
+              <td class="px-3 py-2">
+                <!-- FIX 3: simple client-side checkbox, no AJAX session tracking -->
+                <input type="checkbox" class="row-checkbox rounded border-gray-300 text-maroon focus:ring-maroon/20"
+                       value="<?= $commodity['id'] ?>" onchange="onCheckboxChange()">
+              </td>
+              <td class="px-3 py-2 text-xs text-gray-600"><?= $commodity['id'] ?></td>
+              <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($commodity['commodity_name']) ?></td>
+              <td class="px-3 py-2"><span class="bg-gray-100 px-2 py-0.5 rounded text-xs"><?= htmlspecialchars($commodity['category_name'] ?? '—') ?></span></td>
+              <td class="px-3 py-2 text-xs text-gray-600"><?= htmlspecialchars($commodity['variety'] ?: '—') ?></td>
+              <td class="px-3 py-2 text-xs font-mono text-gray-600"><?= htmlspecialchars($commodity['hs_code'] ?: '—') ?></td>
+              <td class="px-3 py-2">
+                <?php if (!empty($commodity['image_url'])): ?>
+                <img src="../base/<?= htmlspecialchars($commodity['image_url']) ?>" class="image-preview"
+                     onclick="showImageModal('<?= htmlspecialchars($commodity['image_url']) ?>','<?= htmlspecialchars($commodity['commodity_name']) ?>')">
+                <?php else: ?>
+                <span class="text-gray-400 text-xs">No image</span>
                 <?php endif; ?>
-            </button>
-
-            <button class="btn btn-clear-selections" onclick="clearAllSelections()">
-                <i class="fas fa-times-circle" style="margin-right: 3px;"></i>
-                Clear Selections
-            </button>
-
-            <form method="POST" action="export_current_page_commodities.php" style="display: inline;">
-                <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
-                <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
-                <input type="hidden" name="sort" value="<?php echo $sort_column; ?>">
-                <input type="hidden" name="order" value="<?php echo $sort_order; ?>">
-                <button type="submit" class="btn-export">
-                    <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
-                </button>
-            </form>
-
-            <form method="POST" action="bulk_export_commodities.php" style="display: inline;">
-                <button type="submit" class="btn-bulk-export">
-                    <i class="fas fa-database" style="margin-right: 3px;"></i> Bulk Export (All)
-                </button>
-            </form>
-            
-            <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
-                <i class="fas fa-upload" style="margin-right: 3px;"></i>
-                Import
-            </button>
-        </div>
-
-        <table class="table table-striped table-hover">
-            <thead>
-                <tr style="background-color: #d3d3d3 !important; color: black !important;">
-                    <th><input type="checkbox" id="selectAll"></th>
-                    <th class="sortable <?php echo getSortClass('id'); ?>" onclick="sortTable('id')">
-                        ID
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('hs_code'); ?>" onclick="sortTable('hs_code')">
-                        HS Code
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('category'); ?>" onclick="sortTable('category')">
-                        Category
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('commodity_name'); ?>" onclick="sortTable('commodity_name')">
-                        Commodity
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('variety'); ?>" onclick="sortTable('variety')">
-                        Variety
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th>Image</th>
-                    <th class="sortable <?php echo getSortClass('created_at'); ?>" onclick="sortTable('created_at')">
-                        Date Added
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th>Actions</th>
-                </tr>
-                <tr class="filter-row" style="background-color: white !important; color: black !important;">
-                    <th></th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterId" placeholder="Filter ID"
-                               value="<?php echo isset($_GET['filter_id']) ? htmlspecialchars($_GET['filter_id']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterHsCode" placeholder="Filter HS Code"
-                               value="<?php echo isset($_GET['filter_hs_code']) ? htmlspecialchars($_GET['filter_hs_code']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterCategory" placeholder="Filter Category"
-                               value="<?php echo isset($_GET['filter_category']) ? htmlspecialchars($_GET['filter_category']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterCommodity" placeholder="Filter Commodity"
-                               value="<?php echo isset($_GET['filter_commodity']) ? htmlspecialchars($_GET['filter_commodity']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterVariety" placeholder="Filter Variety"
-                               value="<?php echo isset($_GET['filter_variety']) ? htmlspecialchars($_GET['filter_variety']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th></th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterDate" placeholder="YYYY-MM-DD"
-                               value="<?php echo isset($_GET['filter_date']) ? htmlspecialchars($_GET['filter_date']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody id="commodityTable">
-                <?php foreach ($commodities_paged as $commodity): ?>
-                    <tr>
-                        <td>
-                            <input type="checkbox" 
-                                   class="row-checkbox" 
-                                   value="<?php echo htmlspecialchars($commodity['id']); ?>"
-                                   <?php echo in_array($commodity['id'], $_SESSION['selected_commodities']) ? 'checked' : ''; ?>
-                                   onchange="updateSelection(this, <?php echo $commodity['id']; ?>)">
-                        </td>
-                        <td><?php echo htmlspecialchars($commodity['id']); ?></td>
-                        <td><?php echo htmlspecialchars($commodity['hs_code']); ?></td>
-                        <td><?php echo htmlspecialchars($commodity['category']); ?></td>
-                        <td><?php echo htmlspecialchars($commodity['commodity_name']); ?></td>
-                        <td><?php echo htmlspecialchars($commodity['variety']); ?></td>
-                        <td>
-                            <?php if (!empty($commodity['image_url'])): ?>
-                                <img src="<?php echo htmlspecialchars($commodity['image_url']); ?>" 
-                                    alt="<?php echo htmlspecialchars($commodity['commodity_name']); ?>" 
-                                    class="image-preview" 
-                                    onclick="showImageModal('<?php echo htmlspecialchars($commodity['image_url']); ?>', '<?php echo htmlspecialchars($commodity['commodity_name']); ?>')">
-                            <?php else: ?>
-                                <span class="no-image">No Image</span>
-                            <?php endif; ?>
-                        </td>
-                        <td class="date-added">
-                            <?php 
-                            if (!empty($commodity['created_at'])) {
-                                echo date('Y-m-d', strtotime($commodity['created_at']));
-                            } else {
-                                echo 'N/A';
-                            }
-                            ?>
-                        </td>
-                        <td>
-                            <div class="btn-group" role="group">
-                                <a href="edit_commodity.php?id=<?php echo $commodity['id']; ?>" class="btn btn-sm btn-primary">
-                                    <i class="fas fa-edit"></i>
-                                </a>
-                            </div>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
-                <?php if (count($_SESSION['selected_commodities']) > 0): ?>
-                    <span class="selected-count"><?php echo count($_SESSION['selected_commodities']); ?> selected across all pages</span>
-                <?php endif; ?>
-                <?php if (!empty($sort_column)): ?>
-                    <span class="text-muted ms-2">Sorted by: <?php echo ucfirst(str_replace('_', ' ', $sort_column)); ?> (<?php echo $sort_order; ?>)</span>
-                <?php endif; ?>
-            </div>
-            <div>
-                <label for="itemsPerPage">Show:</label>
-                <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                    <option value="7" <?php echo ($itemsPerPage == 7) ? 'selected' : ''; ?>>7</option>
-                    <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
-                    <option value="20" <?php echo ($itemsPerPage == 20) ? 'selected' : ''; ?>>20</option>
-                    <option value="50" <?php echo ($itemsPerPage == 50) ? 'selected' : ''; ?>>50</option>
-                    <option value="100" <?php echo ($itemsPerPage == 100) ? 'selected' : ''; ?>>100</option>
-                </select>
-            </div>
-            <nav>
-                <ul class="pagination mb-0">
-                    <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $itemsPerPage, $sort_column, $sort_order); ?>">Prev</a>
-                    </li>
-                    <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
-                            <a class="page-link" href="<?php echo getPageUrl($i, $itemsPerPage, $sort_column, $sort_order); ?>"><?php echo $i; ?></a>
-                        </li>
-                    <?php endfor; ?>
-                    <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : getPageUrl($page + 1, $itemsPerPage, $sort_column, $sort_order); ?>">Next</a>
-                    </li>
-                </ul>
-            </nav>
-        </div>
-    </div>
-</div>
-
-<!-- Image Modal -->
-<div class="modal fade" id="imageModal" tabindex="-1" aria-labelledby="imageModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="imageModalLabel">Commodity Image</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body text-center">
-                <img id="modalImage" src="" alt="" class="img-fluid" style="max-height: 400px;">
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Import Modal -->
-<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="importModalLabel">Import Commodities</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="import-instructions">
-                    <h5>CSV Format Instructions</h5>
-                    <p>Your CSV file should have the following columns in order:</p>
-                    <ol>
-                        <li><strong>HS Code</strong> (required)</li>
-                        <li><strong>Category</strong> (required, will be created if doesn't exist)</li>
-                        <li><strong>Commodity Name</strong> (required)</li>
-                        <li><strong>Variety</strong> (optional)</li>
-                        <li><strong>Packaging & Units</strong> (optional, comma-separated, e.g. "10kg, 25kg, 50kg")</li>
-                        <li><strong>Aliases & Countries</strong> (optional, comma-separated pairs, e.g. "Maize:Kenya, Corn:USA")</li>
-                    </ol>
-                    <a href="downloads/commodities_template.csv" class="download-template">
-                        <i class="fas fa-download"></i> Download CSV Template
-                    </a>
+              </td>
+              <td class="px-3 py-2 text-xs text-gray-500"><?= date('M d, Y', strtotime($commodity['created_at'])) ?></td>
+              <td class="px-3 py-2">
+                <div class="flex items-center justify-center gap-1">
+                  <button onclick="editCommodity(<?= $commodity['id'] ?>)"
+                          class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200" title="Edit">
+                    <span class="material-symbols-outlined text-sm">edit</span>
+                  </button>
+                  <button onclick="deleteSingle(<?= $commodity['id'] ?>,'<?= htmlspecialchars(addslashes($commodity['commodity_name'])) ?>')"
+                          class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete">
+                    <span class="material-symbols-outlined text-sm">delete</span>
+                  </button>
                 </div>
-                
-                <form method="POST" enctype="multipart/form-data" id="importForm">
-                    <div class="mb-3">
-                        <label for="csv_file" class="form-label">Select CSV File</label>
-                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
-                    </div>
-                    
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="overwriteExisting" name="overwrite_existing">
-                        <label class="form-check-label" for="overwriteExisting">
-                            Overwrite existing commodities with matching HS Code and Name
-                        </label>
-                    </div>
-                </form>
+              </td>
+            </tr>
+            <?php endforeach; ?>
+            <?php endif; ?>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="border-t border-gray-200 px-4 py-3 bg-white">
+        <div class="flex flex-wrap justify-between items-center gap-3">
+          <div class="text-xs text-gray-500">
+            Showing <?= ($page-1)*$limit+1 ?> to <?= min($page*$limit,$total_records) ?> of <?= $total_records ?> commodities
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-500">Rows:</span>
+              <select id="rowsPerPage" class="page-size-select" onchange="changeRowsPerPage()">
+                <option value="10" <?= $limit==10?'selected':'' ?>>10</option>
+                <option value="20" <?= $limit==20?'selected':'' ?>>20</option>
+                <option value="50" <?= $limit==50?'selected':'' ?>>50</option>
+                <option value="100" <?= $limit==100?'selected':'' ?>>100</option>
+              </select>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" form="importForm" name="import_csv" class="btn btn-primary">
-                    <i class="fas fa-upload"></i> Import
-                </button>
-            </div>
+            <nav class="flex items-center gap-1">
+              <button onclick="goToPage(1)" class="pagination-btn w-7 h-7 rounded border border-gray-200 flex items-center justify-center <?= $page<=1?'opacity-40 cursor-not-allowed':'' ?>" <?= $page<=1?'disabled':'' ?>>
+                <span class="material-symbols-outlined text-sm">first_page</span>
+              </button>
+              <button onclick="goToPage(<?= $page-1 ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 flex items-center justify-center <?= $page<=1?'opacity-40 cursor-not-allowed':'' ?>" <?= $page<=1?'disabled':'' ?>>
+                <span class="material-symbols-outlined text-sm">chevron_left</span>
+              </button>
+              <?php
+              $sp = max(1,$page-2); $ep = min($total_pages,$page+2);
+              if ($sp>1){ echo '<button onclick="goToPage(1)" class="pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 text-xs">1</button>'; if($sp>2) echo '<span class="text-gray-400 px-1">…</span>'; }
+              for($i=$sp;$i<=$ep;$i++){
+                  $cls = ($i==$page) ? 'active-page bg-maroon text-white' : 'border border-gray-200 hover:bg-gray-50';
+                  echo "<button onclick=\"goToPage($i)\" class=\"pagination-btn w-7 h-7 rounded text-xs $cls\">$i</button>";
+              }
+              if($ep<$total_pages){ if($ep<$total_pages-1) echo '<span class="text-gray-400 px-1">…</span>'; echo "<button onclick=\"goToPage($total_pages)\" class=\"pagination-btn w-7 h-7 rounded border border-gray-200 hover:bg-gray-50 text-xs\">$total_pages</button>"; }
+              ?>
+              <button onclick="goToPage(<?= $page+1 ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 flex items-center justify-center <?= $page>=$total_pages?'opacity-40 cursor-not-allowed':'' ?>" <?= $page>=$total_pages?'disabled':'' ?>>
+                <span class="material-symbols-outlined text-sm">chevron_right</span>
+              </button>
+              <button onclick="goToPage(<?= $total_pages ?>)" class="pagination-btn w-7 h-7 rounded border border-gray-200 flex items-center justify-center <?= $page>=$total_pages?'opacity-40 cursor-not-allowed':'' ?>" <?= $page>=$total_pages?'disabled':'' ?>>
+                <span class="material-symbols-outlined text-sm">last_page</span>
+              </button>
+            </nav>
+          </div>
+          <a href="../base/landing_page.php"
+             class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all">
+            <span class="material-symbols-outlined text-base">arrow_back</span> Back
+          </a>
         </div>
+      </div>
     </div>
+  </div>
 </div>
 
-<?php
-// Helper function to generate page URLs with filters and sorting
-function getPageUrl($pageNum, $itemsPerPage, $sortColumn = null, $sortOrder = null) {
-    $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
-    
-    // Add sort parameters if provided
-    if ($sortColumn) {
-        $url .= '&sort=' . urlencode($sortColumn);
-    }
-    if ($sortOrder) {
-        $url .= '&order=' . urlencode($sortOrder);
-    }
-    
-    // Add filter parameters if they exist
-    $filterParams = ['filter_id', 'filter_hs_code', 'filter_category', 'filter_commodity', 'filter_variety', 'filter_date'];
-    foreach ($filterParams as $param) {
-        if (isset($_GET[$param]) && !empty($_GET[$param])) {
-            $url .= '&' . $param . '=' . urlencode($_GET[$param]);
-        }
-    }
-    
-    return $url;
-}
+<!-- ===================== ADD / EDIT MODAL ===================== -->
+<div id="commodityModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+  <div class="min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-xl">
+      <div class="modal-gradient-header px-5 py-3 flex justify-between items-center sticky top-0 z-10">
+        <h3 id="modalTitle" class="text-base font-semibold text-white">Add New Commodity</h3>
+        <button onclick="closeModal('commodityModal')" class="text-white/80 hover:text-white">
+          <span class="material-symbols-outlined text-base">close</span>
+        </button>
+      </div>
+      <div class="p-5">
+        <form method="POST" action="" id="commodityForm" enctype="multipart/form-data">
+          <input type="hidden" name="commodity_id" id="commodityId">
 
-// Helper function to get sort CSS class
-function getSortClass($column) {
-    $current_sort = isset($_GET['sort']) ? $_GET['sort'] : 'id';
-    $current_order = isset($_GET['order']) ? strtoupper($_GET['order']) : 'DESC';
-    
-    if ($current_sort === $column) {
-        return $current_order === 'ASC' ? 'sort-asc' : 'sort-desc';
-    }
-    return '';
-}
-?>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">Commodity Name <span class="text-red-500">*</span></label>
+              <input type="text" name="commodity_name" id="commodityName" required
+                     class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">Category <span class="text-red-500">*</span></label>
+              <select name="category" id="categoryId" required
+                      class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                <option value="">Select Category</option>
+                <?php foreach ($categories as $cat): ?>
+                <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">Variety</label>
+              <input type="text" name="variety" id="variety"
+                     class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">HS Code</label>
+              <input type="text" name="hs_code" id="hsCode"
+                     class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+            </div>
+          </div>
+
+          <!-- Packaging -->
+          <div class="mb-4">
+            <label class="block text-xs text-gray-600 mb-1 font-medium">Packaging &amp; Units</label>
+            <div id="packagingContainer"></div>
+            <button type="button" class="add-more-btn" onclick="addPackagingRow()">
+              <span class="material-symbols-outlined text-sm">add</span> Add Packaging
+            </button>
+          </div>
+
+          <!-- Aliases & Countries -->
+          <div class="mb-4">
+            <label class="block text-xs text-gray-600 mb-1 font-medium">Aliases &amp; Countries</label>
+            <div id="aliasContainer"></div>
+            <button type="button" class="add-more-btn" onclick="addAliasRow()">
+              <span class="material-symbols-outlined text-sm">add</span> Add Alias
+            </button>
+          </div>
+
+          <div class="mb-4">
+            <label class="block text-xs text-gray-600 mb-1">Commodity Image</label>
+            <input type="file" name="commodity_image" id="commodityImage" accept="image/*"
+                   class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+            <div id="imagePreview" class="mt-2 hidden">
+              <img id="previewImg" class="h-16 w-16 object-cover rounded-lg">
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+            <button type="button" onclick="closeModal('commodityModal')"
+                    class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+            <button type="submit" name="add_commodity" id="submitBtn"
+                    class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Add Commodity</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== DELETE MODAL ===================== -->
+<div id="deleteModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center">
+  <div class="bg-white rounded-lg w-full max-w-md shadow-xl">
+    <div class="p-4">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="material-symbols-outlined text-red-500">warning</span>
+        <h3 class="text-base font-semibold text-gray-800">Confirm Deletion</h3>
+      </div>
+      <p id="deleteModalText" class="text-sm text-gray-500 mb-3">Are you sure you want to delete this commodity?</p>
+      <div class="bg-red-50 border-l-4 border-red-500 p-2 mb-3 text-xs text-red-700">
+        <span class="material-symbols-outlined text-xs align-middle">info</span> This action cannot be undone.
+      </div>
+      <form method="POST" action="" id="deleteForm">
+        <input type="hidden" name="delete_selected" value="1">
+        <div id="deleteIdsContainer"></div>
+        <div class="flex justify-end gap-2">
+          <button type="button" onclick="closeModal('deleteModal')"
+                  class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button type="submit"
+                  class="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== IMAGE MODAL ===================== -->
+<div id="imageModal" class="fixed inset-0 bg-black/70 hidden z-50 flex items-center justify-center">
+  <div class="bg-white rounded-lg max-w-2xl max-h-[90vh] overflow-auto">
+    <div class="p-4">
+      <div class="flex justify-end mb-2">
+        <button onclick="closeModal('imageModal')" class="text-gray-500 hover:text-gray-700">✕</button>
+      </div>
+      <img id="modalImage" src="" alt="" class="w-full h-auto">
+    </div>
+  </div>
+</div>
 
 <script>
-document.addEventListener("DOMContentLoaded", function() {
-    // Initialize filter inputs with current values
-    const filterInputs = document.querySelectorAll('.filter-input');
-    
-    // Initialize select all checkbox based on current page selections
-    updateSelectAllCheckbox();
-    
-    // Update breadcrumb
-    if (typeof updateBreadcrumb === 'function') {
-        updateBreadcrumb('Base', 'Commodities');
-    }
-    
-    // Show import modal if there was an error
-    <?php if (isset($import_message) && $import_status === 'danger'): ?>
-        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
-        importModal.show();
-    <?php endif; ?>
-});
+// ─── Data from PHP ───────────────────────────────────────────
+const categories    = <?= json_encode($categories) ?>;
+const countriesList = <?= json_encode($countries) ?>;
 
-// Update selection function
-function updateSelection(checkbox, id) {
-    const isSelected = checkbox.checked;
-    
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `action=update_selection&id=${id}&selected=${isSelected}`
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Selection updated:', data);
-        updateSelectAllCheckbox();
-        updateSelectionCount();
-    })
-    .catch(error => console.error('Error updating selection:', error));
+// ─── Helpers ─────────────────────────────────────────────────
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function openModal(id)  { document.getElementById(id).classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+// ─── Packaging helpers ────────────────────────────────────────
+function packagingRowHtml(size='', unit='') {
+    return `<div class="dynamic-group">
+        <div><label>Size</label><input type="text" name="packaging[]" placeholder="e.g. 10" value="${escapeHtml(size)}"></div>
+        <div><label>Unit</label>
+            <select name="unit[]">
+                <option value="">Select</option>
+                ${['Kg','Tons','g','lb'].map(u=>`<option value="${u}" ${u===unit?'selected':''}>${u}</option>`).join('')}
+            </select>
+        </div>
+        <button type="button" class="remove-row-btn" onclick="removeRow(this)">✕</button>
+    </div>`;
 }
 
-function updateSelectionCount() {
-    // This would refresh the selection count display
-    // In a real implementation, you might update a counter on the page
-    console.log('Selection count updated');
+function aliasRowHtml(alias='', country='') {
+    const opts = countriesList.map(c=>`<option value="${escapeHtml(c)}" ${c===country?'selected':''}>${escapeHtml(c)}</option>`).join('');
+    return `<div class="dynamic-group">
+        <div><label>Alias</label><input type="text" name="commodity_alias[]" placeholder="e.g. Maize" value="${escapeHtml(alias)}"></div>
+        <div><label>Country</label><select name="country[]"><option value="">Select Country</option>${opts}</select></div>
+        <button type="button" class="remove-row-btn" onclick="removeRow(this)">✕</button>
+    </div>`;
 }
 
-function sortTable(column) {
-    const url = new URL(window.location);
-    const currentSort = url.searchParams.get('sort');
-    const currentOrder = url.searchParams.get('order');
-    
-    // Toggle order if clicking the same column
-    if (currentSort === column) {
-        const newOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
-        url.searchParams.set('order', newOrder);
-    } else {
-        // New column, default to DESC for ID and created_at, ASC for others
-        const defaultOrder = (column === 'id' || column === 'created_at') ? 'DESC' : 'ASC';
-        url.searchParams.set('sort', column);
-        url.searchParams.set('order', defaultOrder);
-    }
-    
-    // Reset to page 1 when sorting
-    url.searchParams.set('page', '1');
-    
-    window.location.href = url.toString();
+function addPackagingRow() { document.getElementById('packagingContainer').insertAdjacentHTML('beforeend', packagingRowHtml()); }
+function addAliasRow()     { document.getElementById('aliasContainer').insertAdjacentHTML('beforeend', aliasRowHtml()); }
+
+function removeRow(btn) {
+    const container = btn.closest('.dynamic-group').parentElement;
+    if (container.children.length > 1) btn.closest('.dynamic-group').remove();
+    else alert('You must have at least one entry.');
 }
 
-function applyFilters() {
-    const filters = {
-        id: document.getElementById('filterId').value,
-        hsCode: document.getElementById('filterHsCode').value,
-        category: document.getElementById('filterCategory').value,
-        commodity: document.getElementById('filterCommodity').value,
-        variety: document.getElementById('filterVariety').value,
-        date: document.getElementById('filterDate').value
-    };
-
-    // Build URL with filter parameters
-    const url = new URL(window.location);
-    
-    // Set filter parameters
-    if (filters.id) url.searchParams.set('filter_id', filters.id);
-    else url.searchParams.delete('filter_id');
-    
-    if (filters.hsCode) url.searchParams.set('filter_hs_code', filters.hsCode);
-    else url.searchParams.delete('filter_hs_code');
-    
-    if (filters.category) url.searchParams.set('filter_category', filters.category);
-    else url.searchParams.delete('filter_category');
-    
-    if (filters.commodity) url.searchParams.set('filter_commodity', filters.commodity);
-    else url.searchParams.delete('filter_commodity');
-    
-    if (filters.variety) url.searchParams.set('filter_variety', filters.variety);
-    else url.searchParams.delete('filter_variety');
-    
-    if (filters.date) url.searchParams.set('filter_date', filters.date);
-    else url.searchParams.delete('filter_date');
-    
-    // Reset to page 1 when filtering
-    url.searchParams.set('page', '1');
-    
-    // Navigate to filtered URL
-    window.location.href = url.toString();
+// ─── Modal: Add ──────────────────────────────────────────────
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = 'Add New Commodity';
+    document.getElementById('commodityId').value = '';
+    document.getElementById('commodityName').value = '';
+    document.getElementById('categoryId').value = '';
+    document.getElementById('variety').value = '';
+    document.getElementById('hsCode').value = '';
+    document.getElementById('packagingContainer').innerHTML = packagingRowHtml();
+    document.getElementById('aliasContainer').innerHTML = aliasRowHtml();
+    document.getElementById('commodityImage').value = '';
+    document.getElementById('imagePreview').classList.add('hidden');
+    document.getElementById('submitBtn').name = 'add_commodity';
+    document.getElementById('submitBtn').textContent = 'Add Commodity';
+    openModal('commodityModal');
 }
 
-function updateItemsPerPage(value) {
-    const url = new URL(window.location);
-    url.searchParams.set('limit', value);
-    url.searchParams.set('page', '1');
-    window.location.href = url.toString();
-}
-
-function updateSelectAllCheckbox() {
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    const selectAll = document.getElementById('selectAll');
-    
-    if (checkboxes.length === 0) {
-        selectAll.checked = false;
-        return;
-    }
-    
-    // Check if all checkboxes on current page are checked
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
-    
-    selectAll.checked = allChecked;
-    selectAll.indeterminate = !allChecked && someChecked;
-}
-
-document.getElementById('selectAll').addEventListener('change', function() {
-    const isChecked = this.checked;
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    
-    // Update all checkboxes on current page
-    checkboxes.forEach(checkbox => {
-        if (checkbox.checked !== isChecked) {
-            checkbox.checked = isChecked;
-            // Trigger the update for each checkbox
-            if (checkbox.onchange) {
-                checkbox.onchange();
-            }
-        }
-    });
-    
-    // Clear all selections if unchecking
-    if (!isChecked) {
-        clearAllSelectionsSilent();
-    }
-});
-
-function clearAllSelections() {
-    if (confirm('Clear all selections across all pages?')) {
-        clearAllSelectionsSilent();
-        alert('All selections cleared.');
-        location.reload();
-    }
-}
-
-function clearAllSelectionsSilent() {
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: 'action=update_selection&clear_all=true'
-    })
-    .catch(error => console.error('Error clearing selections:', error));
-}
-
-function showImageModal(imageUrl, commodityName) {
-    const modal = new bootstrap.Modal(document.getElementById('imageModal'));
-    document.getElementById('modalImage').src = imageUrl;
-    document.getElementById('modalImage').alt = commodityName;
-    document.getElementById('imageModalLabel').textContent = commodityName;
-    modal.show();
-}
-
-function deleteSelected() {
-    // Get count from session (across all pages)
-    const selectedCount = <?php echo count($_SESSION['selected_commodities']); ?>;
-    
-    if (selectedCount === 0) {
-        alert('Please select at least one commodity to delete.');
-        return;
-    }
-
-    if (confirm('Are you sure you want to delete ' + selectedCount + ' selected commodity(ies) across all pages?')) {
-        // Pass all selected IDs from session
-        fetch('delete_commodity.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ids: <?php echo json_encode($_SESSION['selected_commodities']); ?> })
-        })
-        .then(response => {
-            if (!response.ok) throw new Error('Network error');
-            return response.json();
+// ─── Modal: Edit — FIX 4 ─────────────────────────────────────
+// The API handler is now at the very top of the PHP file (before any HTML),
+// so fetch() gets clean JSON instead of HTML-polluted output.
+function editCommodity(id) {
+    fetch(`${window.location.pathname}?get_commodity=${id}`)
+        .then(res => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
         })
         .then(data => {
-            if (data.success) {
-                alert(data.message);
-                // Clear selections after deletion
-                clearAllSelectionsSilent();
-                location.reload();
+            document.getElementById('modalTitle').textContent = 'Edit Commodity';
+            document.getElementById('commodityId').value = data.id;
+            document.getElementById('commodityName').value = data.commodity_name || '';
+            document.getElementById('categoryId').value = data.category_id || '';
+            document.getElementById('variety').value = data.variety || '';
+            document.getElementById('hsCode').value = data.hs_code || '';
+
+            // Packaging rows
+            const pc = document.getElementById('packagingContainer');
+            pc.innerHTML = '';
+            if (data.units && data.units.length > 0) {
+                data.units.forEach(u => pc.insertAdjacentHTML('beforeend', packagingRowHtml(u.size||'', u.unit||'')));
             } else {
-                alert('Error: ' + data.message);
+                pc.innerHTML = packagingRowHtml();
             }
+
+            // Alias rows
+            const ac = document.getElementById('aliasContainer');
+            ac.innerHTML = '';
+            const maxLen = Math.max((data.commodity_alias||[]).length, (data.country||[]).length, 1);
+            for (let i = 0; i < maxLen; i++) {
+                const a = (data.commodity_alias && data.commodity_alias[i]) || '';
+                const c = (data.country && data.country[i]) || '';
+                ac.insertAdjacentHTML('beforeend', aliasRowHtml(a, c));
+            }
+
+            document.getElementById('commodityImage').value = '';
+            document.getElementById('imagePreview').classList.add('hidden');
+            document.getElementById('submitBtn').name = 'edit_commodity';
+            document.getElementById('submitBtn').textContent = 'Update Commodity';
+            openModal('commodityModal');
         })
-        .catch(error => {
-            console.error('Fetch error:', error);
-            alert('Request failed: ' +error.message);
+        .catch(err => {
+            console.error('Edit fetch error:', err);
+            alert('Failed to load commodity data. Check console for details.');
         });
-    }
 }
 
-function exportSelected(format) {
-    const selectedCount = <?php echo count($_SESSION['selected_commodities']); ?>;
-    
-    if (selectedCount === 0) {
-        alert('Please select at least one commodity to export.');
-        return;
+// ─── Delete: single ──────────────────────────────────────────
+function deleteSingle(id, name) {
+    document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${escapeHtml(name)}</strong>?`;
+    document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="selected_ids[]" value="${id}">`;
+    openModal('deleteModal');
+}
+
+// ─── Delete: bulk — FIX 3 ────────────────────────────────────
+function showImageModal(imageUrl, name) {
+    document.getElementById('modalImage').src  = '../base/' + imageUrl;
+    document.getElementById('modalImage').alt  = name;
+    openModal('imageModal');
+}
+
+// ─── Checkbox logic (client-side only, no AJAX session) ──────
+function onCheckboxChange() {
+    const total   = document.querySelectorAll('.row-checkbox:checked').length;
+    const allCbs  = document.querySelectorAll('.row-checkbox');
+    const selAll  = document.getElementById('selectAllCheckbox');
+    const delBtn  = document.getElementById('bulkDeleteBtn');
+    const countEl = document.getElementById('selectedCount');
+
+    countEl.textContent = total;
+    delBtn.disabled = (total === 0);
+
+    if (total === 0)              { selAll.checked = false; selAll.indeterminate = false; }
+    else if (total === allCbs.length) { selAll.checked = true;  selAll.indeterminate = false; }
+    else                          { selAll.checked = false; selAll.indeterminate = true; }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    // Select-all toggle
+    document.getElementById('selectAllCheckbox').addEventListener('change', function () {
+        document.querySelectorAll('.row-checkbox').forEach(cb => { cb.checked = this.checked; });
+        onCheckboxChange();
+    });
+
+    // Clear selected
+    document.getElementById('clearSelectionsBtn').addEventListener('click', function () {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+        document.getElementById('selectAllCheckbox').checked = false;
+        document.getElementById('selectAllCheckbox').indeterminate = false;
+        onCheckboxChange();
+    });
+
+    // Bulk delete — collect IDs and populate delete modal
+    document.getElementById('bulkDeleteBtn').addEventListener('click', function () {
+        const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
+        if (ids.length === 0) return;
+        document.getElementById('deleteModalText').innerHTML =
+            `Are you sure you want to delete <strong>${ids.length}</strong> selected commodity(ies)?`;
+        document.getElementById('deleteIdsContainer').innerHTML =
+            ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+        openModal('deleteModal');
+    });
+
+    // Sortable column headers
+    document.querySelectorAll('.sortable').forEach(th => {
+        th.addEventListener('click', function () { sortTable(this.dataset.sort); });
+    });
+
+    onCheckboxChange();
+});
+
+// ─── Image preview ────────────────────────────────────────────
+document.getElementById('commodityImage').addEventListener('change', function () {
+    const file = this.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+            document.getElementById('previewImg').src = e.target.result;
+            document.getElementById('imagePreview').classList.remove('hidden');
+        };
+        reader.readAsDataURL(file);
+    } else {
+        document.getElementById('imagePreview').classList.add('hidden');
     }
-    
-    // Create a form to submit the export request
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = 'export_commodities.php';
-    
-    // Add format parameter
-    const formatInput = document.createElement('input');
-    formatInput.type = 'hidden';
-    formatInput.name = 'export_format';
-    formatInput.value = format;
-    form.appendChild(formatInput);
-    
-    // Add sort parameters
-    const sortInput = document.createElement('input');
-    sortInput.type = 'hidden';
-    sortInput.name = 'sort';
-    sortInput.value = '<?php echo $sort_column; ?>';
-    form.appendChild(sortInput);
-    
-    const orderInput = document.createElement('input');
-    orderInput.type = 'hidden';
-    orderInput.name = 'order';
-    orderInput.value = '<?php echo $sort_order; ?>';
-    form.appendChild(orderInput);
-    
-    // Add selected IDs from session
-    <?php foreach ($_SESSION['selected_commodities'] as $id): ?>
-        const idInput<?php echo $id; ?> = document.createElement('input');
-        idInput<?php echo $id; ?>.type = 'hidden';
-        idInput<?php echo $id; ?>.name = 'selected_ids[]';
-        idInput<?php echo $id; ?>.value = '<?php echo $id; ?>';
-        form.appendChild(idInput<?php echo $id; ?>);
-    <?php endforeach; ?>
-    
-    // Submit the form
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
+});
+
+// ─── Pagination / Sort / Filter helpers ──────────────────────
+function buildUrl(overrides={}) {
+    const params = new URLSearchParams(window.location.search);
+    const defaults = {
+        page:             params.get('page')             || 1,
+        limit:            document.getElementById('rowsPerPage').value,
+        search_commodity: document.getElementById('searchCommodity').value,
+        search_category:  document.getElementById('searchCategory').value,
+        sort:             params.get('sort')             || '',
+        dir:              params.get('dir')              || '',
+    };
+    Object.assign(defaults, overrides);
+    const q = new URLSearchParams();
+    Object.entries(defaults).forEach(([k,v]) => { if (v) q.set(k,v); });
+    return '?' + q.toString();
+}
+
+function goToPage(page)        { window.location.href = buildUrl({page}); }
+function changeRowsPerPage()   { window.location.href = buildUrl({page:1}); }
+function applyFilters()        { window.location.href = buildUrl({page:1}); }
+function sortTable(column) {
+    const params = new URLSearchParams(window.location.search);
+    const cur = params.get('sort'); const curDir = params.get('dir');
+    const dir = (cur===column && curDir==='asc') ? 'desc' : 'asc';
+    window.location.href = buildUrl({page:1, sort:column, dir});
 }
 </script>
 
-<?php include '../admin/includes/footer.php'; ?>
+<?php require_once '../admin/includes/admin_footer.php'; ?>
