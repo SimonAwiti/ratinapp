@@ -1,16 +1,320 @@
 <?php
 session_start();
 
-// Initialize selected tradepoints in session if not exists
+// ============================================================
+// API HANDLER - Must be at very top before ANY output
+// ============================================================
+if (isset($_GET['get_tradepoint']) && is_numeric($_GET['get_tradepoint'])) {
+    if (file_exists('includes/config.php')) {
+        include 'includes/config.php';
+    } elseif (file_exists('../admin/includes/config.php')) {
+        include '../admin/includes/config.php';
+    }
+    header('Content-Type: application/json');
+    $get_id = (int)$_GET['get_tradepoint'];
+    $type = $_GET['type'] ?? '';
+
+    if ($type == 'Markets') {
+        $stmt = $con->prepare("SELECT id, market_name as name, category, type as market_type, country, county_district as region, longitude, latitude, radius, currency, primary_commodity, additional_datasource, 'Markets' as tradepoint_type FROM markets WHERE id = ?");
+    } elseif ($type == 'Border Points') {
+        $stmt = $con->prepare("SELECT id, name, country, county as region, longitude, latitude, radius, 'Border Points' as tradepoint_type FROM border_points WHERE id = ?");
+    } elseif ($type == 'Millers') {
+        $stmt = $con->prepare("SELECT id, miller_name as name, country, county_district as region, currency, miller as miller_details, 'Millers' as tradepoint_type FROM miller_details WHERE id = ?");
+    } else {
+        http_response_code(400);
+        echo json_encode(['error' => 'Invalid tradepoint type']);
+        exit;
+    }
+
+    $stmt->bind_param("i", $get_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        echo json_encode($row);
+    } else {
+        http_response_code(404);
+        echo json_encode(['error' => 'Tradepoint not found']);
+    }
+    $stmt->close();
+    $con->close();
+    exit;
+}
+
+// ============================================================
+// EXPORT HANDLER
+// ============================================================
+if (isset($_GET['export_all'])) {
+    if (file_exists('includes/config.php')) {
+        include 'includes/config.php';
+    } elseif (file_exists('../admin/includes/config.php')) {
+        include '../admin/includes/config.php';
+    }
+    while (ob_get_level()) ob_end_clean();
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="tradepoints_export_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $export_sql = "SELECT * FROM (
+        SELECT id, market_name as name, 'Markets' as type, country, county_district as region, created_at FROM markets
+        UNION ALL
+        SELECT id, name, 'Border Points' as type, country, county as region, created_at FROM border_points
+        UNION ALL
+        SELECT id, miller_name as name, 'Millers' as type, country, county_district as region, created_at FROM miller_details
+    ) as combined ORDER BY name ASC";
+
+    $export_result = $con->query($export_sql);
+    $output = fopen('php://output', 'w');
+    fputs($output, "\xEF\xBB\xBF");
+    fputcsv($output, ['ID', 'Name', 'Type', 'Country', 'Region', 'Date Added']);
+
+    while ($row = $export_result->fetch_assoc()) {
+        fputcsv($output, [
+            $row['id'],
+            $row['name'],
+            $row['type'],
+            $row['country'],
+            $row['region'],
+            date('Y-m-d', strtotime($row['created_at']))
+        ]);
+    }
+    fclose($output);
+    $con->close();
+    exit;
+}
+
+// ============================================================
+// BULK IMPORT HANDLER
+// ============================================================
+if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
+    if (file_exists('includes/config.php')) {
+        include 'includes/config.php';
+    } elseif (file_exists('../admin/includes/config.php')) {
+        include '../admin/includes/config.php';
+    }
+
+    $file = $_FILES['csv_file']['tmp_name'];
+    $handle = fopen($file, "r");
+    $tradepoint_type = $_POST['tradepoint_type'];
+    $overwrite = isset($_POST['overwrite_existing']);
+
+    fgetcsv($handle); // Skip header row
+
+    $successCount = 0;
+    $errorCount   = 0;
+    $errors       = [];
+
+    $con->begin_transaction();
+
+    try {
+        $rowNumber = 1;
+
+        while (($data = fgetcsv($handle, 1000, ","))) {
+            $rowNumber++;
+            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) continue;
+
+            switch ($tradepoint_type) {
+
+                // ---- MARKETS ----
+                case 'Markets':
+                    $required = [0=>'Market Name',1=>'Category',2=>'Type',3=>'Country',4=>'County/District',5=>'Longitude',6=>'Latitude',7=>'Radius',8=>'Currency'];
+                    $skip = false;
+                    foreach ($required as $idx => $label) {
+                        if (empty(trim($data[$idx] ?? ''))) {
+                            $errors[] = "Row $rowNumber: $label is required";
+                            $errorCount++;
+                            $skip = true;
+                            break;
+                        }
+                    }
+                    if ($skip) continue;
+
+                    $market_name          = trim($data[0]);
+                    $category             = trim($data[1]);
+                    $type                 = trim($data[2]);
+                    $country              = trim($data[3]);
+                    $county_district      = trim($data[4]);
+                    $longitude            = floatval(trim($data[5]));
+                    $latitude             = floatval(trim($data[6]));
+                    $radius               = floatval(trim($data[7]));
+                    $currency             = trim($data[8]);
+                    $primary_commodities  = isset($data[9])  ? trim($data[9])  : '';
+                    $additional_datasource= isset($data[10]) ? trim($data[10]) : '';
+                    $created_at           = date('Y-m-d H:i:s');
+
+                    $check_stmt = $con->prepare("SELECT id FROM markets WHERE market_name = ?");
+                    $check_stmt->bind_param('s', $market_name);
+                    $check_stmt->execute();
+                    $exists = $check_stmt->get_result()->num_rows > 0;
+                    $check_stmt->close();
+
+                    if ($exists) {
+                        if ($overwrite) {
+                            $s = $con->prepare("UPDATE markets SET category=?,type=?,country=?,county_district=?,longitude=?,latitude=?,radius=?,currency=?,primary_commodity=?,additional_datasource=?,created_at=? WHERE market_name=?");
+                            $s->bind_param('ssssdddsssss', $category,$type,$country,$county_district,$longitude,$latitude,$radius,$currency,$primary_commodities,$additional_datasource,$created_at,$market_name);
+                            if ($s->execute()) $successCount++; else { $errors[] = "Row $rowNumber: Update failed - ".$s->error; $errorCount++; }
+                            $s->close();
+                        } else {
+                            $errors[] = "Row $rowNumber: Market '$market_name' already exists (use overwrite to update)";
+                            $errorCount++;
+                        }
+                    } else {
+                        $s = $con->prepare("INSERT INTO markets (market_name,category,type,country,county_district,longitude,latitude,radius,currency,primary_commodity,additional_datasource,tradepoint,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'Markets',?)");
+                        $s->bind_param('sssssdddssss', $market_name,$category,$type,$country,$county_district,$longitude,$latitude,$radius,$currency,$primary_commodities,$additional_datasource,$created_at);
+                        if ($s->execute()) $successCount++; else { $errors[] = "Row $rowNumber: Insert failed - ".$s->error; $errorCount++; }
+                        $s->close();
+                    }
+                    break;
+
+                // ---- MILLERS ----
+                case 'Millers':
+                    $required = [0=>'Miller Name',1=>'Country',2=>'County/District'];
+                    $skip = false;
+                    foreach ($required as $idx => $label) {
+                        if (empty(trim($data[$idx] ?? ''))) {
+                            $errors[] = "Row $rowNumber: $label is required";
+                            $errorCount++;
+                            $skip = true;
+                            break;
+                        }
+                    }
+                    if ($skip) continue;
+
+                    $miller_name     = trim($data[0]);
+                    $country         = trim($data[1]);
+                    $county_district = trim($data[2]);
+                    $millers_csv     = isset($data[3]) ? trim($data[3]) : '';
+                    $millers_array   = !empty($millers_csv) ? array_map('trim', explode(',', $millers_csv)) : [];
+                    if (count($millers_array) > 2) {
+                        $errors[] = "Row $rowNumber: Maximum 2 millers allowed (".count($millers_array)." given)";
+                        $errorCount++;
+                        continue;
+                    }
+                    $millers_json = json_encode($millers_array, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    $currency_map = ['Kenya'=>'KES','Uganda'=>'UGX','Tanzania'=>'TZS','Rwanda'=>'RWF','Burundi'=>'BIF','South Sudan'=>'SSP','Ethiopia'=>'ETB','Somalia'=>'SOS','Democratic Republic of Congo'=>'CDF','DRC'=>'CDF'];
+                    $currency  = $currency_map[$country] ?? 'USD';
+                    $created_at = date('Y-m-d H:i:s');
+
+                    $check_stmt = $con->prepare("SELECT id FROM miller_details WHERE miller_name = ?");
+                    $check_stmt->bind_param('s', $miller_name);
+                    $check_stmt->execute();
+                    $exists = $check_stmt->get_result()->num_rows > 0;
+                    $check_stmt->close();
+
+                    if ($exists) {
+                        if ($overwrite) {
+                            $s = $con->prepare("UPDATE miller_details SET country=?,county_district=?,miller=?,currency=?,created_at=? WHERE miller_name=?");
+                            $s->bind_param('ssssss', $country,$county_district,$millers_json,$currency,$created_at,$miller_name);
+                            if ($s->execute()) $successCount++; else { $errors[] = "Row $rowNumber: Update failed - ".$s->error; $errorCount++; }
+                            $s->close();
+                        } else {
+                            $errors[] = "Row $rowNumber: Miller '$miller_name' already exists (use overwrite to update)";
+                            $errorCount++;
+                        }
+                    } else {
+                        $s = $con->prepare("INSERT INTO miller_details (miller_name,country,county_district,miller,currency,tradepoint,created_at) VALUES (?,?,?,?,?,'Millers',?)");
+                        $s->bind_param('ssssss', $miller_name,$country,$county_district,$millers_json,$currency,$created_at);
+                        if ($s->execute()) $successCount++; else { $errors[] = "Row $rowNumber: Insert failed - ".$s->error; $errorCount++; }
+                        $s->close();
+                    }
+                    break;
+
+                // ---- BORDER POINTS ----
+                case 'Border Points':
+                    $required = [0=>'Name',1=>'Country',2=>'County',3=>'Longitude',4=>'Latitude'];
+                    $skip = false;
+                    foreach ($required as $idx => $label) {
+                        if (empty(trim($data[$idx] ?? ''))) {
+                            $errors[] = "Row $rowNumber: $label is required";
+                            $errorCount++;
+                            $skip = true;
+                            break;
+                        }
+                    }
+                    if ($skip) continue;
+
+                    $name       = trim($data[0]);
+                    $country    = trim($data[1]);
+                    $county     = trim($data[2]);
+                    $longitude  = floatval(trim($data[3]));
+                    $latitude   = floatval(trim($data[4]));
+                    $created_at = date('Y-m-d H:i:s');
+
+                    $check_stmt = $con->prepare("SELECT id FROM border_points WHERE name = ?");
+                    $check_stmt->bind_param('s', $name);
+                    $check_stmt->execute();
+                    $exists = $check_stmt->get_result()->num_rows > 0;
+                    $check_stmt->close();
+
+                    if ($exists) {
+                        if ($overwrite) {
+                            $s = $con->prepare("UPDATE border_points SET country=?,county=?,longitude=?,latitude=?,created_at=? WHERE name=?");
+                            $s->bind_param('ssddss', $country,$county,$longitude,$latitude,$created_at,$name);
+                            if ($s->execute()) $successCount++; else { $errors[] = "Row $rowNumber: Update failed - ".$s->error; $errorCount++; }
+                            $s->close();
+                        } else {
+                            $errors[] = "Row $rowNumber: Border Point '$name' already exists (use overwrite to update)";
+                            $errorCount++;
+                        }
+                    } else {
+                        $s = $con->prepare("INSERT INTO border_points (name,country,county,longitude,latitude,tradepoint,created_at) VALUES (?,?,?,?,?,'Border Points',?)");
+                        $s->bind_param('sssdds', $name,$country,$county,$longitude,$latitude,$created_at);
+                        if ($s->execute()) $successCount++; else { $errors[] = "Row $rowNumber: Insert failed - ".$s->error; $errorCount++; }
+                        $s->close();
+                    }
+                    break;
+            }
+        }
+
+        $criticalErrors = count(array_filter($errors, fn($e) => strpos($e, 'Warning') === false));
+
+        if ($criticalErrors === 0) {
+            $con->commit();
+            $import_message = "Successfully imported $successCount tradepoint(s)." . (!empty($errors) ? " Warnings: " . implode('<br>', $errors) : "");
+            $import_status  = 'success';
+        } else {
+            $con->rollback();
+            $import_message = "Import rolled back due to $criticalErrors error(s). Errors:<br>" . implode('<br>', $errors);
+            $import_status  = 'error';
+        }
+    } catch (Exception $e) {
+        $con->rollback();
+        $import_message = "Import failed: " . $e->getMessage();
+        $import_status  = 'error';
+    }
+
+    fclose($handle);
+}
+
+// ============================================================
+// NORMAL PAGE LOAD
+// ============================================================
+require_once '../admin/includes/admin_header.php';
+
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    header("Location: ../admin/login.php");
+    exit;
+}
+
+if (file_exists('includes/config.php')) {
+    include 'includes/config.php';
+} elseif (file_exists('../admin/includes/config.php')) {
+    include '../admin/includes/config.php';
+}
+
+$message      = '';
+$message_type = '';
+
 if (!isset($_SESSION['selected_tradepoints'])) {
     $_SESSION['selected_tradepoints'] = [];
 }
 
-// Handle selection updates via AJAX
+// AJAX selection handler
 if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
-    $id = $_POST['id'];
+    $id         = $_POST['id'];
     $isSelected = $_POST['selected'] === 'true';
-    
+
     if ($isSelected) {
         if (!in_array($id, $_SESSION['selected_tradepoints'])) {
             $_SESSION['selected_tradepoints'][] = $id;
@@ -19,1649 +323,1151 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
         $key = array_search($id, $_SESSION['selected_tradepoints']);
         if ($key !== false) {
             unset($_SESSION['selected_tradepoints'][$key]);
-            $_SESSION['selected_tradepoints'] = array_values($_SESSION['selected_tradepoints']); // Re-index
+            $_SESSION['selected_tradepoints'] = array_values($_SESSION['selected_tradepoints']);
         }
     }
-    
-    // Clear all selections
     if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
         $_SESSION['selected_tradepoints'] = [];
     }
-    
     echo json_encode(['success' => true, 'count' => count($_SESSION['selected_tradepoints'])]);
     exit;
 }
 
-// Clear all selections if requested via GET
-if (isset($_GET['clear_selections'])) {
-    $_SESSION['selected_tradepoints'] = [];
+// Handle Edit via POST
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_tradepoint'])) {
+    $id      = $_POST['tradepoint_id'];
+    $type    = $_POST['tradepoint_type_edit'];
+    $name    = trim($_POST['name']);
+    $country = trim($_POST['country']);
+    $region  = trim($_POST['region']);
+
+    if ($type == 'Markets') {
+        $category             = trim($_POST['category']);
+        $market_type          = trim($_POST['market_type']);
+        $longitude            = $_POST['longitude'];
+        $latitude             = $_POST['latitude'];
+        $radius               = $_POST['radius'];
+        $currency             = trim($_POST['currency']);
+        $primary_commodity    = trim($_POST['primary_commodity']);
+        $additional_datasource= trim($_POST['additional_datasource']);
+
+        $stmt = $con->prepare("UPDATE markets SET market_name=?,category=?,type=?,country=?,county_district=?,longitude=?,latitude=?,radius=?,currency=?,primary_commodity=?,additional_datasource=? WHERE id=?");
+        $stmt->bind_param("sssssdddsssi", $name,$category,$market_type,$country,$region,$longitude,$latitude,$radius,$currency,$primary_commodity,$additional_datasource,$id);
+    } elseif ($type == 'Border Points') {
+        $longitude = $_POST['longitude'];
+        $latitude  = $_POST['latitude'];
+        $radius    = $_POST['radius'];
+
+        $stmt = $con->prepare("UPDATE border_points SET name=?,country=?,county=?,longitude=?,latitude=?,radius=? WHERE id=?");
+        $stmt->bind_param("sssdddi", $name,$country,$region,$longitude,$latitude,$radius,$id);
+    } elseif ($type == 'Millers') {
+        $currency       = trim($_POST['currency']);
+        $miller_details = trim($_POST['miller_details']);
+
+        $stmt = $con->prepare("UPDATE miller_details SET miller_name=?,country=?,county_district=?,currency=?,miller=? WHERE id=?");
+        $stmt->bind_param("sssssi", $name,$country,$region,$currency,$miller_details,$id);
+    }
+
+    if (isset($stmt) && $stmt->execute()) {
+        $message      = "Tradepoint updated successfully!";
+        $message_type = "success";
+    } elseif (isset($stmt)) {
+        $message      = "Error updating: " . $stmt->error;
+        $message_type = "error";
+    }
+    if (isset($stmt)) $stmt->close();
 }
 
-// Include the configuration file first
-include '../admin/includes/config.php';
+// Handle Delete
+if (isset($_POST['delete_selected']) && !empty($_POST['selected_ids'])) {
+    $selected_ids  = array_map('intval', (array)$_POST['selected_ids']);
+    $deleted_count = 0;
 
-// Include the shared header with the sidebar and initial HTML
-include '../admin/includes/header.php';
-
-// Handle CSV import
-if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
-    $file = $_FILES['csv_file']['tmp_name'];
-    $handle = fopen($file, "r");
-    $tradepoint_type = $_POST['tradepoint_type'];
-    $overwrite = isset($_POST['overwrite_existing']);
-    
-    // Skip header row
-    fgetcsv($handle);
-    
-    $successCount = 0;
-    $errorCount = 0;
-    $errors = array();
-    
-    // Start transaction
-    $con->begin_transaction();
-    
-    try {
-        $rowNumber = 1; // Track row numbers for better error reporting
-        
-        while (($data = fgetcsv($handle, 1000, ","))) {
-            $rowNumber++;
-            
-            // Skip completely empty rows
-            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
-                continue; // Skip empty rows without counting as errors
-            }
-            
-            // Process based on tradepoint type
-            switch ($tradepoint_type) {
-                case 'Markets':
-                    // Validate required fields for Markets
-                    if (empty(trim($data[0]))) { // Market Name
-                        $errors[] = "Row $rowNumber: Market Name is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[1]))) { // Category
-                        $errors[] = "Row $rowNumber: Category is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[2]))) { // Type
-                        $errors[] = "Row $rowNumber: Type is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[3]))) { // Country
-                        $errors[] = "Row $rowNumber: Country is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[4]))) { // County/District
-                        $errors[] = "Row $rowNumber: County/District is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[5]))) { // Longitude
-                        $errors[] = "Row $rowNumber: Longitude is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[6]))) { // Latitude
-                        $errors[] = "Row $rowNumber: Latitude is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[7]))) { // Radius
-                        $errors[] = "Row $rowNumber: Radius is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[8]))) { // Currency
-                        $errors[] = "Row $rowNumber: Currency is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    
-                    // Prepare market data
-                    $market_name = trim($data[0]);
-                    $category = trim($data[1]);
-                    $type = trim($data[2]);
-                    $country = trim($data[3]);
-                    $county_district = trim($data[4]);
-                    $longitude = floatval(trim($data[5]));
-                    $latitude = floatval(trim($data[6]));
-                    $radius = floatval(trim($data[7]));
-                    $currency = trim($data[8]);
-                    $primary_commodities = isset($data[9]) ? trim($data[9]) : '';
-                    $additional_datasource = isset($data[10]) ? trim($data[10]) : '';
-                    $image_urls = ''; // Set empty image_urls for import
-                    $created_at = date('Y-m-d H:i:s'); // Add creation timestamp
-                    
-                    // Check if market exists
-                    $check_query = "SELECT id FROM markets WHERE market_name = ?";
-                    $check_stmt = $con->prepare($check_query);
-                    $check_stmt->bind_param('s', $market_name);
-                    $check_stmt->execute();
-                    $check_result = $check_stmt->get_result();
-                    
-                    if ($check_result->num_rows > 0) {
-                        if ($overwrite) {
-                            // Update existing market
-                            $update_query = "UPDATE markets SET 
-                                category = ?, 
-                                type = ?, 
-                                country = ?, 
-                                county_district = ?, 
-                                longitude = ?, 
-                                latitude = ?, 
-                                radius = ?, 
-                                currency = ?, 
-                                primary_commodity = ?, 
-                                additional_datasource = ?,
-                                image_urls = ?,
-                                created_at = ?
-                                WHERE market_name = ?";
-                            
-                            $update_stmt = $con->prepare($update_query);
-                            if (!$update_stmt) {
-                                $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
-                                $errorCount++;
-                                continue;
-                            }
-                            
-                            $update_stmt->bind_param(
-                                'ssssdddssssss',
-                                $category,
-                                $type,
-                                $country,
-                                $county_district,
-                                $longitude,
-                                $latitude,
-                                $radius,
-                                $currency,
-                                $primary_commodities,
-                                $additional_datasource,
-                                $image_urls,
-                                $created_at,
-                                $market_name
-                            );
-                            
-                            if ($update_stmt->execute()) {
-                                $successCount++;
-                            } else {
-                                $errors[] = "Row $rowNumber: Update failed - " . $update_stmt->error;
-                                $errorCount++;
-                            }
-                            $update_stmt->close();
-                        } else {
-                            $errors[] = "Row $rowNumber: Market '$market_name' already exists (use overwrite option to update)";
-                            $errorCount++;
-                        }
-                        continue;
-                    }
-                    
-                    // Insert new market
-                    $insert_query = "INSERT INTO markets (
-                        market_name, 
-                        category, 
-                        type, 
-                        country, 
-                        county_district, 
-                        longitude, 
-                        latitude, 
-                        radius, 
-                        currency, 
-                        primary_commodity, 
-                        additional_datasource,
-                        image_urls,
-                        tradepoint,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Markets', ?)";
-                    
-                    $insert_stmt = $con->prepare($insert_query);
-                    if (!$insert_stmt) {
-                        $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
-                        $errorCount++;
-                        continue;
-                    }
-                    
-                    $insert_stmt->bind_param(
-                        'ssssdddssssss',
-                        $market_name,
-                        $category,
-                        $type,
-                        $country,
-                        $county_district,
-                        $longitude,
-                        $latitude,
-                        $radius,
-                        $currency,
-                        $primary_commodities,
-                        $additional_datasource,
-                        $image_urls,
-                        $created_at
-                    );
-                    
-                    if ($insert_stmt->execute()) {
-                        $successCount++;
-                    } else {
-                        $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
-                        $errorCount++;
-                    }
-                    $insert_stmt->close();
-                    break;
-                    
-                case 'Millers':
-                    // Validate required fields for Millers
-                    if (empty(trim($data[0]))) { // Miller Name
-                        $errors[] = "Row $rowNumber: Miller Name is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[1]))) { // Country
-                        $errors[] = "Row $rowNumber: Country is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[2]))) { // County/District
-                        $errors[] = "Row $rowNumber: County/District is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    
-                    // Prepare miller data
-                    $miller_name = trim($data[0]);
-                    $country = trim($data[1]);
-                    $county_district = trim($data[2]);
-                    $millers_csv = isset($data[3]) ? trim($data[3]) : '';
-                    $created_at = date('Y-m-d H:i:s'); // Add creation timestamp
-                    
-                    // Process millers (comma-separated, max 2)
-                    $millers_array = [];
-                    if (!empty($millers_csv)) {
-                        $millers = array_map('trim', explode(',', $millers_csv));
-                        if (count($millers) > 2) {
-                            $errors[] = "Row $rowNumber: Maximum of 2 millers allowed (found " . count($millers) . ")";
-                            $errorCount++;
-                            continue;
-                        }
-                        $millers_array = $millers;
-                    }
-                    
-                    $millers_json = json_encode($millers_array, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                    if ($millers_json === false) {
-                        $errors[] = "Row $rowNumber: Failed to encode millers as JSON - " . json_last_error_msg();
-                        $errorCount++;
-                        continue;
-                    }
-                    
-                    // Auto-determine currency from country
-                    $currency = getCurrencyFromCountry($country);
-                    
-                    // Check if miller exists
-                    $check_query = "SELECT id FROM miller_details WHERE miller_name = ?";
-                    $check_stmt = $con->prepare($check_query);
-                    $check_stmt->bind_param('s', $miller_name);
-                    $check_stmt->execute();
-                    $check_result = $check_stmt->get_result();
-                    
-                    if ($check_result->num_rows > 0) {
-                        if ($overwrite) {
-                            // Update existing miller
-                            $update_query = "UPDATE miller_details SET 
-                                country = ?, 
-                                county_district = ?, 
-                                miller = ?,
-                                currency = ?,
-                                created_at = ?
-                                WHERE miller_name = ?";
-                            
-                            $update_stmt = $con->prepare($update_query);
-                            if (!$update_stmt) {
-                                $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
-                                $errorCount++;
-                                continue;
-                            }
-                            
-                            $update_stmt->bind_param(
-                                'ssssss',
-                                $country,
-                                $county_district,
-                                $millers_json,
-                                $currency,
-                                $created_at,
-                                $miller_name
-                            );
-                            
-                            if ($update_stmt->execute()) {
-                                $successCount++;
-                            } else {
-                                $errors[] = "Row $rowNumber: Update failed - " . $update_stmt->error;
-                                $errorCount++;
-                            }
-                            $update_stmt->close();
-                        } else {
-                            $errors[] = "Row $rowNumber: Miller '$miller_name' already exists (use overwrite option to update)";
-                            $errorCount++;
-                        }
-                        continue;
-                    }
-                    
-                    // Insert new miller
-                    $insert_query = "INSERT INTO miller_details (
-                        miller_name, 
-                        country, 
-                        county_district, 
-                        miller,
-                        currency,
-                        tradepoint,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, 'Millers', ?)";
-                    
-                    $insert_stmt = $con->prepare($insert_query);
-                    if (!$insert_stmt) {
-                        $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
-                        $errorCount++;
-                        continue;
-                    }
-                    
-                    $insert_stmt->bind_param(
-                        'ssssss',
-                        $miller_name,
-                        $country,
-                        $county_district,
-                        $millers_json,
-                        $currency,
-                        $created_at
-                    );
-                    
-                    if ($insert_stmt->execute()) {
-                        $successCount++;
-                    } else {
-                        $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
-                        $errorCount++;
-                    }
-                    $insert_stmt->close();
-                    break;
-                    
-                case 'Border Points':
-                    // Validate required fields for Border Points
-                    if (empty(trim($data[0]))) { // Name
-                        $errors[] = "Row $rowNumber: Name is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[1]))) { // Country
-                        $errors[] = "Row $rowNumber: Country is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[2]))) { // County
-                        $errors[] = "Row $rowNumber: County is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[3]))) { // Longitude
-                        $errors[] = "Row $rowNumber: Longitude is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    if (empty(trim($data[4]))) { // Latitude
-                        $errors[] = "Row $rowNumber: Latitude is required";
-                        $errorCount++;
-                        continue;
-                    }
-                    
-                    // Prepare border point data
-                    $name = trim($data[0]);
-                    $country = trim($data[1]);
-                    $county = trim($data[2]);
-                    $longitude = floatval(trim($data[3]));
-                    $latitude = floatval(trim($data[4]));
-                    $created_at = date('Y-m-d H:i:s'); // Add creation timestamp
-                    
-                    // Check if border point exists
-                    $check_query = "SELECT id FROM border_points WHERE name = ?";
-                    $check_stmt = $con->prepare($check_query);
-                    $check_stmt->bind_param('s', $name);
-                    $check_stmt->execute();
-                    $check_result = $check_stmt->get_result();
-                    
-                    if ($check_result->num_rows > 0) {
-                        if ($overwrite) {
-                            // Update existing border point
-                            $update_query = "UPDATE border_points SET 
-                                country = ?, 
-                                county = ?, 
-                                longitude = ?, 
-                                latitude = ?,
-                                created_at = ?
-                                WHERE name = ?";
-                            
-                            $update_stmt = $con->prepare($update_query);
-                            if (!$update_stmt) {
-                                $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
-                                $errorCount++;
-                                continue;
-                            }
-                            
-                            $update_stmt->bind_param(
-                                'ssddss',
-                                $country,
-                                $county,
-                                $longitude,
-                                $latitude,
-                                $created_at,
-                                $name
-                            );
-                            
-                            if ($update_stmt->execute()) {
-                                $successCount++;
-                            } else {
-                                $errors[] = "Row $rowNumber: Update failed - " . $update_stmt->error;
-                                $errorCount++;
-                            }
-                            $update_stmt->close();
-                        } else {
-                            $errors[] = "Row $rowNumber: Border Point '$name' already exists (use overwrite option to update)";
-                            $errorCount++;
-                        }
-                        continue;
-                    }
-                    
-                    // Insert new border point
-                    $insert_query = "INSERT INTO border_points (
-                        name, 
-                        country, 
-                        county, 
-                        longitude, 
-                        latitude,
-                        tradepoint,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, 'Border Points', ?)";
-                    
-                    $insert_stmt = $con->prepare($insert_query);
-                    if (!$insert_stmt) {
-                        $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
-                        $errorCount++;
-                        continue;
-                    }
-                    
-                    $insert_stmt->bind_param(
-                        'sssdds',
-                        $name,
-                        $country,
-                        $county,
-                        $longitude,
-                        $latitude,
-                        $created_at
-                    );
-                    
-                    if ($insert_stmt->execute()) {
-                        $successCount++;
-                    } else {
-                        $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
-                        $errorCount++;
-                    }
-                    $insert_stmt->close();
-                    break;
-                    
-                default:
-                    $errors[] = "Row $rowNumber: Invalid tradepoint type";
-                    $errorCount++;
-                    continue;
-            }
+    foreach ($selected_ids as $delete_id) {
+        foreach (['markets','border_points','miller_details'] as $tbl) {
+            $col = ($tbl === 'miller_details') ? 'id' : 'id';
+            $s   = $con->prepare("DELETE FROM $tbl WHERE id = ?");
+            $s->bind_param("i", $delete_id);
+            if ($s->execute() && $s->affected_rows > 0) $deleted_count++;
+            $s->close();
         }
-        
-        // Commit transaction if no critical errors (allow warnings)
-        $criticalErrors = 0;
-        foreach ($errors as $error) {
-            if (strpos($error, 'Warning') === false) {
-                $criticalErrors++;
-            }
-        }
-        
-        if ($criticalErrors === 0) {
-            $con->commit();
-            $warningCount = count($errors) - $criticalErrors;
-            if ($warningCount > 0) {
-                $import_message = "Successfully imported " . $successCount . " tradepoints with " . $warningCount . " warnings. Warnings: " . implode('<br>', $errors);
-                $import_status = 'warning';
-            } else {
-                $import_message = "Successfully imported " . $successCount . " tradepoints.";
-                $import_status = 'success';
-            }
-        } else {
-            $con->rollback();
-            $import_message = "Import rolled back due to " . $criticalErrors . " critical errors. Processed " . $successCount . " rows successfully. Errors: " . implode('<br>', $errors);
-            $import_status = 'danger';
-        }
-        
-    } catch (Exception $e) {
-        $con->rollback();
-        $import_message = "Import failed with exception: " . $e->getMessage();
-        $import_status = 'danger';
     }
-    
-    fclose($handle);
-} elseif (isset($_POST['import_csv'])) {
-    $import_message = "Please select a valid CSV file to import.";
-    $import_status = 'danger';
+
+    if ($deleted_count > 0) {
+        $message      = "Successfully deleted $deleted_count tradepoint(s).";
+        $message_type = "success";
+        $_SESSION['selected_tradepoints'] = [];
+    } else {
+        $message      = "No tradepoints were deleted.";
+        $message_type = "error";
+    }
 }
 
-// Function to get currency from country
-function getCurrencyFromCountry($country) {
-    $currency_map = [
-        'Kenya' => 'KES',
-        'Uganda' => 'UGX',
-        'Tanzania' => 'TZS',
-        'Rwanda' => 'RWF',
-        'Burundi' => 'BIF',
-        'South Sudan' => 'SSP',
-        'Ethiopia' => 'ETB',
-        'Somalia' => 'SOS',
-        'Democratic Republic of Congo' => 'CDF',
-        'Congo' => 'CDF',
-        'DRC' => 'CDF',
-        'Sudan' => 'SDG',
-        'Egypt' => 'EGP',
-        'Zambia' => 'ZMW',
-        'Zimbabwe' => 'ZWL',
-        'Malawi' => 'MWK',
-        'Mozambique' => 'MZN',
-        'Angola' => 'AOA',
-        'Nigeria' => 'NGN',
-        'Ghana' => 'GHS',
-        'South Africa' => 'ZAR',
-        'Botswana' => 'BWP',
-        'Namibia' => 'NAD',
-        'Lesotho' => 'LSL',
-        'Eswatini' => 'SZL',
-        'Madagascar' => 'MGA',
-        'Mauritius' => 'MUR',
-        'Seychelles' => 'SCR'
-    ];
-    
-    // Clean the country name and try to match
-    $country = trim($country);
-    
-    // Exact match first
-    if (isset($currency_map[$country])) {
-        return $currency_map[$country];
-    }
-    
-    // Case-insensitive search
-    foreach ($currency_map as $map_country => $currency) {
-        if (strtolower($map_country) === strtolower($country)) {
-            return $currency;
-        }
-    }
-    
-    // Partial match (if country contains the key)
-    foreach ($currency_map as $map_country => $currency) {
-        if (stripos($country, $map_country) !== false) {
-            return $currency;
-        }
-    }
-    
-    // Default to USD if no match found
-    return 'USD';
-}
+// ============================================================
+// PAGINATION & FILTERING
+// ============================================================
+$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 20;
+if (!in_array($limit, [10, 20, 50, 100])) $limit = 20;
 
-// --- Fetch all data for the table with filtering and sorting ---
+$sort_column    = isset($_GET['sort']) ? $_GET['sort'] : 'name';
+$sort_direction = (isset($_GET['dir']) && strtolower($_GET['dir']) === 'asc') ? 'ASC' : 'DESC';
+if (!in_array($sort_column, ['id','name','type','country','region','created_at'])) $sort_column = 'name';
+
+$search_name    = trim($_GET['search_name']    ?? '');
+$search_type    = trim($_GET['search_type']    ?? '');
+$search_country = trim($_GET['search_country'] ?? '');
+
 $base_query = "
-    SELECT
-        id,
-        market_name AS name,
-        'Markets' AS tradepoint_type,
-        country AS admin0,
-        county_district AS admin1,
-        created_at
-    FROM markets
-    
+    SELECT id, market_name as name, 'Markets' as type, country, county_district as region, created_at FROM markets
     UNION ALL
-    
-    SELECT
-        id,
-        name AS name,
-        'Border Points' AS tradepoint_type,
-        country AS admin0,
-        county AS admin1,
-        created_at
-    FROM border_points
-    
+    SELECT id, name, 'Border Points' as type, country, county as region, created_at FROM border_points
     UNION ALL
-    
-    SELECT
-        id,
-        miller_name AS name,
-        'Millers' AS tradepoint_type,
-        country AS admin0,
-        county_district AS admin1,
-        created_at
-    FROM miller_details
+    SELECT id, miller_name as name, 'Millers' as type, country, county_district as region, created_at FROM miller_details
 ";
 
-// Apply filters from GET parameters (for server-side filtering)
-$filterConditions = [];
+$where  = [];
 $params = [];
-$types = '';
+$types  = "";
 
-if (isset($_GET['filter_name']) && !empty($_GET['filter_name'])) {
-    $filterConditions[] = "name LIKE ?";
-    $params[] = '%' . $_GET['filter_name'] . '%';
-    $types .= 's';
+if (!empty($search_name)) {
+    $where[]  = "name LIKE ?";
+    $params[] = '%' . $search_name . '%';
+    $types   .= "s";
+}
+if (!empty($search_type)) {
+    $where[]  = "type = ?";
+    $params[] = $search_type;
+    $types   .= "s";
+}
+if (!empty($search_country)) {
+    $where[]  = "country LIKE ?";
+    $params[] = '%' . $search_country . '%';
+    $types   .= "s";
 }
 
-if (isset($_GET['filter_type']) && !empty($_GET['filter_type'])) {
-    $filterConditions[] = "tradepoint_type LIKE ?";
-    $params[] = '%' . $_GET['filter_type'] . '%';
-    $types .= 's';
-}
+$where_clause = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
-if (isset($_GET['filter_country']) && !empty($_GET['filter_country'])) {
-    $filterConditions[] = "admin0 LIKE ?";
-    $params[] = '%' . $_GET['filter_country'] . '%';
-    $types .= 's';
-}
+// Total count for pagination
+$count_sql  = "SELECT COUNT(*) as total FROM ($base_query) as combined $where_clause";
+$count_stmt = $con->prepare($count_sql);
+if (!empty($params)) $count_stmt->bind_param($types, ...$params);
+$count_stmt->execute();
+$filtered_records = (int)$count_stmt->get_result()->fetch_assoc()['total'];
+$count_stmt->close();
 
-if (isset($_GET['filter_region']) && !empty($_GET['filter_region'])) {
-    $filterConditions[] = "admin1 LIKE ?";
-    $params[] = '%' . $_GET['filter_region'] . '%';
-    $types .= 's';
-}
+$total_pages = ($filtered_records > 0) ? (int)ceil($filtered_records / $limit) : 1;
+$page        = isset($_GET['page']) ? max(1, min((int)$_GET['page'], $total_pages)) : 1;
+$offset      = ($page - 1) * $limit;
 
-// Build the query with filters
-$query = "SELECT * FROM ($base_query) AS combined WHERE 1=1";
-if (!empty($filterConditions)) {
-    $query .= " AND " . implode(" AND ", $filterConditions);
-}
+$data_sql    = "SELECT * FROM ($base_query) as combined $where_clause ORDER BY $sort_column $sort_direction LIMIT ? OFFSET ?";
+$data_params = array_merge($params, [$limit, $offset]);
+$data_types  = $types . "ii";
 
-// Apply sorting
-$sortable_columns = ['id', 'name', 'tradepoint_type', 'admin0', 'admin1', 'created_at'];
-$default_sort_column = 'name';
-$default_sort_order = 'ASC';
+$data_stmt = $con->prepare($data_sql);
+$data_stmt->bind_param($data_types, ...$data_params);
+$data_stmt->execute();
+$tradepoints_data = $data_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$data_stmt->close();
 
-$sort_column = isset($_GET['sort']) && in_array($_GET['sort'], $sortable_columns) ? $_GET['sort'] : $default_sort_column;
-$sort_order = isset($_GET['order']) && in_array(strtoupper($_GET['order']), ['ASC', 'DESC']) ? strtoupper($_GET['order']) : $default_sort_order;
+$showing_from = $filtered_records > 0 ? $offset + 1 : 0;
+$showing_to   = $filtered_records > 0 ? min($offset + $limit, $filtered_records) : 0;
 
-$query .= " ORDER BY $sort_column $sort_order";
+// Statistics
+$markets_count    = $con->query("SELECT COUNT(*) as t FROM markets")->fetch_assoc()['t']        ?? 0;
+$border_count     = $con->query("SELECT COUNT(*) as t FROM border_points")->fetch_assoc()['t']  ?? 0;
+$millers_count    = $con->query("SELECT COUNT(*) as t FROM miller_details")->fetch_assoc()['t'] ?? 0;
+$total_tradepoints = $markets_count + $border_count + $millers_count;
 
-// Prepare and execute query with filters and sorting
-if (!empty($params)) {
-    $stmt = $con->prepare($query);
-    if ($stmt) {
-        $stmt->bind_param($types, ...$params);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $tradepoints = $result->fetch_all(MYSQLI_ASSOC);
-        $stmt->close();
-    } else {
-        // Fallback if prepare fails
-        $result = $con->query($query);
-        $tradepoints = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
-    }
-} else {
-    $result = $con->query($query);
-    $tradepoints = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
-}
+// Dropdowns
+$countries   = [];
+$ctry_result = $con->query("SELECT DISTINCT admin0_country FROM commodity_sources ORDER BY admin0_country ASC");
+if ($ctry_result) while ($r = $ctry_result->fetch_assoc()) $countries[] = $r['admin0_country'];
 
-// Pagination Logic (AFTER filtering and sorting)
-$itemsPerPage = isset($_GET['limit']) ? intval($_GET['limit']) : 7;
-$totalItems = count($tradepoints);
-$totalPages = ceil($totalItems / $itemsPerPage);
-$page = isset($_GET['page']) ? max(1, min($totalPages, intval($_GET['page']))) : 1;
-$startIndex = ($page - 1) * $itemsPerPage;
+$commodities = [];
+$comm_result = $con->query("SELECT id, commodity_name, variety FROM commodities ORDER BY commodity_name ASC");
+if ($comm_result) while ($r = $comm_result->fetch_assoc()) $commodities[] = $r;
 
-$tradepoints_paged = array_slice($tradepoints, $startIndex, $itemsPerPage);
+$data_sources = [];
+$ds_result    = $con->query("SELECT data_source_name FROM data_sources ORDER BY data_source_name ASC");
+if ($ds_result) while ($r = $ds_result->fetch_assoc()) $data_sources[] = $r['data_source_name'];
 
-// --- Fetch counts for summary boxes ---
-$total_tradepoints_query = "SELECT COUNT(*) AS total FROM (
-    SELECT id FROM markets 
-    UNION ALL 
-    SELECT id FROM border_points 
-    UNION ALL 
-    SELECT id FROM miller_details
-) AS combined";
-$total_tradepoints_result = $con->query($total_tradepoints_query);
-$total_tradepoints_row = $total_tradepoints_result->fetch_assoc();
-$total_tradepoints = $total_tradepoints_row['total'];
-
-$markets_query = "SELECT COUNT(*) AS total FROM markets";
-$markets_result = $con->query($markets_query);
-$markets_row = $markets_result->fetch_assoc();
-$markets_count = $markets_row['total'];
-
-$border_points_query = "SELECT COUNT(*) AS total FROM border_points";
-$border_points_result = $con->query($border_points_query);
-$border_points_row = $border_points_result->fetch_assoc();
-$border_points_count = $border_points_row['total'];
-
-$millers_query = "SELECT COUNT(*) AS total FROM miller_details";
-$millers_result = $con->query($millers_query);
-$millers_row = $millers_result->fetch_assoc();
-$millers_count = $millers_row['total'];
+$currency_map = [
+    'Kenya' => 'KES', 'Uganda' => 'UGX', 'Tanzania' => 'TZS',
+    'Rwanda' => 'RWF', 'Burundi' => 'BIF', 'South Sudan' => 'SSP',
+    'Ethiopia' => 'ETB', 'Somalia' => 'SOS',
+    'Democratic Republic of Congo' => 'CDF', 'DRC' => 'CDF',
+];
 ?>
 
 <style>
-    .table-container {
-        background: white;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-    }
-    .filter-row {
-        background-color: white;
-    }
-    .btn-group {
-        margin-bottom: 15px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-    .btn-add-new {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        padding: 10px 20px;
-        font-size: 16px;
-        border: none;
-    }
-    .btn-add-new:hover {
-        background-color: darkred;
-    }
-    .btn-delete, .btn-export, .btn-import, .btn-bulk-export, .btn-clear-selections {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-        padding: 8px 16px;
-    }
-    .btn-delete:hover, .btn-export:hover, .btn-import:hover, .btn-bulk-export:hover, .btn-clear-selections:hover {
-        background-color: #f8f9fa;
-    }
-    .btn-clear-selections {
-        background-color: #ffc107;
-        color: black;
-    }
-    .btn-clear-selections:hover {
-        background-color: #e0a800;
-    }
-    .btn-bulk-export {
-        background-color: #17a2b8;
-        color: white;
-    }
-    .btn-bulk-export:hover {
-        background-color: #138496;
-    }
-    .dropdown-menu {
-        min-width: 120px;
-    }
-    .dropdown-item {
-        cursor: pointer;
-    }
-    .filter-input {
-        width: 100%;
-        border: none;
-        background: white;
-        padding: 5px;
-        border-radius: 5px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    .filter-input:focus {
-        outline: none;
-        background: white;
-    }
-    .stats-container {
-        display: flex;
-        gap: 15px;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: nowrap;
-        width: 87%;
-        max-width: 100%;
-        margin: 0 auto 20px auto;
-        margin-left: 0.7%;
-    }
-    .stats-container > div {
-        flex: 1;
-        background: white;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        text-align: center;
-        min-height: 120px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-    }
-    .stats-icon {
-        width: 40px;
-        height: 40px;
-        margin-bottom: 10px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-    }
-    .total-icon {
-        background-color: #3498db;
-        color: white;
-    }
-    .markets-icon {
-        background-color: #e74c3c;
-        color: white;
-    }
-    .border-icon {
-        background-color: #f39c12;
-        color: white;
-    }
-    .millers-icon {
-        background-color: #27ae60;
-        color: white;
-    }
-    .stats-section {
-        text-align: left;
-        margin-left: 11%;
-    }
-    .stats-title {
-        font-size: 16px;
-        font-weight: 600;
-        color: #2c3e50;
-        margin: 8px 0 5px 0;
-    }
-    .stats-number {
-        font-size: 24px;
-        font-weight: 700;
-        color: #34495e;
-    }
-    .modal-content {
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-    }
-    .modal-header {
-        background-color: #2c3e50;
-        color: white;
-        border-top-left-radius: 10px;
-        border-top-right-radius: 10px;
-    }
-    .modal-header .btn-close {
-        color: white;
-        filter: invert(1);
-    }
-    .form-control {
-        margin-bottom: 15px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        padding: 8px;
-    }
-    .form-control:focus {
-        outline: none;
-        border-color: rgba(180, 80, 50, 1);
-        box-shadow: 0 0 5px rgba(180, 80, 50, 0.5);
-    }
-    .btn-primary {
-        background-color: rgba(180, 80, 50, 1);
-        border: none;
-        padding: 10px 20px;
-        font-size: 16px;
-        border-radius: 5px;
-        color: white;
-        cursor: pointer;
-    }
-    .btn-primary:hover {
-        background-color: darkred;
-    }
-    .type-badge {
-        padding: 4px 8px;
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: 600;
-    }
-    .badge-market {
-        background-color: #ffeaea;
-        color: #721c24;
-    }
-    .badge-border {
-        background-color: #fff3cd;
-        color: #856404;
-    }
-    .badge-miller {
-        background-color: #d1ecf1;
-        color: #0c5460;
-    }
-    .import-instructions {
-        background-color: #f8f9fa;
-        border-left: 4px solid rgba(180, 80, 50, 1);
-        padding: 15px;
-        margin-bottom: 20px;
-    }
-    .import-instructions h5 {
-        color: rgba(180, 80, 50, 1);
-        margin-top: 0;
-    }
-    .import-instructions h6 {
-        color: rgba(180, 80, 50, 0.8);
-        margin-top: 15px;
-    }
-    .download-template {
-        display: inline-block;
-        margin-top: 10px;
-        color: rgba(180, 80, 50, 1);
-        text-decoration: none;
-    }
-    .download-template:hover {
-        text-decoration: underline;
-    }
-    .type-instructions ol {
-        padding-left: 20px;
-    }
-    .type-instructions ol li {
-        margin-bottom: 5px;
-    }
-    .alert {
-        margin-bottom: 20px;
-    }
-    .selected-count {
-        display: inline-block;
-        background-color: rgba(180, 80, 50, 0.1);
-        color: rgba(180, 80, 50, 1);
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.85rem;
-        margin-left: 5px;
-        font-weight: bold;
-    }
-    /* Sorting styles */
-    .sortable {
-        cursor: pointer;
-        position: relative;
-        user-select: none;
-    }
-    .sortable:hover {
-        background-color: #f0f0f0;
-    }
-    .sort-icon {
-        display: inline-block;
-        margin-left: 5px;
-        font-size: 0.8em;
-        opacity: 0.7;
-    }
-    .sort-asc .sort-icon::after {
-        content: "↑";
-    }
-    .sort-desc .sort-icon::after {
-        content: "↓";
-    }
-    .sortable.sort-asc,
-    .sortable.sort-desc {
-        background-color: #e9ecef;
-        font-weight: bold;
-    }
-    .date-added {
-        font-size: 0.8em;
-        color: #6c757d;
-    }
+.auth-bg-gradient{background:radial-gradient(circle at top left,rgba(0,69,13,.03),transparent),radial-gradient(circle at bottom right,rgba(128,0,0,.03),transparent)}
+.header-accent-gradient{background:linear-gradient(90deg,#00450d 0%,#800000 50%,#00450d 100%)}
+.table-row-hover:hover{background-color:#fefaf5;transition:all .2s ease}
+.stat-card{transition:all .2s ease;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.stat-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.search-input:focus{border-color:#800000;outline:none}
+.action-btn{padding:.2rem .4rem;border-radius:.375rem;font-size:.7rem;font-weight:500;transition:all .2s;cursor:pointer;border:none;display:inline-flex;align-items:center}
+.pagination-btn{min-width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:.375rem;font-size:.75rem;transition:all .2s ease;cursor:pointer;border:1px solid #e5e7eb;background:white;color:#374151}
+.pagination-btn:hover:not(:disabled):not(.active-page){background-color:#fef3e7;border-color:#800000;color:#800000}
+.pagination-btn.active-page{background-color:#800000;border-color:#800000;color:white;font-weight:600}
+.pagination-btn:disabled{opacity:.35;cursor:not-allowed}
+.page-size-select{font-size:.75rem;padding:.25rem .5rem;border-radius:.375rem;border:1px solid #e5e7eb;background:white;cursor:pointer}
+.sortable{cursor:pointer;user-select:none}
+.sortable:hover{color:#800000}
+.sort-icon{font-size:.7rem;margin-left:.2rem;vertical-align:middle}
+.modal-gradient-header{background:linear-gradient(135deg,#800000 0%,#00450d 100%)}
+.type-badge{display:inline-flex;align-items:center;gap:.2rem;padding:.2rem .5rem;border-radius:9999px;font-size:.65rem;font-weight:500}
+.type-market{background-color:#fee2e2;color:#991b1b}
+.type-border{background-color:#fef3c7;color:#92400e}
+.type-miller{background-color:#d1fae5;color:#065f46}
+
+/* Import instruction blocks */
+.import-instructions-block{background-color:#f8fafc;border-left:4px solid #800000;border-radius:0 .5rem .5rem 0;padding:.75rem 1rem}
+.import-instructions-block h6{color:#800000;font-size:.75rem;font-weight:600;margin:0 0 .5rem}
+.import-instructions-block ol{padding-left:1.1rem;margin:0 0 .5rem;font-size:.72rem;color:#374151}
+.import-instructions-block ol li{margin-bottom:.2rem}
+.import-instructions-block .example-row{font-family:monospace;font-size:.68rem;color:#6b7280;word-break:break-all;margin:.5rem 0 0}
+.import-instructions-block .tpl-link{display:inline-flex;align-items:center;gap:.25rem;color:#800000;font-size:.72rem;font-weight:500;text-decoration:none;margin-top:.5rem}
+.import-instructions-block .tpl-link:hover{text-decoration:underline}
 </style>
 
-<div class="stats-section">
-    <div class="text-wrapper-8"><h3>Tradepoints Management</h3></div>
-    <p class="p">Manage everything related to Markets, Border Points and Millers</p>
+<div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
+<div class="max-w-7xl mx-auto">
 
-    <div class="stats-container">
-        <div class="overlap-6">
-            <div class="stats-icon total-icon">
-                <i class="fas fa-map-marked-alt"></i>
+    <!-- Flash messages -->
+    <?php if (isset($import_message)): ?>
+    <div class="mb-4 p-3 rounded-lg flex items-start gap-2 text-sm <?= $import_status === 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
+        <span class="material-symbols-outlined text-base mt-0.5"><?= $import_status === 'success' ? 'check_circle' : 'error' ?></span>
+        <span><?= $import_message ?></span>
+    </div>
+    <?php endif; ?>
+
+    <?php if (!empty($message)): ?>
+    <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $message_type === 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
+        <span class="material-symbols-outlined text-base"><?= $message_type === 'success' ? 'check_circle' : 'error' ?></span>
+        <span class="font-medium"><?= htmlspecialchars($message) ?></span>
+    </div>
+    <?php endif; ?>
+
+    <!-- Page header -->
+    <div class="mb-6">
+        <div class="flex justify-between items-center flex-wrap gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-maroon">Tradepoints Management</h1>
+                <p class="text-gray-600 text-sm mt-1">Manage markets, border points, and millers</p>
             </div>
-            <div class="stats-title">Total Tradepoints</div>
-            <div class="stats-number"><?php echo $total_tradepoints; ?></div>
+            <div class="flex gap-2 flex-wrap">
+                <a href="?export_all=1" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">download</span> Export All CSV
+                </a>
+                <button onclick="openAddModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">add_circle</span> Add Tradepoint
+                </button>
+                <button onclick="openImportModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">upload_file</span> Import CSV
+                </button>
+            </div>
         </div>
-        
-        <div class="overlap-6">
-            <div class="stats-icon markets-icon">
-                <i class="fas fa-store"></i>
+        <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
+    </div>
+
+    <!-- Stats cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Total Tradepoints</p><p class="text-xl font-bold text-gray-800"><?= number_format($total_tradepoints) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-maroon/40">location_on</span>
             </div>
-            <div class="stats-title">Markets</div>
-            <div class="stats-number"><?php echo $markets_count; ?></div>
         </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon border-icon">
-                <i class="fas fa-passport"></i>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-red-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Markets</p><p class="text-xl font-bold text-gray-800"><?= number_format($markets_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-red-500/50">storefront</span>
             </div>
-            <div class="stats-title">Border Points</div>
-            <div class="stats-number"><?php echo $border_points_count; ?></div>
         </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon millers-icon">
-                <i class="fas fa-industry"></i>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-yellow-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Border Points</p><p class="text-xl font-bold text-gray-800"><?= number_format($border_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-yellow-500/50">border_all</span>
             </div>
-            <div class="stats-title">Millers</div>
-            <div class="stats-number"><?php echo $millers_count; ?></div>
+        </div>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Millers</p><p class="text-xl font-bold text-gray-800"><?= number_format($millers_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-green-600/50">factory</span>
+            </div>
         </div>
     </div>
-</div>
 
-<?php 
-// Show import message if exists
-if (isset($import_message)): ?>
-    <div class="alert alert-<?php echo $import_status; ?>">
-        <?php echo $import_message; ?>
-    </div>
-<?php endif; ?>
-
-<div class="container">
-    <div class="table-container">
-        <div class="btn-group">
-            <a href="addtradepoint.php" class="btn btn-add-new">
-                <i class="fas fa-plus" style="margin-right: 5px;"></i>
-                Add New
-            </a>
-
-            <button class="btn btn-delete" onclick="deleteSelected()">
-                <i class="fas fa-trash" style="margin-right: 3px;"></i>
-                Delete
-                <?php if (count($_SESSION['selected_tradepoints']) > 0): ?>
-                    <span class="selected-count"><?php echo count($_SESSION['selected_tradepoints']); ?></span>
-                <?php endif; ?>
-            </button>
-
-            <button class="btn btn-clear-selections" onclick="clearAllSelections()">
-                <i class="fas fa-times-circle" style="margin-right: 3px;"></i>
-                Clear Selections
-            </button>
-
-            <form method="POST" action="export_current_page_tradepoints.php" style="display: inline;">
-                <input type="hidden" name="limit" value="<?php echo $itemsPerPage; ?>">
-                <input type="hidden" name="offset" value="<?php echo $startIndex; ?>">
-                <input type="hidden" name="sort" value="<?php echo $sort_column; ?>">
-                <input type="hidden" name="order" value="<?php echo $sort_order; ?>">
-                <button type="submit" class="btn-export">
-                    <i class="fas fa-download" style="margin-right: 3px;"></i> Export (Current Page)
+    <!-- Search & bulk actions -->
+    <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
+        <div class="flex flex-wrap gap-3 items-center justify-between">
+            <div class="flex-1 min-w-[150px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">search</span>
+                    <input type="text" id="searchName" placeholder="Search by name…"
+                           class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                           value="<?= htmlspecialchars($search_name) ?>">
+                </div>
+            </div>
+            <div class="flex-1 min-w-[150px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">category</span>
+                    <select id="searchType" class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none bg-white">
+                        <option value="">All Types</option>
+                        <option value="Markets"      <?= $search_type === 'Markets'       ? 'selected' : '' ?>>Markets</option>
+                        <option value="Border Points"<?= $search_type === 'Border Points' ? 'selected' : '' ?>>Border Points</option>
+                        <option value="Millers"      <?= $search_type === 'Millers'       ? 'selected' : '' ?>>Millers</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex-1 min-w-[150px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">flag</span>
+                    <input type="text" id="searchCountry" placeholder="Search by country…"
+                           class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                           value="<?= htmlspecialchars($search_country) ?>">
+                </div>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+                <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">filter_list</span>Filter
                 </button>
-            </form>
-
-            <form method="POST" action="bulk_export_tradepoints.php" style="display: inline;">
-                <button type="submit" class="btn-bulk-export">
-                    <i class="fas fa-database" style="margin-right: 3px;"></i> Bulk Export (All)
+                <button id="clearSelectionsBtn" class="px-3 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition-all inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">clear</span>Clear Selected
                 </button>
-            </form>
-            
-            <button class="btn btn-import" data-bs-toggle="modal" data-bs-target="#importModal">
-                <i class="fas fa-upload" style="margin-right: 3px;"></i>
-                Import
-            </button>
+                <button id="bulkDeleteBtn" disabled class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span id="selectedCount">0</span>)
+                </button>
+            </div>
         </div>
+    </div>
 
-        <table class="table table-striped table-hover">
-            <thead>
-                <tr style="background-color: #d3d3d3 !important; color: black !important;">
-                    <th><input type="checkbox" id="selectAll"></th>
-                    <th class="sortable <?php echo getSortClass('id'); ?>" onclick="sortTable('id')">
-                        ID
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('name'); ?>" onclick="sortTable('name')">
-                        Name
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('tradepoint_type'); ?>" onclick="sortTable('tradepoint_type')">
-                        Type
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('admin0'); ?>" onclick="sortTable('admin0')">
-                        Country
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('admin1'); ?>" onclick="sortTable('admin1')">
-                        Region
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th class="sortable <?php echo getSortClass('created_at'); ?>" onclick="sortTable('created_at')">
-                        Date Added
-                        <span class="sort-icon"></span>
-                    </th>
-                    <th>Actions</th>
-                </tr>
-                <tr class="filter-row" style="background-color: white !important; color: black !important;">
-                    <th></th>
-                    <th></th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterName" placeholder="Filter Name"
-                               value="<?php echo isset($_GET['filter_name']) ? htmlspecialchars($_GET['filter_name']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterType" placeholder="Filter Type"
-                               value="<?php echo isset($_GET['filter_type']) ? htmlspecialchars($_GET['filter_type']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterCountry" placeholder="Filter Country"
-                               value="<?php echo isset($_GET['filter_country']) ? htmlspecialchars($_GET['filter_country']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterRegion" placeholder="Filter Region"
-                               value="<?php echo isset($_GET['filter_region']) ? htmlspecialchars($_GET['filter_region']) : ''; ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th></th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody id="tradepointTable">
-                <?php if (empty($tradepoints_paged)): ?>
+    <!-- Table -->
+    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-200">
                     <tr>
-                        <td colspan="8" style="text-align: center; padding: 40px; color: #666;">
-                            <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; display: block; color: #ccc;"></i>
-                            No tradepoints found.
+                        <th class="w-8 px-3 py-2 text-left"><input type="checkbox" id="selectAllCheckbox" class="rounded border-gray-300"></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="id">
+                            ID<?php if ($sort_column === 'id') echo '<span class="sort-icon">'.($sort_direction === 'ASC' ? '↑' : '↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="name">
+                            Name<?php if ($sort_column === 'name') echo '<span class="sort-icon">'.($sort_direction === 'ASC' ? '↑' : '↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="type">
+                            Type<?php if ($sort_column === 'type') echo '<span class="sort-icon">'.($sort_direction === 'ASC' ? '↑' : '↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="country">
+                            Country<?php if ($sort_column === 'country') echo '<span class="sort-icon">'.($sort_direction === 'ASC' ? '↑' : '↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="region">
+                            Region<?php if ($sort_column === 'region') echo '<span class="sort-icon">'.($sort_direction === 'ASC' ? '↑' : '↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="created_at">
+                            Date Added<?php if ($sort_column === 'created_at') echo '<span class="sort-icon">'.($sort_direction === 'ASC' ? '↑' : '↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-24">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100" id="tableBody">
+                <?php if (empty($tradepoints_data)): ?>
+                    <tr>
+                        <td colspan="8" class="px-3 py-8 text-center text-gray-400">
+                            <span class="material-symbols-outlined text-5xl text-gray-300 block">location_off</span>
+                            <p class="text-sm mt-1">No tradepoints found</p>
                         </td>
                     </tr>
                 <?php else: ?>
-                    <?php foreach ($tradepoints_paged as $tradepoint): ?>
-                        <tr>
-                            <td>
-                                <input type="checkbox" 
-                                       class="row-checkbox" 
-                                       value="<?php echo htmlspecialchars($tradepoint['id']); ?>"
-                                       <?php echo in_array($tradepoint['id'], $_SESSION['selected_tradepoints']) ? 'checked' : ''; ?>
-                                       onchange="updateSelection(this, <?php echo $tradepoint['id']; ?>)">
-                            </td>
-                            <td><?php echo htmlspecialchars($tradepoint['id']); ?></td>
-                            <td><?php echo htmlspecialchars($tradepoint['name']); ?></td>
-                            <td>
-                                <?php 
-                                $badgeClass = '';
-                                if ($tradepoint['tradepoint_type'] === 'Markets') {
-                                    $badgeClass = 'badge-market';
-                                } elseif ($tradepoint['tradepoint_type'] === 'Border Points') {
-                                    $badgeClass = 'badge-border';
-                                } elseif ($tradepoint['tradepoint_type'] === 'Millers') {
-                                    $badgeClass = 'badge-miller';
-                                }
-                                ?>
-                                <span class="type-badge <?php echo $badgeClass; ?>"><?php echo htmlspecialchars($tradepoint['tradepoint_type']); ?></span>
-                            </td>
-                            <td><?php echo htmlspecialchars($tradepoint['admin0']); ?></td>
-                            <td><?php echo htmlspecialchars($tradepoint['admin1']); ?></td>
-                            <td class="date-added">
-                                <?php 
-                                if (!empty($tradepoint['created_at'])) {
-                                    echo date('Y-m-d', strtotime($tradepoint['created_at']));
-                                } else {
-                                    echo 'N/A';
-                                }
-                                ?>
-                            </td>
-                            <td>
-                                <?php
-                                $editPage = '';
-                                switch ($tradepoint['tradepoint_type']) {
-                                    case 'Markets':
-                                        $editPage = 'edit_market.php';
-                                        break;
-                                    case 'Border Points':
-                                        $editPage = 'edit_borderpoint.php';
-                                        break;
-                                    case 'Millers':
-                                        $editPage = 'edit_miller.php';
-                                        break;
-                                }
-                                ?>
-                                <a href="<?php echo $editPage; ?>?id=<?php echo htmlspecialchars($tradepoint['id']); ?>">
-                                    <button class="btn btn-sm btn-warning">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                </a>
-                            </td>
-                        </tr>
+                    <?php foreach ($tradepoints_data as $tp):
+                        $badgeClass = $tp['type'] === 'Markets' ? 'type-market' : ($tp['type'] === 'Border Points' ? 'type-border' : 'type-miller');
+                    ?>
+                    <tr class="table-row-hover" data-id="<?= $tp['id'] ?>" data-type="<?= $tp['type'] ?>">
+                        <td class="px-3 py-2">
+                            <input type="checkbox" class="row-checkbox rounded border-gray-300" value="<?= $tp['id'] ?>" onchange="onCheckboxChange()">
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-600"><?= $tp['id'] ?></td>
+                        <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($tp['name']) ?></td>
+                        <td class="px-3 py-2"><span class="type-badge <?= $badgeClass ?>"><?= htmlspecialchars($tp['type']) ?></span></td>
+                        <td class="px-3 py-2 text-xs text-gray-600"><?= htmlspecialchars($tp['country']) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-600"><?= htmlspecialchars($tp['region']) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-500"><?= date('M d, Y', strtotime($tp['created_at'])) ?></td>
+                        <td class="px-3 py-2">
+                            <div class="flex items-center justify-center gap-1">
+                                <button onclick="editTradepoint(<?= $tp['id'] ?>, '<?= $tp['type'] ?>')"
+                                        class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200" title="Edit">
+                                    <span class="material-symbols-outlined text-sm">edit</span>
+                                </button>
+                                <button onclick="deleteSingle(<?= $tp['id'] ?>,'<?= htmlspecialchars(addslashes($tp['name'])) ?>')"
+                                        class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete">
+                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>
-            </tbody>
-        </table>
-
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                Displaying <?php echo $startIndex + 1; ?> to <?php echo min($startIndex + $itemsPerPage, $totalItems); ?> of <?php echo $totalItems; ?> items
-                <?php if (count($_SESSION['selected_tradepoints']) > 0): ?>
-                    <span class="selected-count"><?php echo count($_SESSION['selected_tradepoints']); ?> selected across all pages</span>
-                <?php endif; ?>
-                <?php if (!empty($sort_column)): ?>
-                    <span class="text-muted ms-2">Sorted by: <?php echo ucfirst(str_replace('_', ' ', $sort_column)); ?> (<?php echo $sort_order; ?>)</span>
-                <?php endif; ?>
-            </div>
-            <div>
-                <label for="itemsPerPage">Show:</label>
-                <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                    <option value="7" <?php echo ($itemsPerPage == 7) ? 'selected' : ''; ?>>7</option>
-                    <option value="10" <?php echo ($itemsPerPage == 10) ? 'selected' : ''; ?>>10</option>
-                    <option value="20" <?php echo ($itemsPerPage == 20) ? 'selected' : ''; ?>>20</option>
-                    <option value="50" <?php echo ($itemsPerPage == 50) ? 'selected' : ''; ?>>50</option>
-                </select>
-            </div>
-            <nav>
-                <ul class="pagination mb-0">
-                    <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $itemsPerPage, $sort_column, $sort_order); ?>">Prev</a>
-                    </li>
-                    <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                        <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
-                            <a class="page-link" href="<?php echo getPageUrl($i, $itemsPerPage, $sort_column, $sort_order); ?>"><?php echo $i; ?></a>
-                        </li>
-                    <?php endfor; ?>
-                    <li class="page-item <?php echo ($page >= $totalPages) ? 'disabled' : ''; ?>">
-                        <a class="page-link" href="<?php echo ($page >= $totalPages) ? '#' : getPageUrl($page + 1, $itemsPerPage, $sort_column, $sort_order); ?>">Next</a>
-                    </li>
-                </ul>
-            </nav>
+                </tbody>
+            </table>
         </div>
-    </div>
-</div>
 
-<!-- Import Modal -->
-<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="importModalLabel">Import Tradepoints</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="import-instructions">
-                    <h5>CSV Import Instructions</h5>
-                    <p>First select the type of tradepoint you want to import, then upload your CSV file.</p>
-                    
-                    <div class="mb-3">
-                        <label for="tradepoint_type" class="form-label">Tradepoint Type</label>
-                        <select class="form-select" id="tradepoint_type" name="tradepoint_type" required>
-                            <option value="">-- Select Type --</option>
-                            <option value="Markets">Markets</option>
-                            <option value="Millers">Millers</option>
-                            <option value="Border Points">Border Points</option>
+        <!-- Pagination -->
+        <div class="border-t border-gray-200 px-4 py-3 bg-white">
+            <div class="flex flex-wrap justify-between items-center gap-3">
+
+                <!-- Record count -->
+                <div class="text-xs text-gray-500">
+                    <?php if ($filtered_records === 0): ?>
+                        No tradepoints found
+                    <?php else: ?>
+                        Showing <strong><?= $showing_from ?></strong> – <strong><?= $showing_to ?></strong>
+                        of <strong><?= number_format($filtered_records) ?></strong> tradepoints
+                        <?php if ($search_name || $search_type || $search_country): ?>
+                            <span class="ml-1 text-maroon">(filtered)</span>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+
+                <div class="flex items-center gap-3 flex-wrap">
+
+                    <!-- Rows per page -->
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs text-gray-500">Rows:</label>
+                        <select id="rowsPerPage" class="page-size-select" onchange="changeRowsPerPage()">
+                            <?php foreach ([10, 20, 50, 100] as $opt): ?>
+                                <option value="<?= $opt ?>" <?= $limit === $opt ? 'selected' : '' ?>><?= $opt ?></option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
-                    
-                    <div id="marketsInstructions" class="type-instructions" style="display: none;">
-                        <h6>Markets CSV Format</h6>
-                        <p>Your CSV file should have these columns in order:</p>
-                        <ol>
-                            <li><strong>market_name</strong> (required) - Name of the market</li>
-                            <li><strong>category</strong> (required) - Urban, Rural, Border, etc.</li>
-                            <li><strong>type</strong> (required) - Retail, Wholesale, etc.</li>
-                            <li><strong>country</strong> (required) - Country name</li>
-                            <li><strong>county_district</strong> (required) - County or district name</li>
-                            <li><strong>longitude</strong> (required) - Geographic coordinate</li>
-                            <li><strong>latitude</strong> (required) - Geographic coordinate</li>
-                            <li><strong>radius</strong> (required) - Coverage radius in km</li>
-                            <li><strong>currency</strong> (required) - Currency code (KES, UGX, etc.)</li>
-                            <li><strong>primary_commodities</strong> (optional) - Comma-separated list</li>
-                            <li><strong>additional_datasource</strong> (optional) - Data source information</li>
-                        </ol>
-                        <p><strong>Example:</strong> <code>"Nairobi Market","Urban","Retail","Kenya","Nairobi",36.82,-1.29,5,"KES","Maize,Beans","Government"</code></p>
-                        <a href="downloads/markets_template.csv" class="download-template">
-                            <i class="fas fa-download"></i> Download Markets Template
-                        </a>
+
+                    <!-- Page buttons -->
+                    <?php if ($total_pages > 1): ?>
+                    <nav class="flex items-center gap-1">
+                        <!-- First / Prev -->
+                        <button class="pagination-btn" onclick="goToPage(1)" <?= $page <= 1 ? 'disabled' : '' ?>>
+                            <span class="material-symbols-outlined text-sm">first_page</span>
+                        </button>
+                        <button class="pagination-btn" onclick="goToPage(<?= $page - 1 ?>)" <?= $page <= 1 ? 'disabled' : '' ?>>
+                            <span class="material-symbols-outlined text-sm">chevron_left</span>
+                        </button>
+
+                        <?php
+                        // Window of ±2 around current page, anchored so we always show 5 pages when possible
+                        $win = 2;
+                        $sp  = max(1, $page - $win);
+                        $ep  = min($total_pages, $page + $win);
+
+                        // Expand the window if we're near the start or end
+                        if ($sp === 1) $ep = min($total_pages, 1 + $win * 2);
+                        if ($ep === $total_pages) $sp = max(1, $total_pages - $win * 2);
+
+                        // Leading ellipsis block
+                        if ($sp > 1): ?>
+                            <button class="pagination-btn" onclick="goToPage(1)">1</button>
+                            <?php if ($sp > 2): ?>
+                                <span class="text-gray-400 text-xs px-1">…</span>
+                            <?php endif; ?>
+                        <?php endif; ?>
+
+                        <?php for ($i = $sp; $i <= $ep; $i++): ?>
+                            <button class="pagination-btn <?= $i === $page ? 'active-page' : '' ?>"
+                                    <?= $i === $page ? '' : "onclick=\"goToPage($i)\"" ?>>
+                                <?= $i ?>
+                            </button>
+                        <?php endfor; ?>
+
+                        <!-- Trailing ellipsis block -->
+                        <?php if ($ep < $total_pages): ?>
+                            <?php if ($ep < $total_pages - 1): ?>
+                                <span class="text-gray-400 text-xs px-1">…</span>
+                            <?php endif; ?>
+                            <button class="pagination-btn" onclick="goToPage(<?= $total_pages ?>)"><?= $total_pages ?></button>
+                        <?php endif; ?>
+
+                        <!-- Next / Last -->
+                        <button class="pagination-btn" onclick="goToPage(<?= $page + 1 ?>)" <?= $page >= $total_pages ? 'disabled' : '' ?>>
+                            <span class="material-symbols-outlined text-sm">chevron_right</span>
+                        </button>
+                        <button class="pagination-btn" onclick="goToPage(<?= $total_pages ?>)" <?= $page >= $total_pages ? 'disabled' : '' ?>>
+                            <span class="material-symbols-outlined text-sm">last_page</span>
+                        </button>
+                    </nav>
+                    <?php endif; ?>
+
+                    <!-- Jump-to-page (only when there are many pages) -->
+                    <?php if ($total_pages > 5): ?>
+                    <div class="flex items-center gap-1">
+                        <span class="text-xs text-gray-500">Go:</span>
+                        <input type="number" id="pageJumpInput" min="1" max="<?= $total_pages ?>"
+                               class="w-14 px-2 py-1 text-xs border border-gray-200 rounded text-center focus:outline-none focus:border-maroon"
+                               placeholder="<?= $page ?>">
+                        <button onclick="jumpToPage()" class="px-2 py-1 text-xs bg-gray-100 border border-gray-200 rounded hover:bg-gray-200">Go</button>
                     </div>
-                    
-                    <div id="millersInstructions" class="type-instructions" style="display: none;">
-                        <h6>Millers CSV Format</h6>
-                        <p>Your CSV file should have these columns in order:</p>
-                        <ol>
-                            <li><strong>miller_name</strong> (required) - Name of the milling company</li>
-                            <li><strong>country</strong> (required) - Country name</li>
-                            <li><strong>county_district</strong> (required) - County or district name</li>
-                            <li><strong>millers</strong> (optional) - Comma-separated list of miller brands (max 2)</li>
-                        </ol>
-                        <p><strong>Example:</strong> <code>"Unga Group","Kenya","Nairobi","Unga Millers,Capwell Millers"</code></p>
-                        <a href="downloads/millers_template.csv" class="download-template">
-                            <i class="fas fa-download"></i> Download Millers Template
-                        </a>
-                    </div>
-                    
-                    <div id="borderInstructions" class="type-instructions" style="display: none;">
-                        <h6>Border Points CSV Format</h6>
-                        <p>Your CSV file should have these columns in order:</p>
-                        <ol>
-                            <li><strong>name</strong> (required) - Name of the border point</li>
-                            <li><strong>country</strong> (required) - Country name</li>
-                            <li><strong>county</strong> (required) - County name</li>
-                            <li><strong>longitude</strong> (required) - Geographic coordinate</li>
-                            <li><strong>latitude</strong> (required) - Geographic coordinate</li>
-                        </ol>
-                        <p><strong>Example:</strong> <code>"Namanga Border","Kenya","Kajiado",36.78,-2.55</code></p>
-                        <a href="downloads/border_points_template.csv" class="download-template">
-                            <i class="fas fa-download"></i> Download Border Points Template
-                        </a>
-                    </div>
+                    <?php endif; ?>
                 </div>
-                
-                <form method="POST" enctype="multipart/form-data" id="importForm">
-                    <input type="hidden" name="tradepoint_type" id="selected_tradepoint_type" value="">
-                    <div class="mb-3">
-                        <label for="csv_file" class="form-label">Select CSV File</label>
-                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
+
+                <a href="../base/landing_page.php"
+                   class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all">
+                    <span class="material-symbols-outlined text-base">arrow_back</span>Back
+                </a>
+            </div>
+        </div>
+    </div><!-- /table card -->
+
+</div><!-- /max-w-7xl -->
+</div><!-- /auth-bg-gradient -->
+
+
+<!-- ===================== ADD MODAL ===================== -->
+<div id="addModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center sticky top-0 z-10">
+                <h3 class="text-base font-semibold text-white">Add New Tradepoint</h3>
+                <button onclick="closeModal('addModal')" class="text-white/80 hover:text-white"><span class="material-symbols-outlined text-base">close</span></button>
+            </div>
+            <div class="p-5">
+                <!-- Step indicators -->
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex-1 text-center"><div id="step1Indicator" class="w-8 h-8 mx-auto rounded-full bg-maroon text-white flex items-center justify-center text-sm font-bold">1</div><span class="text-xs text-gray-500 mt-1 block">Select Type</span></div>
+                    <div class="flex-1 h-px bg-gray-200"></div>
+                    <div class="flex-1 text-center"><div id="step2Indicator" class="w-8 h-8 mx-auto rounded-full bg-gray-200 text-gray-500 flex items-center justify-center text-sm font-bold">2</div><span class="text-xs text-gray-500 mt-1 block">Basic Info</span></div>
+                    <div class="flex-1 h-px bg-gray-200"></div>
+                    <div class="flex-1 text-center"><div id="step3Indicator" class="w-8 h-8 mx-auto rounded-full bg-gray-200 text-gray-500 flex items-center justify-center text-sm font-bold">3</div><span class="text-xs text-gray-500 mt-1 block">Complete</span></div>
+                </div>
+
+                <form id="addTradepointForm" method="POST" action="addtradepoint_process.php" enctype="multipart/form-data">
+
+                    <!-- Step 1 -->
+                    <div id="step1" class="step-content">
+                        <div class="text-center py-8">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-4">Select Tradepoint Type</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto">
+                                <div class="border rounded-lg p-4 cursor-pointer hover:border-maroon hover:shadow-md transition-all" onclick="selectType('Markets')">
+                                    <div class="text-center"><span class="material-symbols-outlined text-4xl text-maroon">storefront</span><h4 class="font-semibold mt-2">Market</h4><p class="text-xs text-gray-500">Agricultural market location</p></div>
+                                </div>
+                                <div class="border rounded-lg p-4 cursor-pointer hover:border-maroon hover:shadow-md transition-all" onclick="selectType('Border Points')">
+                                    <div class="text-center"><span class="material-symbols-outlined text-4xl text-maroon">border_all</span><h4 class="font-semibold mt-2">Border Point</h4><p class="text-xs text-gray-500">Border crossing location</p></div>
+                                </div>
+                                <div class="border rounded-lg p-4 cursor-pointer hover:border-maroon hover:shadow-md transition-all" onclick="selectType('Millers')">
+                                    <div class="text-center"><span class="material-symbols-outlined text-4xl text-maroon">factory</span><h4 class="font-semibold mt-2">Miller</h4><p class="text-xs text-gray-500">Milling facility location</p></div>
+                                </div>
+                            </div>
+                            <input type="hidden" id="selectedType" name="tradepoint_type" value="">
+                        </div>
                     </div>
-                    
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="overwriteExisting" name="overwrite_existing">
-                        <label class="form-check-label" for="overwriteExisting">
-                            Overwrite existing records with matching names
-                        </label>
+
+                    <!-- Step 2 -->
+                    <div id="step2" class="step-content" style="display:none;">
+                        <div id="marketForm" class="tradepoint-form" style="display:none;">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div><label class="block text-xs text-gray-600 mb-1">Market Name <span class="text-red-500">*</span></label><input type="text" name="market_name" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Category <span class="text-red-500">*</span></label><select name="category" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>Regional</option><option>Wholesale</option><option>Retail</option><option>Terminal</option></select></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Market Type <span class="text-red-500">*</span></label><select name="type" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>Primary</option><option>Secondary</option><option>Assembly</option><option>Terminal</option></select></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Country <span class="text-red-500">*</span></label><select name="country" class="country-select w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select Country</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">County/District <span class="text-red-500">*</span></label><input type="text" name="county_district" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Longitude <span class="text-red-500">*</span></label><input type="number" step="any" name="longitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Latitude <span class="text-red-500">*</span></label><input type="number" step="any" name="latitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Radius (km) <span class="text-red-500">*</span></label><input type="number" name="radius" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            </div>
+                        </div>
+                        <div id="borderForm" class="tradepoint-form" style="display:none;">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div><label class="block text-xs text-gray-600 mb-1">Border Name <span class="text-red-500">*</span></label><input type="text" name="border_name" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Country <span class="text-red-500">*</span></label><select name="border_country" class="country-select w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select Country</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">County <span class="text-red-500">*</span></label><input type="text" name="border_county" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Longitude <span class="text-red-500">*</span></label><input type="number" step="any" name="border_longitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Latitude <span class="text-red-500">*</span></label><input type="number" step="any" name="border_latitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Radius (m) <span class="text-red-500">*</span></label><input type="number" name="border_radius" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            </div>
+                        </div>
+                        <div id="millerForm" class="tradepoint-form" style="display:none;">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div><label class="block text-xs text-gray-600 mb-1">Town Name <span class="text-red-500">*</span></label><input type="text" name="miller_name" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Country <span class="text-red-500">*</span></label><select name="miller_country" id="millerCountrySelect" class="country-select w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select Country</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">County/District <span class="text-red-500">*</span></label><input type="text" name="miller_county_district" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                                <div><label class="block text-xs text-gray-600 mb-1">Currency</label><div id="currencyDisplay" class="w-full px-3 py-2 text-sm bg-gray-100 border border-gray-200 rounded-lg text-gray-500">Select country first</div><input type="hidden" name="miller_currency" id="millerCurrencyHidden"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 3 -->
+                    <div id="step3" class="step-content" style="display:none;">
+                        <div id="marketStep3" class="step3-form" style="display:none;">
+                            <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Primary Commodities</label><input type="text" name="primary_commodity" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg" placeholder="Comma-separated list"></div>
+                            <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Data Source</label><select name="additional_datasource" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($data_sources as $ds): ?><option><?= htmlspecialchars($ds) ?></option><?php endforeach; ?></select></div>
+                            <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Market Images</label><input type="file" name="marketImages[]" multiple accept="image/*" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                        </div>
+                        <div id="borderStep3" class="step3-form" style="display:none;">
+                            <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Border Images</label><input type="file" name="borderImages[]" multiple accept="image/*" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                        </div>
+                        <div id="millerStep3" class="step3-form" style="display:none;">
+                            <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Select Millers (max 2)</label><div id="millersList" class="border rounded-lg p-3 max-h-40 overflow-y-auto text-sm text-gray-400">No millers available</div><input type="hidden" name="selected_millers" id="selectedMillers"></div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between gap-2 pt-3 border-t border-gray-100 mt-4">
+                        <button type="button" id="prevBtn" onclick="prevStep()" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50" style="display:none;">Previous</button>
+                        <div class="flex gap-2 ml-auto">
+                            <button type="button" id="nextBtn" onclick="nextStep()" class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Next</button>
+                            <button type="submit" id="submitBtn" name="add_tradepoint" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700" style="display:none;">Add Tradepoint</button>
+                        </div>
                     </div>
                 </form>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" form="importForm" name="import_csv" class="btn btn-primary">
-                    <i class="fas fa-upload"></i> Import
-                </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- ===================== EDIT MODAL ===================== -->
+<div id="editModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center sticky top-0 z-10">
+                <h3 id="editModalTitle" class="text-base font-semibold text-white">Edit Tradepoint</h3>
+                <button onclick="closeModal('editModal')" class="text-white/80 hover:text-white"><span class="material-symbols-outlined text-base">close</span></button>
+            </div>
+            <div class="p-5">
+                <form method="POST" action="" id="editForm">
+                    <input type="hidden" name="tradepoint_id" id="editId">
+                    <input type="hidden" name="tradepoint_type_edit" id="editType">
+                    <input type="hidden" name="edit_tradepoint" value="1">
+
+                    <!-- Markets fields -->
+                    <div id="editMarketFields" style="display:none;">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div><label class="block text-xs text-gray-600 mb-1">Market Name</label><input type="text" name="name" id="editMarketName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Category</label><select name="category" id="editCategory" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>Regional</option><option>Wholesale</option><option>Retail</option><option>Terminal</option></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Market Type</label><select name="market_type" id="editMarketType" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>Primary</option><option>Secondary</option><option>Assembly</option><option>Terminal</option></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="country" id="editMarketCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Region</label><input type="text" name="region" id="editMarketRegion" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Longitude</label><input type="number" step="any" name="longitude" id="editMarketLongitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Latitude</label><input type="number" step="any" name="latitude" id="editMarketLatitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Radius</label><input type="number" step="any" name="radius" id="editMarketRadius" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Currency</label><select name="currency" id="editMarketCurrency" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>KES</option><option>UGX</option><option>TZS</option><option>RWF</option><option>BIF</option><option>SSP</option><option>ETB</option><option>SOS</option><option>CDF</option></select></div>
+                            <div class="md:col-span-2"><label class="block text-xs text-gray-600 mb-1">Primary Commodities</label><input type="text" name="primary_commodity" id="editMarketCommodities" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Data Source</label><input type="text" name="additional_datasource" id="editMarketDataSource" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                        </div>
+                    </div>
+
+                    <!-- Border Points fields -->
+                    <div id="editBorderFields" style="display:none;">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div><label class="block text-xs text-gray-600 mb-1">Border Name</label><input type="text" name="name" id="editBorderName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="country" id="editBorderCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">County</label><input type="text" name="region" id="editBorderCounty" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Longitude</label><input type="number" step="any" name="longitude" id="editBorderLongitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Latitude</label><input type="number" step="any" name="latitude" id="editBorderLatitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Radius</label><input type="number" name="radius" id="editBorderRadius" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                        </div>
+                    </div>
+
+                    <!-- Millers fields -->
+                    <div id="editMillerFields" style="display:none;">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div><label class="block text-xs text-gray-600 mb-1">Miller Name</label><input type="text" name="name" id="editMillerName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="country" id="editMillerCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">County/District</label><input type="text" name="region" id="editMillerRegion" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Currency</label><select name="currency" id="editMillerCurrency" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>KES</option><option>UGX</option><option>TZS</option><option>RWF</option><option>BIF</option><option>SSP</option><option>ETB</option><option>SOS</option><option>CDF</option></select></div>
+                            <div class="md:col-span-2"><label class="block text-xs text-gray-600 mb-1">Miller Details (JSON or text)</label><textarea name="miller_details" id="editMillerDetails" rows="3" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></textarea></div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                        <button type="button" onclick="closeModal('editModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="submit" class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Update Tradepoint</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 </div>
 
-<?php
-// Helper function to generate page URLs with filters and sorting
-function getPageUrl($pageNum, $itemsPerPage, $sortColumn = null, $sortOrder = null) {
-    $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
-    
-    // Add sort parameters if provided
-    if ($sortColumn) {
-        $url .= '&sort=' . urlencode($sortColumn);
-    }
-    if ($sortOrder) {
-        $url .= '&order=' . urlencode($sortOrder);
-    }
-    
-    // Add filter parameters if they exist
-    $filterParams = ['filter_name', 'filter_type', 'filter_country', 'filter_region'];
-    foreach ($filterParams as $param) {
-        if (isset($_GET[$param]) && !empty($_GET[$param])) {
-            $url .= '&' . $param . '=' . urlencode($_GET[$param]);
-        }
-    }
-    
-    return $url;
-}
 
-// Helper function to get sort CSS class
-function getSortClass($column) {
-    $current_sort = isset($_GET['sort']) ? $_GET['sort'] : 'name';
-    $current_order = isset($_GET['order']) ? strtoupper($_GET['order']) : 'ASC';
-    
-    if ($current_sort === $column) {
-        return $current_order === 'ASC' ? 'sort-asc' : 'sort-desc';
-    }
-    return '';
-}
-?>
+<!-- ===================== IMPORT MODAL ===================== -->
+<div id="importModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center sticky top-0 z-10">
+                <h3 class="text-base font-semibold text-white">Import Tradepoints</h3>
+                <button onclick="closeModal('importModal')" class="text-white/80 hover:text-white">
+                    <span class="material-symbols-outlined text-base">close</span>
+                </button>
+            </div>
+            <div class="p-5">
+
+                <div class="bg-blue-50 border-l-4 border-blue-500 rounded-r-lg p-3 mb-4 text-sm text-blue-700">
+                    <span class="material-symbols-outlined text-sm align-middle">info</span>
+                    Select the tradepoint type first to see the required CSV format, then upload your file.
+                </div>
+
+                <form method="POST" action="" enctype="multipart/form-data">
+
+                    <!-- Type selector -->
+                    <div class="mb-4">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Tradepoint Type <span class="text-red-500">*</span></label>
+                        <select name="tradepoint_type" id="importType"
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20 bg-white" required>
+                            <option value="">-- Select Type --</option>
+                            <option value="Markets">Markets</option>
+                            <option value="Border Points">Border Points</option>
+                            <option value="Millers">Millers</option>
+                        </select>
+                    </div>
+
+                    <!-- Per-type instruction blocks -->
+                    <div id="importInstructionsWrap" style="display:none;" class="mb-4">
+
+                        <div id="importMarketsInstructions" class="import-type-instructions import-instructions-block" style="display:none;">
+                            <h6>Markets — required CSV columns (in order)</h6>
+                            <ol>
+                                <li><strong>market_name</strong> (required) — name of the market</li>
+                                <li><strong>category</strong> (required) — e.g. Regional, Wholesale, Retail, Terminal</li>
+                                <li><strong>type</strong> (required) — e.g. Primary, Secondary, Assembly</li>
+                                <li><strong>country</strong> (required) — country name</li>
+                                <li><strong>county_district</strong> (required) — county or district</li>
+                                <li><strong>longitude</strong> (required) — geographic coordinate</li>
+                                <li><strong>latitude</strong> (required) — geographic coordinate</li>
+                                <li><strong>radius</strong> (required) — coverage radius in km</li>
+                                <li><strong>currency</strong> (required) — e.g. KES, UGX, TZS</li>
+                                <li><strong>primary_commodities</strong> (optional) — comma-separated list</li>
+                                <li><strong>additional_datasource</strong> (optional) — data source info</li>
+                            </ol>
+                            <p class="example-row">Example: "Nairobi Market","Urban","Retail","Kenya","Nairobi",36.82,-1.29,5,"KES","Maize,Beans","Government"</p>
+                            <a href="downloads/markets_template.csv" class="tpl-link">
+                                <span class="material-symbols-outlined text-sm">download</span> Download Markets Template
+                            </a>
+                        </div>
+
+                        <div id="importBorderInstructions" class="import-type-instructions import-instructions-block" style="display:none;">
+                            <h6>Border Points — required CSV columns (in order)</h6>
+                            <ol>
+                                <li><strong>name</strong> (required) — name of the border point</li>
+                                <li><strong>country</strong> (required) — country name</li>
+                                <li><strong>county</strong> (required) — county name</li>
+                                <li><strong>longitude</strong> (required) — geographic coordinate</li>
+                                <li><strong>latitude</strong> (required) — geographic coordinate</li>
+                            </ol>
+                            <p class="example-row">Example: "Namanga Border","Kenya","Kajiado",36.78,-2.55</p>
+                            <a href="downloads/border_points_template.csv" class="tpl-link">
+                                <span class="material-symbols-outlined text-sm">download</span> Download Border Points Template
+                            </a>
+                        </div>
+
+                        <div id="importMillersInstructions" class="import-type-instructions import-instructions-block" style="display:none;">
+                            <h6>Millers — required CSV columns (in order)</h6>
+                            <ol>
+                                <li><strong>miller_name</strong> (required) — name of the milling company</li>
+                                <li><strong>country</strong> (required) — country name (currency is auto-detected)</li>
+                                <li><strong>county_district</strong> (required) — county or district</li>
+                                <li><strong>millers</strong> (optional) — comma-separated miller brands, max 2</li>
+                            </ol>
+                            <p class="example-row">Example: "Unga Group","Kenya","Nairobi","Unga Millers,Capwell Millers"</p>
+                            <a href="downloads/millers_template.csv" class="tpl-link">
+                                <span class="material-symbols-outlined text-sm">download</span> Download Millers Template
+                            </a>
+                        </div>
+
+                    </div><!-- /importInstructionsWrap -->
+
+                    <!-- File upload -->
+                    <div class="mb-4">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">CSV File <span class="text-red-500">*</span></label>
+                        <input type="file" name="csv_file" accept=".csv"
+                               class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none" required>
+                    </div>
+
+                    <!-- Overwrite toggle -->
+                    <div class="mb-5">
+                        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                            <input type="checkbox" name="overwrite_existing" class="rounded border-gray-300 text-maroon">
+                            Overwrite existing records with matching names
+                        </label>
+                    </div>
+
+                    <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                        <button type="button" onclick="closeModal('importModal')"
+                                class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+                            Cancel
+                        </button>
+                        <button type="submit" name="import_csv"
+                                class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000] inline-flex items-center gap-1">
+                            <span class="material-symbols-outlined text-base">upload_file</span> Import CSV
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- ===================== DELETE MODAL ===================== -->
+<div id="deleteModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center">
+    <div class="bg-white rounded-lg w-full max-w-md shadow-xl">
+        <div class="p-4">
+            <div class="flex items-center gap-2 mb-3">
+                <span class="material-symbols-outlined text-red-500">warning</span>
+                <h3 class="text-base font-semibold text-gray-800">Confirm Deletion</h3>
+            </div>
+            <p id="deleteModalText" class="text-sm text-gray-500 mb-3">Are you sure you want to delete this tradepoint?</p>
+            <div class="bg-red-50 border-l-4 border-red-500 p-2 mb-3 text-xs text-red-700">
+                <span class="material-symbols-outlined text-xs align-middle">info</span> This action cannot be undone.
+            </div>
+            <form method="POST" action="" id="deleteForm">
+                <input type="hidden" name="delete_selected" value="1">
+                <div id="deleteIdsContainer"></div>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('deleteModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 
 <script>
-document.addEventListener("DOMContentLoaded", function() {
-    // Initialize select all checkbox based on current page selections
-    updateSelectAllCheckbox();
-    
-    // Update breadcrumb
-    if (typeof updateBreadcrumb === 'function') {
-        updateBreadcrumb('Base', 'Tradepoints');
-    }
-    
-    // Handle tradepoint type selection in import modal
-    document.getElementById('tradepoint_type').addEventListener('change', function() {
-        const type = this.value;
-        document.getElementById('selected_tradepoint_type').value = type;
-        
-        // Hide all instruction blocks first
-        document.querySelectorAll('.type-instructions').forEach(el => {
-            el.style.display = 'none';
-        });
-        
-        // Show the relevant instruction block
-        if (type === 'Markets') {
-            document.getElementById('marketsInstructions').style.display = 'block';
-        } else if (type === 'Millers') {
-            document.getElementById('millersInstructions').style.display = 'block';
-        } else if (type === 'Border Points') {
-            document.getElementById('borderInstructions').style.display = 'block';
-        }
-    });
-    
-    // Show import modal if there was an error
-    <?php if (isset($import_message) && $import_status === 'danger'): ?>
-        var importModal = new bootstrap.Modal(document.getElementById('importModal'));
-        importModal.show();
-    <?php endif; ?>
-});
+// ---------------------------------------------------------------
+// PHP → JS bridge
+// ---------------------------------------------------------------
+const PHP = {
+    page:        <?= $page ?>,
+    limit:       <?= $limit ?>,
+    totalPages:  <?= $total_pages ?>,
+    sort:        <?= json_encode($sort_column) ?>,
+    dir:         <?= json_encode(strtolower($sort_direction)) ?>,
+    searchName:  <?= json_encode($search_name) ?>,
+    searchType:  <?= json_encode($search_type) ?>,
+    searchCountry: <?= json_encode($search_country) ?>
+};
 
-// Update selection function
-function updateSelection(checkbox, id) {
-    const isSelected = checkbox.checked;
-    
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `action=update_selection&id=${id}&selected=${isSelected}`
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Selection updated:', data);
-        updateSelectAllCheckbox();
-        updateSelectionCount();
-    })
-    .catch(error => console.error('Error updating selection:', error));
+const CURRENCY_MAP = <?= json_encode($currency_map) ?>;
+
+// ---------------------------------------------------------------
+// URL helpers
+// ---------------------------------------------------------------
+function buildUrl(overrides) {
+    const p = {
+        page:           PHP.page,
+        limit:          PHP.limit,
+        sort:           PHP.sort,
+        dir:            PHP.dir,
+        search_name:    document.getElementById('searchName').value.trim(),
+        search_type:    document.getElementById('searchType').value,
+        search_country: document.getElementById('searchCountry').value.trim()
+    };
+    Object.assign(p, overrides);
+
+    const q = new URLSearchParams();
+    q.set('page',  p.page);
+    q.set('limit', p.limit);
+    if (p.sort)          q.set('sort',           p.sort);
+    if (p.dir)           q.set('dir',            p.dir);
+    if (p.search_name)   q.set('search_name',    p.search_name);
+    if (p.search_type)   q.set('search_type',    p.search_type);
+    if (p.search_country)q.set('search_country', p.search_country);
+    return '?' + q.toString();
 }
 
-function updateSelectionCount() {
-    // This would refresh the selection count display
-    console.log('Selection count updated');
+// ---------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------
+function goToPage(pg) {
+    pg = parseInt(pg, 10);
+    if (!isNaN(pg) && pg >= 1 && pg <= PHP.totalPages) {
+        window.location.href = buildUrl({ page: pg });
+    }
+}
+
+// FIX: read the new value from the select element itself
+function changeRowsPerPage() {
+    const newLimit = document.getElementById('rowsPerPage').value;
+    window.location.href = buildUrl({ page: 1, limit: newLimit });
+}
+
+function jumpToPage() {
+    const val = parseInt(document.getElementById('pageJumpInput')?.value, 10);
+    if (!isNaN(val)) goToPage(val);
+}
+
+// ---------------------------------------------------------------
+// Filtering & sorting
+// ---------------------------------------------------------------
+function applyFilters() {
+    window.location.href = buildUrl({ page: 1 });
 }
 
 function sortTable(column) {
-    const url = new URL(window.location);
-    const currentSort = url.searchParams.get('sort');
-    const currentOrder = url.searchParams.get('order');
-    
-    // Toggle order if clicking the same column
-    if (currentSort === column) {
-        const newOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
-        url.searchParams.set('order', newOrder);
-    } else {
-        // New column, default to ASC for most, DESC for ID and created_at
-        const defaultOrder = (column === 'id' || column === 'created_at') ? 'DESC' : 'ASC';
-        url.searchParams.set('sort', column);
-        url.searchParams.set('order', defaultOrder);
+    const newDir = (PHP.sort === column && PHP.dir === 'asc') ? 'desc' : 'asc';
+    window.location.href = buildUrl({ page: 1, sort: column, dir: newDir });
+}
+
+// ---------------------------------------------------------------
+// Modal helpers
+// ---------------------------------------------------------------
+function openModal(id)  { document.getElementById(id).classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+// ---------------------------------------------------------------
+// Add modal (3-step)
+// ---------------------------------------------------------------
+let currentStep            = 1;
+let selectedTradepointType = '';
+
+function openAddModal() {
+    currentStep            = 1;
+    selectedTradepointType = '';
+    document.getElementById('selectedType').value = '';
+    showStep(1);
+    openModal('addModal');
+}
+
+function openImportModal() {
+    openModal('importModal');
+}
+
+function selectType(type) {
+    selectedTradepointType = type;
+    document.getElementById('selectedType').value = type;
+
+    document.querySelectorAll('.tradepoint-form').forEach(f => f.style.display = 'none');
+    document.querySelectorAll('.step3-form').forEach(f => f.style.display = 'none');
+
+    if (type === 'Markets') {
+        document.getElementById('marketForm').style.display  = 'block';
+        document.getElementById('marketStep3').style.display = 'block';
+    } else if (type === 'Border Points') {
+        document.getElementById('borderForm').style.display  = 'block';
+        document.getElementById('borderStep3').style.display = 'block';
+    } else if (type === 'Millers') {
+        document.getElementById('millerForm').style.display  = 'block';
+        document.getElementById('millerStep3').style.display = 'block';
     }
-    
-    // Reset to page 1 when sorting
-    url.searchParams.set('page', '1');
-    
-    window.location.href = url.toString();
+    nextStep();
 }
 
-function applyFilters() {
-    const filters = {
-        name: document.getElementById('filterName').value,
-        type: document.getElementById('filterType').value,
-        country: document.getElementById('filterCountry').value,
-        region: document.getElementById('filterRegion').value
-    };
+function showStep(step) {
+    document.getElementById('step1').style.display = step === 1 ? 'block' : 'none';
+    document.getElementById('step2').style.display = step === 2 ? 'block' : 'none';
+    document.getElementById('step3').style.display = step === 3 ? 'block' : 'none';
+    document.getElementById('prevBtn').style.display   = step > 1 ? 'inline-flex' : 'none';
+    document.getElementById('nextBtn').style.display   = step < 3 ? 'inline-flex' : 'none';
+    document.getElementById('submitBtn').style.display = step === 3 ? 'inline-flex' : 'none';
 
-    // Build URL with filter parameters
-    const url = new URL(window.location);
-    
-    // Set filter parameters
-    if (filters.name) url.searchParams.set('filter_name', filters.name);
-    else url.searchParams.delete('filter_name');
-    
-    if (filters.type) url.searchParams.set('filter_type', filters.type);
-    else url.searchParams.delete('filter_type');
-    
-    if (filters.country) url.searchParams.set('filter_country', filters.country);
-    else url.searchParams.delete('filter_country');
-    
-    if (filters.region) url.searchParams.set('filter_region', filters.region);
-    else url.searchParams.delete('filter_region');
-    
-    // Reset to page 1 when filtering
-    url.searchParams.set('page', '1');
-    
-    // Navigate to filtered URL
-    window.location.href = url.toString();
-}
-
-function updateItemsPerPage(value) {
-    const url = new URL(window.location);
-    url.searchParams.set('limit', value);
-    url.searchParams.set('page', '1');
-    window.location.href = url.toString();
-}
-
-function updateSelectAllCheckbox() {
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    const selectAll = document.getElementById('selectAll');
-    
-    if (checkboxes.length === 0) {
-        selectAll.checked = false;
-        return;
-    }
-    
-    // Check if all checkboxes on current page are checked
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
-    
-    selectAll.checked = allChecked;
-    selectAll.indeterminate = !allChecked && someChecked;
-}
-
-document.getElementById('selectAll').addEventListener('change', function() {
-    const isChecked = this.checked;
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    
-    // Update all checkboxes on current page
-    checkboxes.forEach(checkbox => {
-        if (checkbox.checked !== isChecked) {
-            checkbox.checked = isChecked;
-            // Trigger the update for each checkbox
-            if (checkbox.onchange) {
-                checkbox.onchange();
-            }
+    [1, 2, 3].forEach(n => {
+        const el = document.getElementById('step' + n + 'Indicator');
+        if (n <= step) {
+            el.classList.remove('bg-gray-200', 'text-gray-500');
+            el.classList.add('bg-maroon', 'text-white');
+        } else {
+            el.classList.remove('bg-maroon', 'text-white');
+            el.classList.add('bg-gray-200', 'text-gray-500');
         }
     });
-    
-    // Clear all selections if unchecking
-    if (!isChecked) {
-        clearAllSelectionsSilent();
-    }
-});
-
-function clearAllSelections() {
-    if (confirm('Clear all selections across all pages?')) {
-        clearAllSelectionsSilent();
-        alert('All selections cleared.');
-        location.reload();
-    }
 }
 
-function clearAllSelectionsSilent() {
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: 'action=update_selection&clear_all=true'
-    })
-    .catch(error => console.error('Error clearing selections:', error));
-}
-
-function deleteSelected() {
-    // Get count from session (across all pages)
-    const selectedCount = <?php echo count($_SESSION['selected_tradepoints']); ?>;
-    
-    if (selectedCount === 0) {
-        alert('Please select at least one tradepoint to delete.');
+function nextStep() {
+    if (currentStep === 1 && !selectedTradepointType) {
+        alert('Please select a tradepoint type first.');
         return;
     }
+    if (currentStep < 3) { currentStep++; showStep(currentStep); }
+}
 
-    if (confirm('Are you sure you want to delete ' + selectedCount + ' selected tradepoint(s) across all pages?')) {
-        // Pass all selected IDs from session
-        fetch('delete_tradepoint.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ids: <?php echo json_encode($_SESSION['selected_tradepoints']); ?> })
-        })
-        .then(response => {
-            if (!response.ok) throw new Error('Network error');
-            return response.json();
-        })
+function prevStep() {
+    if (currentStep > 1) { currentStep--; showStep(currentStep); }
+}
+
+// ---------------------------------------------------------------
+// Edit modal
+// ---------------------------------------------------------------
+function editTradepoint(id, type) {
+    fetch(`${window.location.pathname}?get_tradepoint=${id}&type=${encodeURIComponent(type)}`)
+        .then(res => res.json())
         .then(data => {
-            if (data.success) {
-                alert(data.message);
-                // Clear selections after deletion
-                clearAllSelectionsSilent();
-                location.reload();
-            } else {
-                alert('Error: ' + data.message);
+            document.getElementById('editId').value   = data.id;
+            document.getElementById('editType').value = type;
+            document.getElementById('editModalTitle').textContent = 'Edit ' + type;
+
+            document.getElementById('editMarketFields').style.display = 'none';
+            document.getElementById('editBorderFields').style.display = 'none';
+            document.getElementById('editMillerFields').style.display = 'none';
+
+            if (type === 'Markets') {
+                document.getElementById('editMarketFields').style.display   = 'block';
+                document.getElementById('editMarketName').value             = data.name                  || '';
+                document.getElementById('editCategory').value               = data.category              || '';
+                document.getElementById('editMarketType').value             = data.market_type           || '';
+                document.getElementById('editMarketCountry').value          = data.country               || '';
+                document.getElementById('editMarketRegion').value           = data.region                || '';
+                document.getElementById('editMarketLongitude').value        = data.longitude             || '';
+                document.getElementById('editMarketLatitude').value         = data.latitude              || '';
+                document.getElementById('editMarketRadius').value           = data.radius                || '';
+                document.getElementById('editMarketCurrency').value         = data.currency              || '';
+                document.getElementById('editMarketCommodities').value      = data.primary_commodity     || '';
+                document.getElementById('editMarketDataSource').value       = data.additional_datasource || '';
+            } else if (type === 'Border Points') {
+                document.getElementById('editBorderFields').style.display   = 'block';
+                document.getElementById('editBorderName').value             = data.name      || '';
+                document.getElementById('editBorderCountry').value          = data.country   || '';
+                document.getElementById('editBorderCounty').value           = data.region    || '';
+                document.getElementById('editBorderLongitude').value        = data.longitude || '';
+                document.getElementById('editBorderLatitude').value         = data.latitude  || '';
+                document.getElementById('editBorderRadius').value           = data.radius    || '';
+            } else if (type === 'Millers') {
+                document.getElementById('editMillerFields').style.display   = 'block';
+                document.getElementById('editMillerName').value             = data.name           || '';
+                document.getElementById('editMillerCountry').value          = data.country        || '';
+                document.getElementById('editMillerRegion').value           = data.region         || '';
+                document.getElementById('editMillerCurrency').value         = data.currency       || '';
+                document.getElementById('editMillerDetails').value          = data.miller_details || '';
             }
+            openModal('editModal');
         })
-        .catch(error => {
-            console.error('Fetch error:', error);
-            alert('Request failed: ' + error.message);
+        .catch(err => {
+            console.error(err);
+            alert('Failed to load tradepoint data. Please try again.');
+        });
+}
+
+// ---------------------------------------------------------------
+// Delete helpers
+// ---------------------------------------------------------------
+function deleteSingle(id, name) {
+    document.getElementById('deleteModalText').innerHTML =
+        `Are you sure you want to delete <strong>${escapeHtml(name)}</strong>?`;
+    document.getElementById('deleteIdsContainer').innerHTML =
+        `<input type="hidden" name="selected_ids[]" value="${id}">`;
+    openModal('deleteModal');
+}
+
+// ---------------------------------------------------------------
+// Checkbox / bulk actions
+// ---------------------------------------------------------------
+function onCheckboxChange() {
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total   = document.querySelectorAll('.row-checkbox').length;
+    const selAll  = document.getElementById('selectAllCheckbox');
+    const delBtn  = document.getElementById('bulkDeleteBtn');
+
+    document.getElementById('selectedCount').textContent = checked;
+    delBtn.disabled          = checked === 0;
+    selAll.checked           = checked > 0 && checked === total;
+    selAll.indeterminate     = checked > 0 && checked < total;
+}
+
+// ---------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, m => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
+    ));
+}
+
+// ---------------------------------------------------------------
+// DOMContentLoaded — wire up all static event listeners
+// ---------------------------------------------------------------
+document.addEventListener('DOMContentLoaded', function () {
+
+    // --- Import type selector → show/hide instruction blocks ---
+    document.getElementById('importType').addEventListener('change', function () {
+        const type = this.value;
+        const wrap = document.getElementById('importInstructionsWrap');
+
+        // Hide all blocks first
+        document.querySelectorAll('.import-type-instructions').forEach(el => el.style.display = 'none');
+
+        if (type === 'Markets') {
+            wrap.style.display = 'block';
+            document.getElementById('importMarketsInstructions').style.display = 'block';
+        } else if (type === 'Border Points') {
+            wrap.style.display = 'block';
+            document.getElementById('importBorderInstructions').style.display = 'block';
+        } else if (type === 'Millers') {
+            wrap.style.display = 'block';
+            document.getElementById('importMillersInstructions').style.display = 'block';
+        } else {
+            wrap.style.display = 'none';
+        }
+    });
+
+    // Re-open import modal on import error (mirrors old code behaviour)
+    <?php if (isset($import_status) && $import_status === 'error'): ?>
+        openModal('importModal');
+    <?php endif; ?>
+
+    // --- Miller country → auto-fill currency ---
+    const millerCountrySelect = document.getElementById('millerCountrySelect');
+    if (millerCountrySelect) {
+        millerCountrySelect.addEventListener('change', function () {
+            const country      = this.value;
+            const display      = document.getElementById('currencyDisplay');
+            const hiddenInput  = document.getElementById('millerCurrencyHidden');
+            if (country && CURRENCY_MAP[country]) {
+                display.textContent    = CURRENCY_MAP[country];
+                display.classList.remove('text-gray-500');
+                display.classList.add('text-gray-800', 'font-medium');
+                hiddenInput.value      = CURRENCY_MAP[country];
+            } else {
+                display.textContent    = 'Select country first';
+                display.classList.add('text-gray-500');
+                display.classList.remove('text-gray-800', 'font-medium');
+                hiddenInput.value      = '';
+            }
         });
     }
-}
 
-function exportSelected(format) {
-    const selectedCount = <?php echo count($_SESSION['selected_tradepoints']); ?>;
-    
-    if (selectedCount === 0) {
-        alert('Please select at least one tradepoint to export.');
-        return;
-    }
-    
-    // Create a form to submit the export request
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = 'export_tradepoints.php';
-    
-    // Add format parameter
-    const formatInput = document.createElement('input');
-    formatInput.type = 'hidden';
-    formatInput.name = 'export_format';
-    formatInput.value = format;
-    form.appendChild(formatInput);
-    
-    // Add sort parameters
-    const sortInput = document.createElement('input');
-    sortInput.type = 'hidden';
-    sortInput.name = 'sort';
-    sortInput.value = '<?php echo $sort_column; ?>';
-    form.appendChild(sortInput);
-    
-    const orderInput = document.createElement('input');
-    orderInput.type = 'hidden';
-    orderInput.name = 'order';
-    orderInput.value = '<?php echo $sort_order; ?>';
-    form.appendChild(orderInput);
-    
-    // Add selected IDs from session
-    <?php foreach ($_SESSION['selected_tradepoints'] as $id): ?>
-        const idInput<?php echo $id; ?> = document.createElement('input');
-        idInput<?php echo $id; ?>.type = 'hidden';
-        idInput<?php echo $id; ?>.name = 'selected_ids[]';
-        idInput<?php echo $id; ?>.value = '<?php echo $id; ?>';
-        form.appendChild(idInput<?php echo $id; ?>);
-    <?php endforeach; ?>
-    
-    // Submit the form
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
-}
+    // --- Select-all checkbox ---
+    document.getElementById('selectAllCheckbox').addEventListener('change', function () {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = this.checked);
+        onCheckboxChange();
+    });
+
+    // --- Clear selections ---
+    document.getElementById('clearSelectionsBtn').addEventListener('click', function () {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+        document.getElementById('selectAllCheckbox').checked      = false;
+        document.getElementById('selectAllCheckbox').indeterminate = false;
+        onCheckboxChange();
+    });
+
+    // --- Bulk delete ---
+    document.getElementById('bulkDeleteBtn').addEventListener('click', function () {
+        const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
+        if (!ids.length) return;
+        document.getElementById('deleteModalText').innerHTML =
+            `Are you sure you want to delete <strong>${ids.length}</strong> selected tradepoint(s)?`;
+        document.getElementById('deleteIdsContainer').innerHTML =
+            ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+        openModal('deleteModal');
+    });
+
+    // --- Column sort headers ---
+    document.querySelectorAll('.sortable').forEach(th =>
+        th.addEventListener('click', () => sortTable(th.dataset.sort))
+    );
+
+    // --- Enter key on search inputs ---
+    ['searchName', 'searchCountry'].forEach(id => {
+        document.getElementById(id).addEventListener('keydown', e => {
+            if (e.key === 'Enter') applyFilters();
+        });
+    });
+    document.getElementById('searchType').addEventListener('change', () => applyFilters());
+
+    // --- Enter key on page-jump input ---
+    const jumpInput = document.getElementById('pageJumpInput');
+    if (jumpInput) jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpToPage(); });
+
+    // Initialise checkbox state counters
+    onCheckboxChange();
+});
 </script>
 
-<?php include '../admin/includes/footer.php'; ?>
+<?php require_once '../admin/includes/admin_footer.php'; ?>
