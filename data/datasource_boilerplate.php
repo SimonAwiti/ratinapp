@@ -1,739 +1,717 @@
 <?php
-// datasources_boilerplate.php
-include '../admin/includes/config.php';
+// datasource_boilerplate.php
+session_start();
 
-// Include the shared header with the sidebar and initial HTML
-include '../admin/includes/header.php';
+// ============================================================
+// EXPORT CSV — must run BEFORE admin_header.php is included
+// ============================================================
+if (isset($_GET['export_csv'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
 
-// Function to fetch data sources from the database with filters
-function getDataSourcesData($con, $limit = 10, $offset = 0, $filters = []) {
-    $where_clauses = [];
-    $params = [];
-    $types = '';
-    
-    // Apply filters if provided
-    if (!empty($filters['name'])) {
-        $where_clauses[] = "data_source_name LIKE ?";
-        $params[] = '%' . $filters['name'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['country'])) {
-        $where_clauses[] = "countries_covered LIKE ?";
-        $params[] = '%' . $filters['country'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['date'])) {
-        $where_clauses[] = "DATE(created_at) = ?";
-        $params[] = $filters['date'];
-        $types .= 's';
-    }
-    
-    $where_sql = '';
-    if (!empty($where_clauses)) {
-        $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
-    }
-    
-    $sql = "SELECT 
-                id, 
-                data_source_name, 
-                countries_covered,
-                DATE_FORMAT(created_at, '%Y-%m-%d') as created_date
-            FROM 
-                data_sources
-            $where_sql
-            ORDER BY 
-                data_source_name ASC
-            LIMIT $limit OFFSET $offset";
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="data_sources_export_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
 
-    $stmt = $con->prepare($sql);
-    if (!$stmt) {
-        error_log("Error preparing statement: " . $con->error);
-        return [];
+    $search_name = $_GET['search_name'] ?? '';
+    $search_country = $_GET['search_country'] ?? '';
+
+    $where_export = "WHERE 1=1";
+    if (!empty($search_name)) {
+        $where_export .= " AND data_source_name LIKE '%" . $con->real_escape_string($search_name) . "%'";
     }
-    
-    if (!empty($params)) {
-        $stmt->bind_param($types, ...$params);
+    if (!empty($search_country)) {
+        $where_export .= " AND countries_covered LIKE '%" . $con->real_escape_string($search_country) . "%'";
     }
+
+    $exp_result = $con->query("SELECT id, data_source_name, countries_covered, DATE_FORMAT(created_at, '%Y-%m-%d') as created_date FROM data_sources $where_export ORDER BY data_source_name ASC");
     
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $data = [];
+    $out = fopen('php://output', 'w');
+    fputs($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['ID', 'Data Source Name', 'Countries Covered', 'Date Added']);
+
+    while ($row = $exp_result->fetch_assoc()) {
+        fputcsv($out, [
+            $row['id'],
+            $row['data_source_name'],
+            $row['countries_covered'],
+            $row['created_date'],
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+// ============================================================
+// POST: Add Data Source
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['add_datasource'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
     
-    if ($result) {
-        if ($result->num_rows > 0) {
-            while ($row = $result->fetch_assoc()) {
-                $data[] = $row;
+    $data_source_name = trim($_POST['data_source_name']);
+    $countries_covered = isset($_POST['countries_covered']) ? implode(', ', $_POST['countries_covered']) : '';
+    $created_at = date('Y-m-d H:i:s');
+    
+    if (empty($data_source_name) || empty($countries_covered)) {
+        $_SESSION['import_message'] = "Please fill all required fields.";
+        $_SESSION['import_status'] = "danger";
+    } else {
+        $stmt = $con->prepare("INSERT INTO data_sources (data_source_name, countries_covered, created_at) VALUES (?, ?, ?)");
+        $stmt->bind_param("sss", $data_source_name, $countries_covered, $created_at);
+        if ($stmt->execute()) {
+            $_SESSION['import_message'] = "Data source added successfully!";
+            $_SESSION['import_status'] = "success";
+        } else {
+            $_SESSION['import_message'] = "Error adding data source: " . $stmt->error;
+            $_SESSION['import_status'] = "danger";
+        }
+        $stmt->close();
+    }
+    header("Location: datasource_boilerplate.php");
+    exit;
+}
+
+// ============================================================
+// POST: Edit Data Source
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_datasource'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $id = (int)$_POST['datasource_id'];
+    $data_source_name = trim($_POST['data_source_name']);
+    $countries_covered = isset($_POST['countries_covered']) ? implode(', ', $_POST['countries_covered']) : '';
+    
+    if (empty($data_source_name) || empty($countries_covered)) {
+        $_SESSION['import_message'] = "Please fill all required fields.";
+        $_SESSION['import_status'] = "danger";
+    } else {
+        $stmt = $con->prepare("UPDATE data_sources SET data_source_name = ?, countries_covered = ? WHERE id = ?");
+        $stmt->bind_param("ssi", $data_source_name, $countries_covered, $id);
+        if ($stmt->execute()) {
+            $_SESSION['import_message'] = "Data source updated successfully!";
+            $_SESSION['import_status'] = "success";
+        } else {
+            $_SESSION['import_message'] = "Error updating data source: " . $stmt->error;
+            $_SESSION['import_status'] = "danger";
+        }
+        $stmt->close();
+    }
+    header("Location: datasource_boilerplate.php");
+    exit;
+}
+
+// ============================================================
+// POST: Delete Data Sources
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['delete_selected']) && !empty($_POST['selected_ids'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $selected_ids = array_map('intval', (array)$_POST['selected_ids']);
+    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+    $stmt = $con->prepare("DELETE FROM data_sources WHERE id IN ($placeholders)");
+    if ($stmt) {
+        $stmt->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
+        if ($stmt->execute()) {
+            $deleted = $stmt->affected_rows;
+            $_SESSION['import_message'] = "Successfully deleted $deleted data source(s).";
+            $_SESSION['import_status'] = "success";
+        } else {
+            $_SESSION['import_message'] = "Error deleting: " . $stmt->error;
+            $_SESSION['import_status'] = "danger";
+        }
+        $stmt->close();
+    }
+    header("Location: datasource_boilerplate.php");
+    exit;
+}
+
+// ============================================================
+// API HANDLER — fetch single data source for edit modal (must be BEFORE admin_header)
+// ============================================================
+if (isset($_GET['get_datasource']) && is_numeric($_GET['get_datasource'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    header('Content-Type: application/json');
+    $get_id = (int)$_GET['get_datasource'];
+    $result = $con->query("SELECT id, data_source_name, countries_covered FROM data_sources WHERE id = $get_id");
+    if ($result && $row = $result->fetch_assoc()) {
+        $row['countries_array'] = explode(', ', $row['countries_covered']);
+        echo json_encode($row);
+    } else {
+        http_response_code(404);
+        echo json_encode(['error' => 'Not found']);
+    }
+    exit;
+}
+
+// ============================================================
+// CHECK ADMIN LOGIN
+// ============================================================
+require_once '../admin/includes/admin_header.php';
+
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    header("Location: ../admin/login.php");
+    exit;
+}
+
+// ============================================================
+// INCLUDE CONFIG
+// ============================================================
+if (file_exists('includes/config.php')) include 'includes/config.php';
+elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+
+// ============================================================
+// STATISTICS
+// ============================================================
+$total_sources = (int)($con->query("SELECT COUNT(*) as t FROM data_sources")->fetch_assoc()['t'] ?? 0);
+$unique_countries_count = 0;
+$all_countries_list = [];
+
+$all_sources = $con->query("SELECT countries_covered FROM data_sources");
+if ($all_sources) {
+    $all_countries_temp = [];
+    while ($row = $all_sources->fetch_assoc()) {
+        $countries = explode(', ', $row['countries_covered']);
+        foreach ($countries as $country) {
+            if (!in_array($country, $all_countries_temp)) {
+                $all_countries_temp[] = $country;
             }
         }
-        $result->free();
     }
-    $stmt->close();
-    
-    return $data;
+    $unique_countries_count = count($all_countries_temp);
+    sort($all_countries_temp);
+    $all_countries_list = $all_countries_temp;
 }
 
-function getTotalDataSourceRecords($con, $filters = []) {
-    $where_clauses = [];
-    $params = [];
-    $types = '';
-    
-    // Apply filters if provided
-    if (!empty($filters['name'])) {
-        $where_clauses[] = "data_source_name LIKE ?";
-        $params[] = '%' . $filters['name'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['country'])) {
-        $where_clauses[] = "countries_covered LIKE ?";
-        $params[] = '%' . $filters['country'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['date'])) {
-        $where_clauses[] = "DATE(created_at) = ?";
-        $params[] = $filters['date'];
-        $types .= 's';
-    }
-    
-    $where_sql = '';
-    if (!empty($where_clauses)) {
-        $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
-    }
-    
-    $sql = "SELECT count(*) as total FROM data_sources $where_sql";
-    $stmt = $con->prepare($sql);
-    if (!$stmt) {
-        error_log("Error preparing count statement: " . $con->error);
-        return 0;
-    }
-    
-    if (!empty($params)) {
-        $stmt->bind_param($types, ...$params);
-    }
-    
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $total = 0;
-    
-    if ($result) {
-        $row = $result->fetch_assoc();
-        $total = $row['total'];
-    }
-    $stmt->close();
-    
-    return $total;
+// ============================================================
+// PAGINATION + SORTING + FILTERING
+// ============================================================
+$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 20;
+if (!in_array($limit, [10, 20, 50, 100])) $limit = 20;
+
+$sort_column = $_GET['sort'] ?? 'data_source_name';
+$sort_direction = (isset($_GET['dir']) && strtolower($_GET['dir']) === 'asc') ? 'ASC' : 'DESC';
+$allowed_sorts = ['id', 'data_source_name', 'countries_covered', 'created_date'];
+if (!in_array($sort_column, $allowed_sorts)) $sort_column = 'data_source_name';
+
+$search_name = trim($_GET['search_name'] ?? '');
+$search_country = trim($_GET['search_country'] ?? '');
+
+$where = "WHERE 1=1";
+if ($search_name !== '') {
+    $where .= " AND data_source_name LIKE '%" . $con->real_escape_string($search_name) . "%'";
+}
+if ($search_country !== '') {
+    $where .= " AND countries_covered LIKE '%" . $con->real_escape_string($search_country) . "%'";
 }
 
-// Get filter values from GET parameters
-$filters = [
-    'name' => isset($_GET['filter_name']) ? trim($_GET['filter_name']) : '',
-    'country' => isset($_GET['filter_country']) ? trim($_GET['filter_country']) : '',
-    'date' => isset($_GET['filter_date']) ? trim($_GET['filter_date']) : ''
-];
+// Count total records
+$count_result = $con->query("SELECT COUNT(*) as total FROM data_sources $where");
+$filtered_records = (int)$count_result->fetch_assoc()['total'];
 
-// Get total number of records with filters
-$total_records = getTotalDataSourceRecords($con, $filters);
-
-// Set pagination parameters
-$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 10;
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$total_pages = max(1, (int)ceil($filtered_records / $limit));
+$page = isset($_GET['page']) ? max(1, min((int)$_GET['page'], $total_pages)) : 1;
 $offset = ($page - 1) * $limit;
 
-// Fetch data sources data with filters
-$data_sources = getDataSourcesData($con, $limit, $offset, $filters);
+// Fetch data
+$data_sources = [];
+$data_result = $con->query("SELECT id, data_source_name, countries_covered, DATE_FORMAT(created_at, '%Y-%m-%d') as created_date FROM data_sources $where ORDER BY $sort_column $sort_direction LIMIT $limit OFFSET $offset");
+while ($row = $data_result->fetch_assoc()) {
+    $data_sources[] = $row;
+}
 
-// Calculate total pages
-$total_pages = ceil($total_records / $limit);
+$showing_from = $filtered_records > 0 ? $offset + 1 : 0;
+$showing_to = $filtered_records > 0 ? min($offset + $limit, $filtered_records) : 0;
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-    <title>Data Sources Management</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f9f9f9;
-            margin: 0;
-            padding: 20px;
-            color: #333;
-        }
-        .container {
-            background: #fff;
-            padding: 20px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        }
-        h2 {
-            margin: 0 0 5px;
-        }
-        p.subtitle {
-            color: #777;
-            font-size: 14px;
-            margin: 0 0 20px;
-        }
-        .toolbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }
-        .toolbar-left {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-        .toolbar button {
-            padding: 12px 20px;
-            font-size: 16px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            background-color: #eee;
-        }
-        .toolbar .primary {
-            background-color: rgba(180, 80, 50, 1);
-            color: white;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        table th, table td {
-            padding: 12px;
-            border-bottom: 1px solid #eee;
-            text-align: left;
-            vertical-align: top;
-        }
-        table th {
-            background-color: #f1f1f1;
-        }
-        table tr:nth-child(even) {
-            background-color: #fafafa;
-        }
-        .actions {
-            display: flex;
-            gap: 8px;
-        }
-        .pagination {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 20px;
-            font-size: 14px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        .pagination .pages {
-            display: flex;
-            gap: 5px;
-        }
-        .pagination .page {
-            padding: 6px 10px;
-            border-radius: 6px;
-            background-color: #eee;
-            cursor: pointer;
-            text-decoration: none;
-            color: #333;
-        }
-        .pagination .current {
-            background-color: #cddc39;
-        }
-        select {
-            padding: 6px;
-            margin-left: 5px;
-        }
-        .countries-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 5px;
-        }
-        .country-tag {
-            background-color: #e0e0e0;
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 12px;
-        }
-        
-        /* Filter Row Styles */
-        .filter-row th {
-            background-color: white;
-            padding: 8px;
-        }
-        .filter-input {
-            width: 100%;
-            border: 1px solid #e5e7eb;
-            background: white;
-            padding: 6px 8px;
-            border-radius: 4px;
-            font-size: 13px;
-        }
-        .filter-input:focus {
-            outline: none;
-            border-color: rgba(180, 80, 50, 1);
-            box-shadow: 0 0 0 2px rgba(180, 80, 50, 0.1);
-        }
-        
-        /* Button Styles */
-        .btn-add-new {
-            background-color: rgba(180, 80, 50, 1);
-            color: white;
-            padding: 10px 20px;
-            font-size: 16px;
-            border: none;
-            border-radius: 5px;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            height: 52px;
-        }
-        .btn-add-new:hover {
-            background-color: darkred;
-        }
-        .btn-delete, .btn-export, .btn-filter {
-            background-color: white;
-            color: black;
-            border: 1px solid #ddd;
-            padding: 8px 16px;
-            border-radius: 5px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-        }
-        .btn-delete:hover, .btn-export:hover, .btn-filter:hover {
-            background-color: #f8f9fa;
-        }
-        
-        /* Dropdown Styles */
-        .dropdown {
-            position: relative;
-            display: inline-block;
-        }
-        .dropdown-menu {
-            display: none;
-            position: absolute;
-            background-color: white;
-            min-width: 160px;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-            z-index: 1000;
-            border-radius: 4px;
-            padding: 5px 0;
-        }
-        .dropdown-menu.show {
-            display: block;
-        }
-        .dropdown-item {
-            padding: 8px 16px;
-            text-decoration: none;
-            display: block;
-            color: #333;
-            cursor: pointer;
-        }
-        .dropdown-item:hover {
-            background-color: #f8f9fa;
-        }
-        .dropdown-divider {
-            height: 1px;
-            margin: 5px 0;
-            background-color: #e5e7eb;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>Data Sources Management</h2>
-        <p class="subtitle">Manage Data Sources and Their Coverage</p>
+<style>
+.auth-bg-gradient{background:radial-gradient(circle at top left,rgba(0,69,13,.03),transparent),radial-gradient(circle at bottom right,rgba(128,0,0,.03),transparent)}
+.header-accent-gradient{background:linear-gradient(90deg,#00450d 0%,#800000 50%,#00450d 100%)}
+.table-row-hover:hover{background-color:#fefaf5;transition:all .2s ease}
+.stat-card{transition:all .2s ease;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.stat-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.search-input:focus{border-color:#800000;outline:none}
+.action-btn{padding:.2rem .4rem;border-radius:.375rem;font-size:.7rem;font-weight:500;transition:all .2s;cursor:pointer;border:none;display:inline-flex;align-items:center}
+.pagination-btn{min-width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:.375rem;font-size:.75rem;transition:all .2s ease;cursor:pointer;border:1px solid #e5e7eb;background:white;color:#374151}
+.pagination-btn:hover:not(:disabled):not(.active-page){background-color:#fef3e7;border-color:#800000;color:#800000}
+.pagination-btn.active-page{background-color:#800000;border-color:#800000;color:white;font-weight:600}
+.pagination-btn:disabled{opacity:.35;cursor:not-allowed}
+.page-size-select{font-size:.75rem;padding:.25rem .5rem;border-radius:.375rem;border:1px solid #e5e7eb;background:white;cursor:pointer}
+.sortable{cursor:pointer;user-select:none}
+.sortable:hover{color:#800000}
+.sort-icon{font-size:.7rem;margin-left:.2rem;vertical-align:middle}
+.modal-gradient-header{background:linear-gradient(135deg,#800000 0%,#00450d 100%)}
+.material-symbols-outlined{font-family:'Material Symbols Outlined'!important;font-style:normal;font-weight:normal;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;-webkit-font-feature-settings:'liga';font-feature-settings:'liga';-webkit-font-smoothing:antialiased}
+.country-tag{display:inline-block;background:#f3f4f6;padding:.15rem .6rem;border-radius:999px;font-size:.7rem;color:#374151;margin:2px 3px}
+</style>
 
-        <div class="toolbar">
-            <div class="toolbar-left">
-                <a href="../data/add_datasource.php" class="btn-add-new">
-                    <i class="fa fa-plus" style="margin-right: 6px;"></i> Add New
+<div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
+<div class="max-w-7xl mx-auto">
+
+    <!-- Page Header -->
+    <div class="mb-6">
+        <div class="flex justify-between items-center flex-wrap gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-maroon">Data Sources Management</h1>
+                <p class="text-gray-600 text-sm mt-1">Manage data sources and their country coverage</p>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+                <a href="?export_csv=1&search_name=<?= urlencode($search_name) ?>&search_country=<?= urlencode($search_country) ?>" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">download</span>Export CSV
                 </a>
-                <button class="btn-delete" onclick="deleteSelected()">
-                    <i class="fa fa-trash" style="margin-right: 6px;"></i> Delete
-                </button>
-                
-                <div class="dropdown">
-                    <button class="btn-export dropdown-toggle" type="button" onclick="toggleExportDropdown()">
-                        <i class="fa fa-file-export" style="margin-right: 6px;"></i> Export
-                    </button>
-                    <div class="dropdown-menu" id="exportDropdown">
-                        <a class="dropdown-item" href="#" onclick="exportSelected('excel')">
-                            <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export Selected (Excel)
-                        </a>
-                        <a class="dropdown-item" href="#" onclick="exportSelected('csv')">
-                            <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export Selected (CSV)
-                        </a>
-                        <a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                            <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export Selected (PDF)
-                        </a>
-                        <div class="dropdown-divider"></div>
-                        <a class="dropdown-item" href="#" onclick="exportAll('excel')">
-                            <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export All (Excel)
-                        </a>
-                        <a class="dropdown-item" href="#" onclick="exportAll('csv')">
-                            <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export All (CSV)
-                        </a>
-                        <a class="dropdown-item" href="#" onclick="exportAll('pdf')">
-                            <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export All (PDF)
-                        </a>
-                        <div class="dropdown-divider"></div>
-                        <a class="dropdown-item" href="#" onclick="exportAllWithFilters('excel')">
-                            <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (Excel)
-                        </a>
-                        <a class="dropdown-item" href="#" onclick="exportAllWithFilters('csv')">
-                            <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (CSV)
-                        </a>
-                        <a class="dropdown-item" href="#" onclick="exportAllWithFilters('pdf')">
-                            <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (PDF)
-                        </a>
-                    </div>
-                </div>
-                
-                <button class="btn-filter" onclick="clearAllFilters()">
-                    <i class="fa fa-filter" style="margin-right: 6px;"></i> Clear Filters
+                <button onclick="openAddModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">add_circle</span>Add Data Source
                 </button>
             </div>
         </div>
+        <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
+    </div>
 
-        <table>
-            <thead>
-                <tr>
-                    <th><input type="checkbox" id="select-all"/></th>
-                    <th>Data Source Name</th>
-                    <th>Countries Covered</th>
-                    <th>Date Added</th>
-                    <th>Actions</th>
-                </tr>
-                <tr class="filter-row">
-                    <th></th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterName" 
-                               placeholder="Filter by name" 
-                               value="<?php echo htmlspecialchars($filters['name']); ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="text" class="filter-input" id="filterCountry" 
-                               placeholder="Filter by country" 
-                               value="<?php echo htmlspecialchars($filters['country']); ?>"
-                               onkeyup="applyFilters()">
-                    </th>
-                    <th>
-                        <input type="date" class="filter-input" id="filterDate" 
-                               value="<?php echo htmlspecialchars($filters['date']); ?>"
-                               onchange="applyFilters()">
-                    </th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody id="dataSourcesTable">
-                <?php foreach ($data_sources as $source): ?>
-                    <tr>
-                        <td><input type="checkbox" class="row-checkbox" data-id="<?php echo $source['id']; ?>"/></td>
-                        <td><?php echo htmlspecialchars($source['data_source_name']); ?></td>
-                        <td>
-                            <div class="countries-list">
-                                <?php 
-                                $countries = explode(', ', $source['countries_covered']);
-                                foreach ($countries as $country): 
-                                ?>
-                                    <span class="country-tag"><?php echo htmlspecialchars($country); ?></span>
-                                <?php endforeach; ?>
-                            </div>
-                        </td>
-                        <td><?php echo htmlspecialchars($source['created_date']); ?></td>
-                        <td class="actions">
-                            <a href="../data/edit_datasource.php?id=<?= $source['id'] ?>">
-                                <button class="btn btn-sm btn-warning">
-                                    <img src="../base/img/edit.svg" alt="Edit" style="width: 20px; height: 20px;">
-                                </button>
-                            </a>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
+    <!-- Alert Messages -->
+    <?php if (isset($_SESSION['import_message'])): ?>
+    <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $_SESSION['import_status'] == 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
+        <span class="material-symbols-outlined text-base"><?= $_SESSION['import_status'] == 'success' ? 'check_circle' : 'error' ?></span>
+        <span class="text-sm font-medium"><?= htmlspecialchars($_SESSION['import_message']) ?></span>
+    </div>
+    <?php 
+        unset($_SESSION['import_message']); 
+        unset($_SESSION['import_status']);
+    endif; 
+    ?>
 
-        <div class="pagination">
-            <div>
-                Show
-                <select id="itemsPerPage" onchange="updateItemsPerPage(this.value)">
-                    <option value="10" <?php echo $limit == 10 ? 'selected' : ''; ?>>10</option>
-                    <option value="25" <?php echo $limit == 25 ? 'selected' : ''; ?>>25</option>
-                    <option value="50" <?php echo $limit == 50 ? 'selected' : ''; ?>>50</option>
-                    <option value="100" <?php echo $limit == 100 ? 'selected' : ''; ?>>100</option>
-                </select>
-                entries
+    <!-- Stat Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Total Data Sources</p><p class="text-xl font-bold text-gray-800"><?= number_format($total_sources) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-maroon/40">database</span>
             </div>
-            <div>Displaying <?php echo ($offset + 1) . ' to ' . min($offset + $limit, $total_records) . ' of ' . $total_records; ?> items</div>
-            <div class="pages">
-                <?php if ($page > 1): ?>
-                    <a href="?page=<?php echo $page - 1; ?>&limit=<?php echo $limit; ?><?php echo getFilterParams($filters); ?>" class="page">‹</a>
-                <?php endif; ?>
-
-                <?php 
-                // Calculate pagination range
-                $start_page = max(1, $page - 2);
-                $end_page = min($total_pages, $page + 2);
-                
-                // Show first page if not in range
-                if ($start_page > 1) {
-                    echo '<a href="?page=1&limit=' . $limit . getFilterParams($filters) . '" class="page">1</a>';
-                    if ($start_page > 2) {
-                        echo '<span class="page" style="background: none; cursor: default;">...</span>';
-                    }
-                }
-                
-                for ($i = $start_page; $i <= $end_page; $i++): 
-                ?>
-                    <a href="?page=<?php echo $i; ?>&limit=<?php echo $limit; ?><?php echo getFilterParams($filters); ?>" 
-                       class="page <?php echo ($page == $i) ? 'current' : ''; ?>">
-                        <?php echo $i; ?>
-                    </a>
-                <?php endfor; 
-                
-                // Show last page if not in range
-                if ($end_page < $total_pages) {
-                    if ($end_page < $total_pages - 1) {
-                        echo '<span class="page" style="background: none; cursor: default;">...</span>';
-                    }
-                    echo '<a href="?page=' . $total_pages . '&limit=' . $limit . getFilterParams($filters) . '" class="page">' . $total_pages . '</a>';
-                }
-                ?>
-
-                <?php if ($page < $total_pages): ?>
-                    <a href="?page=<?php echo $page + 1; ?>&limit=<?php echo $limit; ?><?php echo getFilterParams($filters); ?>" class="page">›</a>
-                <?php endif; ?>
+        </div>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-blue-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Countries Covered</p><p class="text-xl font-bold text-blue-600"><?= number_format($unique_countries_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-blue-400/50">public</span>
+            </div>
+        </div>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Active Sources</p><p class="text-xl font-bold text-green-600"><?= number_format($total_sources) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-green-500/50">check_circle</span>
             </div>
         </div>
     </div>
 
-    <script>
-    document.addEventListener("DOMContentLoaded", function() {
-        // Initialize select all checkbox
-        document.getElementById('select-all').addEventListener('change', function() {
-            document.querySelectorAll('.row-checkbox').forEach(checkbox => {
-                checkbox.checked = this.checked;
-            });
-        });
+    <!-- Search & bulk actions -->
+    <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
+        <div class="flex flex-wrap gap-3 items-center justify-between">
+            <div class="flex-1 min-w-[180px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">search</span>
+                    <input type="text" id="searchName" placeholder="Search by name..."
+                        class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                        value="<?= htmlspecialchars($search_name) ?>">
+                </div>
+            </div>
+            <div class="flex-1 min-w-[180px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">public</span>
+                    <select id="searchCountry" class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                        <option value="">All Countries</option>
+                        <?php foreach ($all_countries_list as $country): ?>
+                            <option value="<?= htmlspecialchars($country) ?>" <?= $search_country == $country ? 'selected' : '' ?>><?= htmlspecialchars($country) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+                <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">filter_list</span>Filter
+                </button>
+                <button id="clearSelectionsBtn" class="px-3 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition-all inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">clear</span>Clear Selected
+                </button>
+                <button id="bulkDeleteBtn" disabled class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span id="selectedCount">0</span>)
+                </button>
+            </div>
+        </div>
+    </div>
 
-        // Close dropdown when clicking outside
-        document.addEventListener('click', function(event) {
-            const exportDropdown = document.getElementById('exportDropdown');
-            const exportButton = document.querySelector('.btn-export');
+    <!-- Main Table -->
+    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                        <th class="w-8 px-3 py-2 text-left">
+                            <input type="checkbox" id="selectAllCheckbox" class="rounded border-gray-300">
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="id">
+                            ID<?php if($sort_column=='id') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="data_source_name">
+                            Data Source<?php if($sort_column=='data_source_name') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="countries_covered">
+                            Countries Covered<?php if($sort_column=='countries_covered') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="created_date">
+                            Date Added<?php if($sort_column=='created_date') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?>
+                        </th>
+                        <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-20">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                <?php if (empty($data_sources)): ?>
+                    <tr>
+                        <td colspan="6" class="px-3 py-8 text-center text-gray-400">
+                            <span class="material-symbols-outlined text-5xl text-gray-300 block">database</span>
+                            <p class="text-sm mt-1">No data sources found</p>
+                        </td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($data_sources as $source): ?>
+                    <tr class="table-row-hover" data-id="<?= $source['id'] ?>">
+                        <td class="px-3 py-2">
+                            <input type="checkbox" class="row-checkbox rounded border-gray-300" value="<?= $source['id'] ?>" onchange="onCheckboxChange()">
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-500"><?= $source['id'] ?></td>
+                        <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($source['data_source_name']) ?></td>
+                        <td class="px-3 py-2">
+                            <div class="flex flex-wrap gap-1">
+                                <?php 
+                                $countries = explode(', ', $source['countries_covered']);
+                                foreach ($countries as $country): 
+                                ?>
+                                    <span class="country-tag"><?= htmlspecialchars($country) ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-600"><?= date('M d, Y', strtotime($source['created_date'])) ?></td>
+                        <td class="px-3 py-2">
+                            <div class="flex items-center justify-center gap-1">
+                                <button onclick="editDataSource(<?= $source['id'] ?>)" class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200" title="Edit">
+                                    <span class="material-symbols-outlined text-sm">edit</span>
+                                </button>
+                                <button onclick="deleteSingle(<?= $source['id'] ?>, '<?= htmlspecialchars(addslashes($source['data_source_name'])) ?>')" class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete">
+                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="border-t border-gray-200 px-4 py-3 bg-white">
+            <div class="flex flex-wrap justify-between items-center gap-3">
+                <div class="text-xs text-gray-500">
+                    <?php if ($filtered_records === 0): ?>
+                        No data sources found
+                    <?php else: ?>
+                        Showing <strong><?= $showing_from ?></strong> – <strong><?= $showing_to ?></strong>
+                        of <strong><?= number_format($filtered_records) ?></strong> data sources
+                        <?php if ($search_name || $search_country): ?>
+                            <span class="ml-1 text-maroon">(filtered)</span>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs text-gray-500" for="rowsPerPage">Rows:</label>
+                        <select id="rowsPerPage" class="page-size-select" onchange="changeRowsPerPage()">
+                            <?php foreach ([10,20,50,100] as $opt): ?>
+                                <option value="<?= $opt ?>" <?= $limit==$opt?'selected':'' ?>><?= $opt ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <?php if ($total_pages > 1): ?>
+                    <nav class="flex items-center gap-1">
+                        <button class="pagination-btn" onclick="goToPage(1)" <?= $page<=1?'disabled':'' ?>><span class="material-symbols-outlined text-sm">first_page</span></button>
+                        <button class="pagination-btn" onclick="goToPage(<?= $page-1 ?>)" <?= $page<=1?'disabled':'' ?>><span class="material-symbols-outlined text-sm">chevron_left</span></button>
+
+                        <?php
+                        $win = 2;
+                        $sp = max(1, $page - $win);
+                        $ep = min($total_pages, $page + $win);
+                        if ($sp === 1) $ep = min($total_pages, 1 + $win * 2);
+                        if ($ep === $total_pages) $sp = max(1, $total_pages - $win * 2);
+                        if ($sp > 1): ?>
+                            <button class="pagination-btn" onclick="goToPage(1)">1</button>
+                            <?php if ($sp > 2): ?><span class="text-gray-400 text-xs px-1">…</span><?php endif; ?>
+                        <?php endif; ?>
+
+                        <?php for ($i = $sp; $i <= $ep; $i++): ?>
+                            <button class="pagination-btn <?= $i===$page ? 'active-page' : '' ?>" <?= $i===$page ? '' : "onclick=\"goToPage($i)\"" ?>><?= $i ?></button>
+                        <?php endfor; ?>
+
+                        <?php if ($ep < $total_pages): ?>
+                            <?php if ($ep < $total_pages - 1): ?><span class="text-gray-400 text-xs px-1">…</span><?php endif; ?>
+                            <button class="pagination-btn" onclick="goToPage(<?= $total_pages ?>)"><?= $total_pages ?></button>
+                        <?php endif; ?>
+
+                        <button class="pagination-btn" onclick="goToPage(<?= $page+1 ?>)" <?= $page>=$total_pages?'disabled':'' ?>><span class="material-symbols-outlined text-sm">chevron_right</span></button>
+                        <button class="pagination-btn" onclick="goToPage(<?= $total_pages ?>)" <?= $page>=$total_pages?'disabled':'' ?>><span class="material-symbols-outlined text-sm">last_page</span></button>
+                    </nav>
+                    <?php endif; ?>
+                </div>
+
+                <a href="../base/landing_page.php" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all">
+                    <span class="material-symbols-outlined text-base">arrow_back</span>Back
+                </a>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+
+<!-- ADD / EDIT MODAL -->
+<div id="dataSourceModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-lg shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center rounded-t-xl">
+                <h3 id="modalTitle" class="text-base font-semibold text-white">Add Data Source</h3>
+                <button onclick="closeModal('dataSourceModal')" class="text-white/80 hover:text-white">
+                    <span class="material-symbols-outlined text-base">close</span>
+                </button>
+            </div>
+            <div class="p-5">
+                <form method="POST" action="" id="dataSourceForm">
+                    <input type="hidden" name="datasource_id" id="dataSourceId">
+
+                    <div class="mb-4">
+                        <label class="block text-xs text-gray-600 mb-1">Data Source Name <span class="text-red-500">*</span></label>
+                        <input type="text" name="data_source_name" id="modalName" required
+                            class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none"
+                            placeholder="e.g., FAO, National Bureau of Statistics">
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-xs text-gray-600 mb-1">Countries Covered <span class="text-red-500">*</span></label>
+                        <select name="countries_covered[]" id="modalCountries" multiple required
+                            class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none"
+                            style="min-height: 150px;">
+                            <option value="Ethiopia">Ethiopia</option>
+                            <option value="Kenya">Kenya</option>
+                            <option value="Rwanda">Rwanda</option>
+                            <option value="Tanzania">Tanzania</option>
+                            <option value="Uganda">Uganda</option>
+                            <option value="Burundi">Burundi</option>
+                            <option value="South Sudan">South Sudan</option>
+                            <option value="Somalia">Somalia</option>
+                            <option value="DR Congo">DR Congo</option>
+                        </select>
+                        <p class="text-xs text-gray-400 mt-1">Hold Ctrl/Cmd to select multiple countries</p>
+                    </div>
+
+                    <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                        <button type="button" onclick="closeModal('dataSourceModal')"
+                            class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="submit" name="add_datasource" id="submitBtn"
+                            class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Add Data Source</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- DELETE CONFIRM MODAL -->
+<div id="deleteModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center">
+    <div class="bg-white rounded-lg w-full max-w-md shadow-xl">
+        <div class="p-4">
+            <div class="flex items-center gap-2 mb-3">
+                <span class="material-symbols-outlined text-red-500">warning</span>
+                <h3 class="text-base font-semibold text-gray-800">Confirm Deletion</h3>
+            </div>
+            <p id="deleteModalText" class="text-sm text-gray-500 mb-3">Are you sure?</p>
+            <div class="bg-red-50 border-l-4 border-red-500 p-2 mb-3 text-xs text-red-700">
+                <span class="material-symbols-outlined text-xs align-middle">info</span> This action cannot be undone.
+            </div>
+            <form method="POST" action="" id="deleteForm">
+                <input type="hidden" name="delete_selected" value="1">
+                <div id="deleteIdsContainer"></div>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('deleteModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// PHP → JS state
+const PHP = {
+    page: <?= $page ?>,
+    limit: <?= $limit ?>,
+    totalPages: <?= $total_pages ?>,
+    sort: <?= json_encode($sort_column) ?>,
+    dir: <?= json_encode(strtolower($sort_direction)) ?>,
+    searchName: <?= json_encode($search_name) ?>,
+    searchCountry: <?= json_encode($search_country) ?>,
+};
+
+function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+function buildUrl(overrides) {
+    const p = {
+        page: PHP.page,
+        limit: PHP.limit,
+        sort: PHP.sort,
+        dir: PHP.dir,
+        search_name: document.getElementById('searchName').value.trim(),
+        search_country: document.getElementById('searchCountry').value,
+    };
+    p.limit = document.getElementById('rowsPerPage').value;
+    Object.assign(p, overrides);
+
+    const q = new URLSearchParams();
+    q.set('page', p.page);
+    q.set('limit', p.limit);
+    if (p.sort) q.set('sort', p.sort);
+    if (p.dir) q.set('dir', p.dir);
+    if (p.search_name) q.set('search_name', p.search_name);
+    if (p.search_country) q.set('search_country', p.search_country);
+    return '?' + q.toString();
+}
+
+function goToPage(pg) {
+    pg = parseInt(pg, 10);
+    if (isNaN(pg) || pg < 1 || pg > PHP.totalPages) return;
+    window.location.href = buildUrl({ page: pg });
+}
+
+function changeRowsPerPage() { window.location.href = buildUrl({ page: 1 }); }
+function applyFilters() { window.location.href = buildUrl({ page: 1 }); }
+
+function sortTable(col) {
+    const newDir = (PHP.sort === col && PHP.dir === 'asc') ? 'desc' : 'asc';
+    window.location.href = buildUrl({ page: 1, sort: col, dir: newDir });
+}
+
+// Add modal
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = 'Add Data Source';
+    document.getElementById('dataSourceId').value = '';
+    document.getElementById('modalName').value = '';
+    
+    const select = document.getElementById('modalCountries');
+    for (let i = 0; i < select.options.length; i++) {
+        select.options[i].selected = false;
+    }
+    
+    document.getElementById('submitBtn').name = 'add_datasource';
+    document.getElementById('submitBtn').textContent = 'Add Data Source';
+    openModal('dataSourceModal');
+}
+
+// Edit modal - FIXED
+function editDataSource(id) {
+    fetch(`?get_datasource=${id}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) throw new Error(data.error);
             
-            if (!exportButton.contains(event.target) && !exportDropdown.contains(event.target)) {
-                exportDropdown.classList.remove('show');
+            document.getElementById('modalTitle').textContent = 'Edit Data Source';
+            document.getElementById('dataSourceId').value = data.id;
+            document.getElementById('modalName').value = data.data_source_name || '';
+            
+            const select = document.getElementById('modalCountries');
+            for (let i = 0; i < select.options.length; i++) {
+                select.options[i].selected = false;
             }
+            
+            if (data.countries_array && Array.isArray(data.countries_array)) {
+                for (let i = 0; i < select.options.length; i++) {
+                    if (data.countries_array.includes(select.options[i].value)) {
+                        select.options[i].selected = true;
+                    }
+                }
+            }
+            
+            document.getElementById('submitBtn').name = 'edit_datasource';
+            document.getElementById('submitBtn').textContent = 'Update Data Source';
+            openModal('dataSourceModal');
+        })
+        .catch(err => { 
+            console.error(err); 
+            alert('Failed to load data source. Please refresh and try again.');
         });
+}
+
+// Delete functions
+function deleteSingle(id, label) {
+    document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${escapeHtml(label)}</strong>?`;
+    document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="selected_ids[]" value="${id}">`;
+    openModal('deleteModal');
+}
+
+// Checkbox handling
+function onCheckboxChange() {
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total = document.querySelectorAll('.row-checkbox').length;
+    const selAll = document.getElementById('selectAllCheckbox');
+    document.getElementById('selectedCount').textContent = checked;
+    document.getElementById('bulkDeleteBtn').disabled = checked === 0;
+    selAll.checked = checked > 0 && checked === total;
+    selAll.indeterminate = checked > 0 && checked < total;
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
+    });
+}
+
+// DOMContentLoaded
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('selectAllCheckbox').addEventListener('change', function() {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = this.checked);
+        onCheckboxChange();
     });
 
-    function toggleExportDropdown() {
-        const dropdown = document.getElementById('exportDropdown');
-        dropdown.classList.toggle('show');
-    }
+    document.getElementById('clearSelectionsBtn').addEventListener('click', function() {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+        document.getElementById('selectAllCheckbox').checked = false;
+        document.getElementById('selectAllCheckbox').indeterminate = false;
+        onCheckboxChange();
+    });
 
-    function applyFilters() {
-        const filters = {
-            name: document.getElementById('filterName').value,
-            country: document.getElementById('filterCountry').value,
-            date: document.getElementById('filterDate').value
-        };
-        
-        // Build URL with filters
-        const url = new URL(window.location.href.split('?')[0], window.location.origin);
-        url.searchParams.set('page', '1');
-        
-        if (filters.name) url.searchParams.set('filter_name', filters.name);
-        if (filters.country) url.searchParams.set('filter_country', filters.country);
-        if (filters.date) url.searchParams.set('filter_date', filters.date);
-        
-        // Keep current limit
-        const currentLimit = new URLSearchParams(window.location.search).get('limit');
-        if (currentLimit) url.searchParams.set('limit', currentLimit);
-        
-        window.location.href = url.toString();
-    }
+    document.getElementById('bulkDeleteBtn').addEventListener('click', function() {
+        const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
+        if (!ids.length) return;
+        document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${ids.length}</strong> selected data source(s)?`;
+        document.getElementById('deleteIdsContainer').innerHTML = ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+        openModal('deleteModal');
+    });
 
-    function clearAllFilters() {
-        // Clear all filter inputs
-        document.getElementById('filterName').value = '';
-        document.getElementById('filterCountry').value = '';
-        document.getElementById('filterDate').value = '';
-        
-        // Reload page without filters
-        const url = new URL(window.location.href.split('?')[0], window.location.origin);
-        
-        // Keep current limit
-        const currentLimit = new URLSearchParams(window.location.search).get('limit');
-        if (currentLimit) url.searchParams.set('limit', currentLimit);
-        
-        window.location.href = url.toString();
-    }
+    document.querySelectorAll('.sortable').forEach(th =>
+        th.addEventListener('click', () => sortTable(th.dataset.sort))
+    );
 
-    function updateItemsPerPage(value) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('limit', value);
-        url.searchParams.set('page', '1');
-        window.location.href = url.toString();
-    }
+    document.getElementById('searchName').addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
+    document.getElementById('searchCountry').addEventListener('change', () => applyFilters());
 
-    /**
-     * Get all selected data source IDs
-     */
-    function getSelectedDataSourceIds() {
-        const selectedIds = [];
-        const checkboxes = document.querySelectorAll('.row-checkbox:checked');
-        
-        checkboxes.forEach(checkbox => {
-            selectedIds.push(checkbox.getAttribute('data-id'));
-        });
-        
-        return selectedIds;
-    }
+    onCheckboxChange();
+});
+</script>
 
-    /**
-     * Export selected items
-     */
-    function exportSelected(format) {
-        const selectedIds = getSelectedDataSourceIds();
-        
-        if (selectedIds.length === 0) {
-            alert('Please select items to export.');
-            return;
-        }
-        
-        // Create URL parameters for export
-        const params = new URLSearchParams();
-        params.append('export', format);
-        params.append('ids', JSON.stringify(selectedIds));
-        
-        // Open export in new window
-        window.open('export_datasources.php?' + params.toString(), '_blank');
-        
-        // Close dropdown
-        document.getElementById('exportDropdown').classList.remove('show');
-    }
-
-    /**
-     * Export all data (without filters)
-     */
-    function exportAll(format) {
-        if (confirm('Export ALL data sources? This may take a moment for large datasets.')) {
-            const params = new URLSearchParams();
-            params.append('export', format);
-            params.append('export_all', 'true');
-            
-            window.open('export_datasources.php?' + params.toString(), '_blank');
-            
-            // Close dropdown
-            document.getElementById('exportDropdown').classList.remove('show');
-        }
-    }
-
-    /**
-     * Export all data with current filters applied
-     */
-    function exportAllWithFilters(format) {
-        // Get current filter values
-        const filters = {
-            name: document.getElementById('filterName').value,
-            country: document.getElementById('filterCountry').value,
-            date: document.getElementById('filterDate').value
-        };
-        
-        // Count how many filters are active
-        const activeFilters = Object.values(filters).filter(val => val.trim() !== '').length;
-        
-        let message = 'Export ';
-        if (activeFilters > 0) {
-            message += 'all data with current filters applied?';
-        } else {
-            message += 'ALL data sources (no filters active)?';
-        }
-        message += ' This may take a moment for large datasets.';
-        
-        if (confirm(message)) {
-            const params = new URLSearchParams();
-            params.append('export', format);
-            params.append('export_all', 'true');
-            params.append('apply_filters', 'true');
-            
-            // Add filters to params
-            Object.keys(filters).forEach(key => {
-                if (filters[key]) {
-                    params.append('filter_' + key, filters[key]);
-                }
-            });
-            
-            window.open('export_datasources.php?' + params.toString(), '_blank');
-            
-            // Close dropdown
-            document.getElementById('exportDropdown').classList.remove('show');
-        }
-    }
-
-    /**
-     * Delete selected items
-     */
-    function deleteSelected() {
-        const selectedIds = getSelectedDataSourceIds();
-        
-        if (selectedIds.length === 0) {
-            alert('Please select items to delete.');
-            return;
-        }
-        
-        if (confirm('Are you sure you want to delete the selected data sources?')) {
-            // Send delete request via AJAX
-            fetch('../data/delete_datasources.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ ids: selectedIds }),
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert('Data sources deleted successfully.');
-                    window.location.reload();
-                } else {
-                    alert('Failed to delete data sources: ' + (data.message || 'Unknown error.'));
-                }
-            })
-            .catch(error => {
-                console.error('Fetch error during delete:', error);
-                alert('An error occurred while deleting data sources: ' + error.message);
-            });
-        }
-    }
-    </script>
-</body>
-</html>
-
-<?php 
-// Helper function to build filter parameters for URLs
-function getFilterParams($filters) {
-    $params = '';
-    if (!empty($filters['name'])) {
-        $params .= '&filter_name=' . urlencode($filters['name']);
-    }
-    if (!empty($filters['country'])) {
-        $params .= '&filter_country=' . urlencode($filters['country']);
-    }
-    if (!empty($filters['date'])) {
-        $params .= '&filter_date=' . urlencode($filters['date']);
-    }
-    return $params;
-}
-?>
+<?php require_once '../admin/includes/admin_footer.php'; ?>
