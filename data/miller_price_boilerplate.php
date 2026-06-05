@@ -1,286 +1,358 @@
 <?php
-// base/millerprices_boilerplate.php
+// miller_prices.php
+session_start();
 
-// Start session at the very beginning
-if (session_status() == PHP_SESSION_NONE) {
-    session_start();
-}
+// ============================================================
+// EXPORT CSV — must run BEFORE admin_header.php is included
+// ============================================================
+if (isset($_GET['export_csv'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
 
-// Initialize session storage for selected items if not exists
-if (!isset($_SESSION['selected_miller_prices'])) {
-    $_SESSION['selected_miller_prices'] = [];
-}
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="miller_prices_export_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
 
-// Include the configuration file first
-include '../admin/includes/config.php';
+    $search_country = $_GET['search_country'] ?? '';
+    $search_town = $_GET['search_town'] ?? '';
+    $search_commodity = $_GET['search_commodity'] ?? '';
+    $filter_status = $_GET['filter_status'] ?? '';
 
-// Handle AJAX selection updates
-if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
-    $id = $_POST['id'];
-    $isSelected = $_POST['selected'] === 'true';
-    
-    if ($isSelected) {
-        if (!in_array($id, $_SESSION['selected_miller_prices'])) {
-            $_SESSION['selected_miller_prices'][] = $id;
-        }
-    } else {
-        $key = array_search($id, $_SESSION['selected_miller_prices']);
-        if ($key !== false) {
-            unset($_SESSION['selected_miller_prices'][$key]);
-            $_SESSION['selected_miller_prices'] = array_values($_SESSION['selected_miller_prices']);
-        }
+    $where_export = "WHERE 1=1";
+    if (!empty($search_country)) {
+        $where_export .= " AND mp.country LIKE '%" . $con->real_escape_string($search_country) . "%'";
     }
-    
-    // Clear all selections if requested
-    if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
-        $_SESSION['selected_miller_prices'] = [];
+    if (!empty($search_town)) {
+        $where_export .= " AND mp.town LIKE '%" . $con->real_escape_string($search_town) . "%'";
     }
+    if (!empty($search_commodity)) {
+        $where_export .= " AND (c.commodity_name LIKE '%" . $con->real_escape_string($search_commodity) . "%' OR c.variety LIKE '%" . $con->real_escape_string($search_commodity) . "%')";
+    }
+    if (!empty($filter_status)) {
+        $where_export .= " AND mp.status = '" . $con->real_escape_string($filter_status) . "'";
+    }
+
+    $exp_query = "SELECT 
+        mp.id, mp.country, mp.town, 
+        CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
+        mp.price, mp.price_usd, mp.day_change, mp.month_change,
+        DATE(mp.date_posted) as price_date, mp.status, ds.data_source_name as data_source
+        FROM miller_prices mp
+        LEFT JOIN commodities c ON mp.commodity_id = c.id
+        LEFT JOIN data_sources ds ON mp.data_source_id = ds.id
+        $where_export
+        ORDER BY mp.date_posted DESC";
     
-    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_miller_prices'])]);
+    $exp_result = $con->query($exp_query);
+    $out = fopen('php://output', 'w');
+    fputs($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['ID', 'Country', 'Town', 'Commodity', 'Price (Local)', 'Price (USD)', 'Day Change %', 'Month Change %', 'Date', 'Status', 'Data Source']);
+
+    while ($row = $exp_result->fetch_assoc()) {
+        fputcsv($out, [
+            $row['id'], $row['country'], $row['town'], $row['commodity_display'],
+            number_format($row['price'], 2, '.', ''), number_format($row['price_usd'], 2, '.', ''),
+            $row['day_change'] !== null ? $row['day_change'] . '%' : 'N/A',
+            $row['month_change'] !== null ? $row['month_change'] . '%' : 'N/A',
+            $row['price_date'], $row['status'], $row['data_source']
+        ]);
+    }
+    fclose($out);
     exit;
 }
 
-// Handle CSV import BEFORE any HTML output
+// ============================================================
+// POST: Add Miller Price via modal
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['add_miller_price'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $country = trim($_POST['country']);
+    $town = trim($_POST['town']);
+    $commodity_id = (int)$_POST['commodity_id'];
+    $price = (float)$_POST['price'];
+    $data_source_id = (int)$_POST['data_source_id'];
+    $date_posted = trim($_POST['date_posted']);
+    
+    // Get commodity name and variety
+    $commodity_name = "";
+    $variety = "";
+    $stmt = $con->prepare("SELECT commodity_name, variety FROM commodities WHERE id = ?");
+    $stmt->bind_param("i", $commodity_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $commodity_name = $row['commodity_name'];
+        $variety = $row['variety'];
+    }
+    $stmt->close();
+    
+    // Get data source name
+    $data_source_name = "";
+    $stmt = $con->prepare("SELECT data_source_name FROM data_sources WHERE id = ?");
+    $stmt->bind_param("i", $data_source_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $data_source_name = $row['data_source_name'];
+    }
+    $stmt->close();
+    
+    // Convert price to USD (using approximate rates)
+    $rates = ['Kenya' => 150, 'Uganda' => 3700, 'Tanzania' => 2300, 'Rwanda' => 1200, 'Burundi' => 2000];
+    $rate = $rates[$country] ?? 1;
+    $price_usd = round($price / $rate, 2);
+    
+    // Extract date parts
+    $date_obj = new DateTime($date_posted);
+    $day = $date_obj->format('d');
+    $month = $date_obj->format('m');
+    $year = $date_obj->format('Y');
+    $status = 'pending';
+    
+    $stmt = $con->prepare("INSERT INTO miller_prices (country, town, commodity_id, commodity_name, price, price_usd, data_source_id, data_source_name, date_posted, day, month, year, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("ssisddissiiis", $country, $town, $commodity_id, $commodity_name, $price, $price_usd, $data_source_id, $data_source_name, $date_posted, $day, $month, $year, $status);
+    
+    if ($stmt->execute()) {
+        $_SESSION['import_message'] = "Miller price added successfully!";
+        $_SESSION['import_status'] = "success";
+    } else {
+        $_SESSION['import_message'] = "Error adding miller price: " . $stmt->error;
+        $_SESSION['import_status'] = "danger";
+    }
+    $stmt->close();
+    header("Location: miller_prices.php");
+    exit;
+}
+
+// ============================================================
+// POST: Edit Miller Price via modal
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_miller_price'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $id = (int)$_POST['price_id'];
+    $country = trim($_POST['country']);
+    $town = trim($_POST['town']);
+    $commodity_id = (int)$_POST['commodity_id'];
+    $price = (float)$_POST['price'];
+    $data_source_id = (int)$_POST['data_source_id'];
+    $date_posted = trim($_POST['date_posted']);
+    $status = trim($_POST['status']);
+    
+    // Get commodity name and variety
+    $commodity_name = "";
+    $stmt = $con->prepare("SELECT commodity_name FROM commodities WHERE id = ?");
+    $stmt->bind_param("i", $commodity_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $commodity_name = $row['commodity_name'];
+    }
+    $stmt->close();
+    
+    // Get data source name
+    $data_source_name = "";
+    $stmt = $con->prepare("SELECT data_source_name FROM data_sources WHERE id = ?");
+    $stmt->bind_param("i", $data_source_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $data_source_name = $row['data_source_name'];
+    }
+    $stmt->close();
+    
+    // Convert price to USD
+    $rates = ['Kenya' => 150, 'Uganda' => 3700, 'Tanzania' => 2300, 'Rwanda' => 1200, 'Burundi' => 2000];
+    $rate = $rates[$country] ?? 1;
+    $price_usd = round($price / $rate, 2);
+    
+    // Extract date parts
+    $date_obj = new DateTime($date_posted);
+    $day = $date_obj->format('d');
+    $month = $date_obj->format('m');
+    $year = $date_obj->format('Y');
+    
+    $stmt = $con->prepare("UPDATE miller_prices SET country=?, town=?, commodity_id=?, commodity_name=?, price=?, price_usd=?, data_source_id=?, data_source_name=?, date_posted=?, day=?, month=?, year=?, status=? WHERE id=?");
+    $stmt->bind_param("ssisddissiiissi", $country, $town, $commodity_id, $commodity_name, $price, $price_usd, $data_source_id, $data_source_name, $date_posted, $day, $month, $year, $status, $id);
+    
+    if ($stmt->execute()) {
+        $_SESSION['import_message'] = "Miller price updated successfully!";
+        $_SESSION['import_status'] = "success";
+    } else {
+        $_SESSION['import_message'] = "Error updating miller price: " . $stmt->error;
+        $_SESSION['import_status'] = "danger";
+    }
+    $stmt->close();
+    header("Location: miller_prices.php");
+    exit;
+}
+
+// ============================================================
+// POST: Delete Miller Prices
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['delete_selected']) && !empty($_POST['selected_ids'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $selected_ids = array_map('intval', (array)$_POST['selected_ids']);
+    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+    $stmt = $con->prepare("DELETE FROM miller_prices WHERE id IN ($placeholders)");
+    if ($stmt) {
+        $stmt->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
+        if ($stmt->execute()) {
+            $deleted = $stmt->affected_rows;
+            $_SESSION['import_message'] = "Successfully deleted $deleted miller price(s).";
+            $_SESSION['import_status'] = "success";
+        } else {
+            $_SESSION['import_message'] = "Error deleting: " . $stmt->error;
+            $_SESSION['import_status'] = "danger";
+        }
+        $stmt->close();
+    }
+    header("Location: miller_prices.php");
+    exit;
+}
+
+// ============================================================
+// POST: Bulk Status Update
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['bulk_status_update']) && !empty($_POST['selected_ids']) && isset($_POST['new_status'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $selected_ids = array_map('intval', (array)$_POST['selected_ids']);
+    $new_status = $_POST['new_status'];
+    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+    $stmt = $con->prepare("UPDATE miller_prices SET status = ? WHERE id IN ($placeholders)");
+    if ($stmt) {
+        $types = 's' . str_repeat('i', count($selected_ids));
+        $stmt->bind_param($types, $new_status, ...$selected_ids);
+        if ($stmt->execute()) {
+            $updated = $stmt->affected_rows;
+            $_SESSION['import_message'] = "Successfully updated $updated miller price(s) to '$new_status'.";
+            $_SESSION['import_status'] = "success";
+        } else {
+            $_SESSION['import_message'] = "Error updating status: " . $stmt->error;
+            $_SESSION['import_status'] = "danger";
+        }
+        $stmt->close();
+    }
+    header("Location: miller_prices.php");
+    exit;
+}
+
+// ============================================================
+// CSV IMPORT
+// ============================================================
 if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
     $file = $_FILES['csv_file']['tmp_name'];
     $handle = fopen($file, "r");
     $overwrite = isset($_POST['overwrite_existing']);
-    $data_source = $_POST['data_source'] ?? 'Manual Import';
-    
-    // Skip header row
-    fgetcsv($handle);
+    fgetcsv($handle); // skip header
     
     $successCount = 0;
     $errorCount = 0;
-    $errors = array();
-    
-    // Start transaction
+    $errors = [];
     $con->begin_transaction();
     
     try {
         $rowNumber = 1;
-        
-        while (($data = fgetcsv($handle, 1000, ","))) {
+        while (($data = fgetcsv($handle, 1000, ",")) !== false) {
             $rowNumber++;
+            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) continue;
             
-            // Skip completely empty rows
-            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
-                continue;
-            }
+            if (empty(trim($data[0]))) { $errors[] = "Row $rowNumber: Country is required"; $errorCount++; continue; }
+            if (empty(trim($data[1]))) { $errors[] = "Row $rowNumber: Town is required"; $errorCount++; continue; }
+            if (empty(trim($data[2]))) { $errors[] = "Row $rowNumber: Commodity ID is required"; $errorCount++; continue; }
+            if (empty(trim($data[3]))) { $errors[] = "Row $rowNumber: Price is required"; $errorCount++; continue; }
+            if (empty(trim($data[4]))) { $errors[] = "Row $rowNumber: Date is required"; $errorCount++; continue; }
             
-            // Validate required fields - Based on miller_prices table structure
-            if (empty(trim($data[0]))) {
-                $errors[] = "Row $rowNumber: Country is required";
-                $errorCount++;
-                continue;
-            }
-            if (empty(trim($data[1]))) {
-                $errors[] = "Row $rowNumber: Town is required";
-                $errorCount++;
-                continue;
-            }
-            if (empty(trim($data[2]))) {
-                $errors[] = "Row $rowNumber: Commodity ID is required";
-                $errorCount++;
-                continue;
-            }
-            if (empty(trim($data[3]))) {
-                $errors[] = "Row $rowNumber: Price is required";
-                $errorCount++;
-                continue;
-            }
-            if (empty(trim($data[4]))) {
-                $errors[] = "Row $rowNumber: Date is required";
-                $errorCount++;
-                continue;
-            }
-            
-            // Prepare miller price data
             $country = trim($data[0]);
             $town = trim($data[1]);
-            $commodity_id = intval(trim($data[2]));
-            $price = floatval(trim($data[3]));
-            
-            // Date parsing (same as market prices)
-            $raw_date_string = trim($data[4]);
-            error_log("Raw date string from CSV: '$raw_date_string'");
-            
+            $commodity_id = (int)trim($data[2]);
+            $price = (float)trim($data[3]);
             $date_string = trim($data[4]);
+            $data_source_id = isset($data[5]) ? (int)trim($data[5]) : 1;
+            $status = isset($data[6]) ? trim($data[6]) : 'pending';
+            
+            // Parse date
             $date_posted = null;
-            
-            $date_string = preg_replace('/\s+/', ' ', $date_string);
-            
-            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/', $date_string, $matches)) {
-                $year = $matches[1];
-                $month = $matches[2];
-                $day = $matches[3];
-                $hour = $matches[4];
-                $minute = $matches[5];
-                $second = $matches[6];
-                
-                if (checkdate($month, $day, $year) && 
-                    $hour >= 0 && $hour <= 23 && 
-                    $minute >= 0 && $minute <= 59 && 
-                    $second >= 0 && $second <= 59) {
-                    $date_posted = "$year-$month-$day $hour:$minute:$second";
+            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date_string, $matches)) {
+                $date_posted = "$matches[1]-$matches[2]-$matches[3] 00:00:00";
+            } elseif (preg_match('/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/', $date_string, $matches)) {
+                $date_posted = "$matches[1]-$matches[2]-$matches[3] $matches[4]:$matches[5]:$matches[6]";
+            } else {
+                $timestamp = strtotime($date_string);
+                if ($timestamp !== false && $timestamp > 0) {
+                    $date_posted = date('Y-m-d H:i:s', $timestamp);
                 }
             }
             
             if ($date_posted === null) {
-                try {
-                    $date_time = new DateTime($date_string);
-                    $date_posted = $date_time->format('Y-m-d H:i:s');
-                } catch (Exception $e) {
-                    $timestamp = strtotime($date_string);
-                    if ($timestamp !== false && $timestamp > 0) {
-                        $date_posted = date('Y-m-d H:i:s', $timestamp);
-                    }
-                }
-            }
-            
-            if ($date_posted === null || !preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $date_posted)) {
-                $errors[] = "Row $rowNumber: Invalid date format '$date_string'. Could not parse to valid datetime.";
-                $errorCount++;
-                continue;
-            }
-            
-            $parsed_timestamp = strtotime($date_posted);
-            if ($parsed_timestamp < strtotime('2020-01-01') || $parsed_timestamp > strtotime('2030-12-31')) {
-                $errors[] = "Row $rowNumber: Date '$date_posted' is out of reasonable range (2020-2030)";
-                $errorCount++;
-                continue;
-            }
-            
-            error_log("Successfully parsed date: '$date_string' -> '$date_posted'");
-            
-            // Optional fields
-            $data_source_id = isset($data[5]) ? intval(trim($data[5])) : 1;
-            $status = isset($data[6]) ? trim($data[6]) : 'pending';
-            
-            // Extract date components
-            $day = date('d', strtotime($date_posted));
-            $month = date('m', strtotime($date_posted));
-            $year = date('Y', strtotime($date_posted));
-            
-            // Validate status
-            $valid_statuses = ['pending', 'approved', 'published', 'unpublished'];
-            if (!in_array($status, $valid_statuses)) {
-                $errors[] = "Row $rowNumber: Invalid status '$status'";
+                $errors[] = "Row $rowNumber: Invalid date format '$date_string'";
                 $errorCount++;
                 continue;
             }
             
             // Get commodity name
             $commodity_name = "";
-            $commodity_query = "SELECT commodity_name FROM commodities WHERE id = ? LIMIT 1";
-            $commodity_stmt = $con->prepare($commodity_query);
-            if (!$commodity_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare commodity query: " . $con->error;
-                $errorCount++;
-                continue;
-            }
-            $commodity_stmt->bind_param('i', $commodity_id);
-            $commodity_stmt->execute();
-            $commodity_result = $commodity_stmt->get_result();
-            if ($commodity_result->num_rows > 0) {
-                $commodity_row = $commodity_result->fetch_assoc();
-                $commodity_name = $commodity_row['commodity_name'];
+            $stmt = $con->prepare("SELECT commodity_name FROM commodities WHERE id = ?");
+            $stmt->bind_param("i", $commodity_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($row = $result->fetch_assoc()) {
+                $commodity_name = $row['commodity_name'];
             } else {
-                $errors[] = "Row $rowNumber: Commodity ID '$commodity_id' not found";
+                $errors[] = "Row $rowNumber: Commodity ID $commodity_id not found";
                 $errorCount++;
-                $commodity_stmt->close();
                 continue;
             }
-            $commodity_stmt->close();
+            $stmt->close();
             
             // Get data source name
             $data_source_name = "";
-            $source_query = "SELECT data_source_name FROM data_sources WHERE id = ? LIMIT 1";
-            $source_stmt = $con->prepare($source_query);
-            if (!$source_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare data source query: " . $con->error;
-                $errorCount++;
-                continue;
-            }
-            $source_stmt->bind_param('i', $data_source_id);
-            $source_stmt->execute();
-            $source_result = $source_stmt->get_result();
-            if ($source_result->num_rows > 0) {
-                $source_row = $source_result->fetch_assoc();
-                $data_source_name = $source_row['data_source_name'];
+            $stmt = $con->prepare("SELECT data_source_name FROM data_sources WHERE id = ?");
+            $stmt->bind_param("i", $data_source_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($row = $result->fetch_assoc()) {
+                $data_source_name = $row['data_source_name'];
             } else {
-                $errors[] = "Row $rowNumber: Data Source ID '$data_source_id' not found";
-                $errorCount++;
-                $source_stmt->close();
-                continue;
-            }
-            $source_stmt->close();
-            
-            // Convert price to USD
-            $price_usd = convertToUSD($price, $country);
-            
-            // Calculate day and month changes
-            $day_change = calculateDayChange($price, $commodity_id, $town, $con);
-            $month_change = calculateMonthChange($price, $commodity_id, $town, $con);
-            
-            // DEBUG: Log what we're about to insert
-            error_log("Preparing to insert: country=$country, town=$town, commodity=$commodity_id, date=$date_posted");
-            
-            // Check if miller price record already exists
-            $check_query = "SELECT id FROM miller_prices WHERE town = ? AND commodity_id = ? AND DATE(date_posted) = DATE(?)";
-            $check_stmt = $con->prepare($check_query);
-            if (!$check_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare check query: " . $con->error;
+                $errors[] = "Row $rowNumber: Data Source ID $data_source_id not found";
                 $errorCount++;
                 continue;
             }
-            $check_stmt->bind_param('sis', $town, $commodity_id, $date_posted);
+            $stmt->close();
+            
+            // Convert to USD
+            $rates = ['Kenya' => 150, 'Uganda' => 3700, 'Tanzania' => 2300, 'Rwanda' => 1200, 'Burundi' => 2000];
+            $rate = $rates[$country] ?? 1;
+            $price_usd = round($price / $rate, 2);
+            
+            // Extract date parts
+            $date_obj = new DateTime($date_posted);
+            $day = $date_obj->format('d');
+            $month = $date_obj->format('m');
+            $year = $date_obj->format('Y');
+            
+            // Check if record exists
+            $check_stmt = $con->prepare("SELECT id FROM miller_prices WHERE town = ? AND commodity_id = ? AND DATE(date_posted) = DATE(?)");
+            $check_stmt->bind_param("sis", $town, $commodity_id, $date_posted);
             $check_stmt->execute();
             $check_result = $check_stmt->get_result();
             
             if ($check_result->num_rows > 0) {
                 if ($overwrite) {
-                    // Update existing price
-                    $update_query = "UPDATE miller_prices SET 
-                        country = ?,
-                        price = ?,
-                        price_usd = ?,
-                        day_change = ?,
-                        month_change = ?,
-                        data_source_id = ?,
-                        data_source_name = ?,
-                        status = ?,
-                        day = ?,
-                        month = ?,
-                        year = ?
-                        WHERE town = ? AND commodity_id = ? AND DATE(date_posted) = DATE(?)";
-                    
-                    $update_stmt = $con->prepare($update_query);
-                    if (!$update_stmt) {
-                        $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
-                        $errorCount++;
-                        $check_stmt->close();
-                        continue;
-                    }
-                    
-                    $update_stmt->bind_param(
-                        'sdddsisiiiss',
-                        $country,
-                        $price,
-                        $price_usd,
-                        $day_change,
-                        $month_change,
-                        $data_source_id,
-                        $data_source_name,
-                        $status,
-                        $day,
-                        $month,
-                        $year,
-                        $town,
-                        $commodity_id,
-                        $date_posted
-                    );
-                    
+                    $update_stmt = $con->prepare("UPDATE miller_prices SET country=?, price=?, price_usd=?, data_source_id=?, data_source_name=?, status=?, day=?, month=?, year=? WHERE town=? AND commodity_id=? AND DATE(date_posted)=DATE(?)");
+                    $update_stmt->bind_param("sddissiiissi", $country, $price, $price_usd, $data_source_id, $data_source_name, $status, $day, $month, $year, $town, $commodity_id, $date_posted);
                     if ($update_stmt->execute()) {
                         $successCount++;
                     } else {
@@ -289,7 +361,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     }
                     $update_stmt->close();
                 } else {
-                    $errors[] = "Row $rowNumber: Miller price record already exists (use overwrite option to update)";
+                    $errors[] = "Row $rowNumber: Record already exists (use overwrite to update)";
                     $errorCount++;
                 }
                 $check_stmt->close();
@@ -297,2017 +369,949 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
             }
             $check_stmt->close();
             
-            // Insert new miller price record
-            $insert_query = "INSERT INTO miller_prices (
-                country,
-                town,
-                commodity_id,
-                commodity_name,
-                price,
-                price_usd,
-                day_change,
-                month_change,
-                data_source_id,
-                data_source_name,
-                date_posted,
-                day,
-                month,
-                year,
-                status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-            $insert_stmt = $con->prepare($insert_query);
-            if (!$insert_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
-                $errorCount++;
-                continue;
-            }
-
-            $insert_stmt->bind_param(
-                'ssisddddissiiis',
-                $country,
-                $town,
-                $commodity_id,
-                $commodity_name,
-                $price,
-                $price_usd,
-                $day_change,
-                $month_change,
-                $data_source_id,
-                $data_source_name,
-                $date_posted,
-                $day,
-                $month,
-                $year,
-                $status
-            );
-
+            // Insert new record
+            $insert_stmt = $con->prepare("INSERT INTO miller_prices (country, town, commodity_id, commodity_name, price, price_usd, data_source_id, data_source_name, date_posted, day, month, year, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $insert_stmt->bind_param("ssisddissiiis", $country, $town, $commodity_id, $commodity_name, $price, $price_usd, $data_source_id, $data_source_name, $date_posted, $day, $month, $year, $status);
+            
             if ($insert_stmt->execute()) {
                 $successCount++;
-                error_log("Insert successful for row $rowNumber");
             } else {
-                $error_msg = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
-                $errors[] = $error_msg;
-                error_log($error_msg);
+                $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
                 $errorCount++;
             }
             $insert_stmt->close();
         }
         
-        // Commit or rollback transaction
         if ($errorCount === 0) {
             $con->commit();
             $_SESSION['import_message'] = "Successfully imported $successCount miller prices.";
-            $_SESSION['import_status'] = 'success';
+            $_SESSION['import_status'] = "success";
         } else {
             $con->rollback();
-            $_SESSION['import_message'] = "Import failed with $errorCount errors. Errors: " . implode('<br>', array_slice($errors, 0, 10));
-            $_SESSION['import_status'] = 'danger';
+            $_SESSION['import_message'] = "Import failed with $errorCount errors. " . implode('<br>', array_slice($errors, 0, 10));
+            $_SESSION['import_status'] = "danger";
         }
-        
     } catch (Exception $e) {
         $con->rollback();
-        $_SESSION['import_message'] = "Import failed with exception: " . $e->getMessage();
-        $_SESSION['import_status'] = 'danger';
+        $_SESSION['import_message'] = "Import failed: " . $e->getMessage();
+        $_SESSION['import_status'] = "danger";
     }
-    
     fclose($handle);
-    
-    // Redirect to avoid form resubmission
-    header("Location: miller_price_boilerplate.php");
-    exit;
-    
-} elseif (isset($_POST['import_csv'])) {
-    $_SESSION['import_message'] = "Please select a valid CSV file to import.";
-    $_SESSION['import_status'] = 'danger';
-    header("Location: millerprices_boilerplate.php");
+    header("Location: miller_prices.php");
     exit;
 }
 
-// Currency conversion function
-function convertToUSD($amount, $country) {
-    if (!is_numeric($amount)) return 0;
-
-    switch ($country) {
-        case 'Kenya': return round($amount / 150, 2);   // 1 USD = 150 KES
-        case 'Uganda': return round($amount / 3700, 2); // 1 USD = 3700 UGX
-        case 'Tanzania': return round($amount / 2300, 2); // 1 USD = 2300 TZS
-        case 'Rwanda': return round($amount / 1200, 2);  // 1 USD = 1200 RWF
-        case 'Burundi': return round($amount / 2000, 2); // 1 USD = 2000 BIF
-        default: return round($amount, 2);
-    }
+// ============================================================
+// CSV TEMPLATE DOWNLOAD
+// ============================================================
+if (isset($_GET['download_template'])) {
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="miller_prices_template.csv"');
+    header('Pragma: no-cache');
+    $out = fopen('php://output', 'w');
+    fputs($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['Country', 'Town', 'Commodity ID', 'Price', 'Date (YYYY-MM-DD)', 'Data Source ID', 'Status']);
+    fputcsv($out, ['Kenya', 'Nairobi', '1', '4500.00', '2025-01-15', '1', 'pending']);
+    fputcsv($out, ['Uganda', 'Kampala', '2', '120000.00', '2025-01-15', '1', 'pending']);
+    fclose($out);
+    exit;
 }
 
-// Function to calculate day change percentage
-function calculateDayChange($currentPrice, $commodityId, $town, $con) {
-    $yesterday = date('Y-m-d', strtotime('-1 day'));
+// ============================================================
+// API HANDLER — fetch single miller price for edit modal
+// ============================================================
+if (isset($_GET['get_miller_price']) && is_numeric($_GET['get_miller_price'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
     
-    $stmt = $con->prepare("SELECT price FROM miller_prices 
-                          WHERE commodity_id = ? AND town = ? AND DATE(date_posted) = ?");
-    $stmt->bind_param("iss", $commodityId, $town, $yesterday);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
-        $yesterdayPrice = $result->fetch_assoc()['price'];
-        if ($yesterdayPrice > 0) {
-            $change = (($currentPrice - $yesterdayPrice) / $yesterdayPrice) * 100;
-            return round($change, 2);
-        }
+    header('Content-Type: application/json');
+    $get_id = (int)$_GET['get_miller_price'];
+    $result = $con->query("SELECT mp.*, c.commodity_name as commodity_name FROM miller_prices mp LEFT JOIN commodities c ON mp.commodity_id = c.id WHERE mp.id = $get_id");
+    if ($result && $row = $result->fetch_assoc()) {
+        echo json_encode($row);
+    } else {
+        http_response_code(404);
+        echo json_encode(['error' => 'Not found']);
     }
-    return null;
+    exit;
 }
 
-// Function to calculate month change percentage
-function calculateMonthChange($currentPrice, $commodityId, $town, $con) {
-    $firstDayOfLastMonth = date('Y-m-01', strtotime('-1 month'));
-    $lastDayOfLastMonth = date('Y-m-t', strtotime('-1 month'));
-    
-    $stmt = $con->prepare("SELECT AVG(price) as avg_price FROM miller_prices 
-                          WHERE commodity_id = ? AND town = ? 
-                          AND DATE(date_posted) BETWEEN ? AND ?");
-    $stmt->bind_param("isss", $commodityId, $town, $firstDayOfLastMonth, $lastDayOfLastMonth);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
-        $avgPrice = $result->fetch_assoc()['avg_price'];
-        if ($avgPrice > 0) {
-            $change = (($currentPrice - $avgPrice) / $avgPrice) * 100;
-            return round($change, 2);
-        }
-    }
-    return null;
+// ============================================================
+// CHECK ADMIN LOGIN
+// ============================================================
+require_once '../admin/includes/admin_header.php';
+
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    header("Location: ../admin/login.php");
+    exit;
 }
 
-// Include the shared header AFTER handling POST requests
-include '../admin/includes/header.php';
+// ============================================================
+// INCLUDE CONFIG
+// ============================================================
+if (file_exists('includes/config.php')) include 'includes/config.php';
+elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
 
-// Check for session messages
-$import_message = null;
-$import_status = null;
-if (isset($_SESSION['import_message'])) {
-    $import_message = $_SESSION['import_message'];
-    $import_status = $_SESSION['import_status'];
-    unset($_SESSION['import_message']);
-    unset($_SESSION['import_status']);
+// ============================================================
+// STATISTICS
+// ============================================================
+$total_prices = (int)($con->query("SELECT COUNT(*) as t FROM miller_prices")->fetch_assoc()['t'] ?? 0);
+$pending_count = (int)($con->query("SELECT COUNT(*) as t FROM miller_prices WHERE status = 'pending'")->fetch_assoc()['t'] ?? 0);
+$approved_count = (int)($con->query("SELECT COUNT(*) as t FROM miller_prices WHERE status = 'approved'")->fetch_assoc()['t'] ?? 0);
+$published_count = (int)($con->query("SELECT COUNT(*) as t FROM miller_prices WHERE status = 'published'")->fetch_assoc()['t'] ?? 0);
+$unpublished_count = (int)($con->query("SELECT COUNT(*) as t FROM miller_prices WHERE status = 'unpublished'")->fetch_assoc()['t'] ?? 0);
+
+// Get distinct towns for filter
+$towns_result = $con->query("SELECT DISTINCT town FROM miller_prices ORDER BY town");
+$distinct_towns = [];
+while ($row = $towns_result->fetch_assoc()) {
+    $distinct_towns[] = $row['town'];
 }
 
-// Function to fetch miller prices data from the database with filters and sorting
-function getMillerPricesData($con, $limit = 10, $offset = 0, $filters = [], $sort_column = 'date_posted', $sort_order = 'DESC') {
-    $where_clauses = [];
-    $params = [];
-    $types = '';
-    
-    // Apply filters if provided
-    if (!empty($filters['country'])) {
-        $where_clauses[] = "mp.country LIKE ?";
-        $params[] = '%' . $filters['country'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['town'])) {
-        $where_clauses[] = "mp.town LIKE ?";
-        $params[] = '%' . $filters['town'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['commodity'])) {
-        $where_clauses[] = "(c.commodity_name LIKE ? OR c.variety LIKE ?)";
-        $params[] = '%' . $filters['commodity'] . '%';
-        $params[] = '%' . $filters['commodity'] . '%';
-        $types .= 'ss';
-    }
-    
-    if (!empty($filters['date'])) {
-        $where_clauses[] = "DATE(mp.date_posted) LIKE ?";
-        $params[] = '%' . $filters['date'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['status'])) {
-        $where_clauses[] = "mp.status LIKE ?";
-        $params[] = '%' . $filters['status'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['data_source'])) {
-        $where_clauses[] = "ds.data_source_name LIKE ?";
-        $params[] = '%' . $filters['data_source'] . '%';
-        $types .= 's';
-    }
-    
-    $where_sql = '';
-    if (!empty($where_clauses)) {
-        $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
-    }
-    
-    // Map sortable columns to database columns
-    $sortable_columns = [
-        'id' => 'mp.id',
-        'country' => 'mp.country',
-        'town' => 'mp.town',
-        'commodity' => 'c.commodity_name',
-        'price' => 'mp.price',
-        'price_usd' => 'mp.price_usd',
-        'day_change' => 'mp.day_change',
-        'month_change' => 'mp.month_change',
-        'date' => 'mp.date_posted',
-        'status' => 'mp.status',
-        'data_source' => 'ds.data_source_name'
-    ];
-    
-    $default_sort_column = 'date_posted';
-    $default_sort_order = 'DESC';
-    
-    $db_sort_column = isset($sortable_columns[$sort_column]) ? $sortable_columns[$sort_column] : $sortable_columns['date'];
-    $db_sort_order = in_array(strtoupper($sort_order), ['ASC', 'DESC']) ? strtoupper($sort_order) : $default_sort_order;
-    
-    $sql = "SELECT
-                mp.id,
-                mp.country,
-                mp.town,
-                c.commodity_name,
-                c.variety,
-                CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
-                mp.price,
-                mp.price_usd,
-                mp.day_change,
-                mp.month_change,
-                mp.date_posted,
-                mp.status,
-                ds.data_source_name AS data_source
-            FROM
-                miller_prices mp
-            LEFT JOIN
-                commodities c ON mp.commodity_id = c.id
-            LEFT JOIN
-                data_sources ds ON mp.data_source_id = ds.id
-            $where_sql
-            ORDER BY
-                $db_sort_column $db_sort_order
-            LIMIT $limit OFFSET $offset";
-
-    $stmt = $con->prepare($sql);
-    if (!$stmt) {
-        error_log("Error preparing statement: " . $con->error);
-        return [];
-    }
-    
-    if (!empty($params)) {
-        $stmt->bind_param($types, ...$params);
-    }
-    
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $data = [];
-    
-    if ($result) {
-        if ($result->num_rows > 0) {
-            while ($row = $result->fetch_assoc()) {
-                $data[] = $row;
-            }
-        }
-        $result->free();
-    }
-    $stmt->close();
-    
-    return $data;
+// Get distinct countries for filter
+$countries_result = $con->query("SELECT DISTINCT country FROM miller_prices ORDER BY country");
+$distinct_countries = [];
+while ($row = $countries_result->fetch_assoc()) {
+    $distinct_countries[] = $row['country'];
 }
 
-function getTotalMillerPriceRecords($con, $filters = []) {
-    $where_clauses = [];
-    $params = [];
-    $types = '';
-    
-    // Apply filters if provided
-    if (!empty($filters['country'])) {
-        $where_clauses[] = "mp.country LIKE ?";
-        $params[] = '%' . $filters['country'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['town'])) {
-        $where_clauses[] = "mp.town LIKE ?";
-        $params[] = '%' . $filters['town'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['commodity'])) {
-        $where_clauses[] = "(c.commodity_name LIKE ? OR c.variety LIKE ?)";
-        $params[] = '%' . $filters['commodity'] . '%';
-        $params[] = '%' . $filters['commodity'] . '%';
-        $types .= 'ss';
-    }
-    
-    if (!empty($filters['date'])) {
-        $where_clauses[] = "DATE(mp.date_posted) LIKE ?";
-        $params[] = '%' . $filters['date'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['status'])) {
-        $where_clauses[] = "mp.status LIKE ?";
-        $params[] = '%' . $filters['status'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['data_source'])) {
-        $where_clauses[] = "ds.data_source_name LIKE ?";
-        $params[] = '%' . $filters['data_source'] . '%';
-        $types .= 's';
-    }
-    
-    $where_sql = '';
-    if (!empty($where_clauses)) {
-        $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
-    }
-    
-    $sql = "SELECT count(*) as total 
-            FROM miller_prices mp
-            LEFT JOIN commodities c ON mp.commodity_id = c.id
-            LEFT JOIN data_sources ds ON mp.data_source_id = ds.id
-            $where_sql";
-    
-    $stmt = $con->prepare($sql);
-    if (!$stmt) {
-        error_log("Error preparing count statement: " . $con->error);
-        return 0;
-    }
-    
-    if (!empty($params)) {
-        $stmt->bind_param($types, ...$params);
-    }
-    
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $total = 0;
-    
-    if ($result) {
-        $row = $result->fetch_assoc();
-        $total = $row['total'];
-    }
-    $stmt->close();
-    
-    return $total;
+// ============================================================
+// PAGINATION + SORTING + FILTERING
+// ============================================================
+$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 20;
+if (!in_array($limit, [10, 20, 50, 100])) $limit = 20;
+
+$sort_column = $_GET['sort'] ?? 'date_posted';
+$sort_direction = (isset($_GET['dir']) && strtolower($_GET['dir']) === 'asc') ? 'ASC' : 'DESC';
+$allowed_sorts = ['id', 'country', 'town', 'commodity', 'price_usd', 'day_change', 'month_change', 'date_posted', 'status', 'data_source'];
+if (!in_array($sort_column, $allowed_sorts)) $sort_column = 'date_posted';
+
+$search_country = trim($_GET['search_country'] ?? '');
+$search_town = trim($_GET['search_town'] ?? '');
+$search_commodity = trim($_GET['search_commodity'] ?? '');
+$filter_status = trim($_GET['filter_status'] ?? '');
+
+$where = "WHERE 1=1";
+$params = [];
+$types = "";
+
+if ($search_country !== '') {
+    $where .= " AND mp.country LIKE ?";
+    $params[] = '%' . $search_country . '%';
+    $types .= "s";
+}
+if ($search_town !== '') {
+    $where .= " AND mp.town LIKE ?";
+    $params[] = '%' . $search_town . '%';
+    $types .= "s";
+}
+if ($search_commodity !== '') {
+    $where .= " AND (c.commodity_name LIKE ? OR c.variety LIKE ?)";
+    $params[] = '%' . $search_commodity . '%';
+    $params[] = '%' . $search_commodity . '%';
+    $types .= "ss";
+}
+if ($filter_status !== '') {
+    $where .= " AND mp.status = ?";
+    $params[] = $filter_status;
+    $types .= "s";
 }
 
-// Get filter values from GET parameters
-$filters = [
-    'country' => isset($_GET['filter_country']) ? trim($_GET['filter_country']) : '',
-    'town' => isset($_GET['filter_town']) ? trim($_GET['filter_town']) : '',
-    'commodity' => isset($_GET['filter_commodity']) ? trim($_GET['filter_commodity']) : '',
-    'date' => isset($_GET['filter_date']) ? trim($_GET['filter_date']) : '',
-    'status' => isset($_GET['filter_status']) ? trim($_GET['filter_status']) : '',
-    'data_source' => isset($_GET['filter_data_source']) ? trim($_GET['filter_data_source']) : ''
-];
+// Count total records
+$count_stmt = $con->prepare("SELECT COUNT(*) as total FROM miller_prices mp LEFT JOIN commodities c ON mp.commodity_id = c.id LEFT JOIN data_sources ds ON mp.data_source_id = ds.id $where");
+if (!empty($params)) $count_stmt->bind_param($types, ...$params);
+$count_stmt->execute();
+$filtered_records = (int)$count_stmt->get_result()->fetch_assoc()['total'];
+$count_stmt->close();
 
-// Get sort parameters
-$sortable_columns = ['id', 'country', 'town', 'commodity', 'price', 'price_usd', 'day_change', 'month_change', 'date', 'status', 'data_source'];
-$default_sort_column = 'date';
-$default_sort_order = 'DESC';
-
-$sort_column = isset($_GET['sort']) && in_array($_GET['sort'], $sortable_columns) ? $_GET['sort'] : $default_sort_column;
-$sort_order = isset($_GET['order']) && in_array(strtoupper($_GET['order']), ['ASC', 'DESC']) ? strtoupper($_GET['order']) : $default_sort_order;
-
-// Get total number of records with filters
-$total_records = getTotalMillerPriceRecords($con, $filters);
-
-// Set pagination parameters
-$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 10;
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$total_pages = max(1, (int)ceil($filtered_records / $limit));
+$page = isset($_GET['page']) ? max(1, min((int)$_GET['page'], $total_pages)) : 1;
 $offset = ($page - 1) * $limit;
 
-// Fetch miller prices data with filters and sorting
-$miller_prices_data = getMillerPricesData($con, $limit, $offset, $filters, $sort_column, $sort_order);
+// Map sort column to database column
+$sort_map = [
+    'id' => 'mp.id',
+    'country' => 'mp.country',
+    'town' => 'mp.town',
+    'commodity' => 'c.commodity_name',
+    'price_usd' => 'mp.price_usd',
+    'day_change' => 'mp.day_change',
+    'month_change' => 'mp.month_change',
+    'date_posted' => 'mp.date_posted',
+    'status' => 'mp.status',
+    'data_source' => 'ds.data_source_name'
+];
+$order_by = $sort_map[$sort_column] ?? 'mp.date_posted';
+$dir = $sort_direction === 'ASC' ? 'ASC' : 'DESC';
 
-// Calculate total pages
-$total_pages = ceil($total_records / $limit);
+// Fetch data
+$data_params = array_merge($params, [$limit, $offset]);
+$data_types = $types . "ii";
 
-// Function to get status display
-function getStatusDisplay($status) {
+$query = "SELECT 
+    mp.id, mp.country, mp.town, mp.commodity_id, mp.commodity_name,
+    mp.price, mp.price_usd, mp.day_change, mp.month_change,
+    mp.date_posted, mp.status, ds.data_source_name as data_source,
+    CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display
+    FROM miller_prices mp
+    LEFT JOIN commodities c ON mp.commodity_id = c.id
+    LEFT JOIN data_sources ds ON mp.data_source_id = ds.id
+    $where 
+    ORDER BY $order_by $dir
+    LIMIT ? OFFSET ?";
+
+$data_stmt = $con->prepare($query);
+$data_stmt->bind_param($data_types, ...$data_params);
+$data_stmt->execute();
+$miller_prices = $data_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$data_stmt->close();
+
+$showing_from = $filtered_records > 0 ? $offset + 1 : 0;
+$showing_to = $filtered_records > 0 ? min($offset + $limit, $filtered_records) : 0;
+
+// Get commodities and data sources for modals
+$commodities = [];
+$comm_result = $con->query("SELECT id, commodity_name, variety, CONCAT(commodity_name, IF(variety IS NOT NULL AND variety != '', CONCAT(' (', variety, ')'), '')) as display_name FROM commodities ORDER BY commodity_name");
+while ($row = $comm_result->fetch_assoc()) {
+    $commodities[] = $row;
+}
+
+$data_sources = [];
+$ds_result = $con->query("SELECT id, data_source_name FROM data_sources ORDER BY data_source_name");
+while ($row = $ds_result->fetch_assoc()) {
+    $data_sources[] = $row;
+}
+
+function getStatusBadge($status) {
     switch ($status) {
-        case 'pending':
-            return '<span class="status-dot status-pending"></span> Pending';
-        case 'published':
-            return '<span class="status-dot status-published"></span> Published';
-        case 'approved':
-            return '<span class="status-dot status-approved"></span> Approved';
-        case 'unpublished':
-            return '<span class="status-dot status-unpublished"></span> Unpublished';
-        default:
-            return '<span class="status-dot"></span> Unknown';
+        case 'pending': return '<span class="status-badge status-pending">Pending</span>';
+        case 'approved': return '<span class="status-badge status-approved">Approved</span>';
+        case 'published': return '<span class="status-badge status-published">Published</span>';
+        case 'unpublished': return '<span class="status-badge status-unpublished">Unpublished</span>';
+        default: return '<span class="status-badge">Unknown</span>';
     }
+}
+
+function getChangeClass($change) {
+    if ($change === null) return 'flat';
+    return $change >= 0 ? 'up' : 'down';
+}
+
+function getChangeIcon($change) {
+    if ($change === null) return '–';
+    return $change >= 0 ? '▲' : '▼';
 }
 ?>
 
 <style>
-    .container {
-        background: #fff;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        margin: 20px;
-    }
-    h2 {
-        margin: 0 0 5px;
-    }
-    p.subtitle {
-        color: #777;
-        font-size: 14px;
-        margin: 0 0 20px;
-    }
-    
-    /* Button group styling */
-    .btn-group {
-        margin-bottom: 15px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-    }
-    
-    .btn-add-new {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        padding: 10px 20px;
-        font-size: 16px;
-        border: none;
-        border-radius: 5px;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        height: 52px;
-        min-width: 140px;
-        text-align: center;
-        transition: background-color 0.3s;
-    }
-    
-    .btn-add-new:hover {
-        background-color: #a52a2a;
-        color: white;
-        text-decoration: none;
-    }
-    
-    .btn-delete, .btn-export, .btn-import, .btn-bulk-export, .btn-clear-selections,
-    .btn-approve, .btn-publish, .btn-unpublish, .btn-clear-filters {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-        padding: 8px 16px;
-        border-radius: 5px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        height: 40px;
-        font-size: 14px;
-        transition: all 0.3s;
-    }
-    
-    .btn-delete:hover, .btn-export:hover, .btn-import:hover, 
-    .btn-bulk-export:hover, .btn-clear-selections:hover,
-    .btn-clear-filters:hover {
-        background-color: #f8f9fa;
-        border-color: #ccc;
-    }
-    
-    .btn-clear-selections {
-        background-color: #ffc107;
-        color: black;
-        border-color: #ffc107;
-    }
-    
-    .btn-clear-selections:hover {
-        background-color: #e0a800;
-        border-color: #e0a800;
-    }
-    
-    .btn-approve {
-        background-color: #28a745;
-        color: white;
-        border: none;
-    }
-    
-    .btn-approve:hover {
-        background-color: #218838;
-    }
-    
-    .btn-unpublish {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        border: none;
-    }
-    
-    .btn-unpublish:hover {
-        background-color: #a52a2a;
-    }
-    
-    .btn-publish {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        border: none;
-    }
-    
-    .btn-publish:hover {
-        background-color: #a52a2a;
-    }
-    
-    .btn-clear-filters {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-    }
-    
-    .btn-clear-filters:hover {
-        background-color: #f8f9fa;
-        border-color: #ccc;
-    }
-    
-    /* Dropdown styles */
-    .dropdown {
-        position: relative;
-        display: inline-block;
-    }
-    
-    .dropdown-menu {
-        display: none;
-        position: absolute;
-        background-color: white;
-        min-width: 200px;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-        z-index: 1000;
-        border-radius: 4px;
-        padding: 5px 0;
-        border: 1px solid #ddd;
-    }
-    
-    .dropdown-menu.show {
-        display: block;
-    }
-    
-    .dropdown-item {
-        padding: 8px 16px;
-        text-decoration: none;
-        display: block;
-        color: #333;
-        cursor: pointer;
-        transition: background-color 0.2s;
-    }
-    
-    .dropdown-item:hover {
-        background-color: #f8f9fa;
-    }
-    
-    .dropdown-divider {
-        height: 1px;
-        margin: 5px 0;
-        background-color: #e5e7eb;
-    }
-    
-    /* Table styles */
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 14px;
-        margin-top: 20px;
-    }
-    
-    table th, table td {
-        padding: 12px;
-        border-bottom: 1px solid #eee;
-        text-align: left;
-        vertical-align: top;
-    }
-    
-    table th {
-        background-color: #f1f1f1;
-        font-weight: 600;
-    }
-    
-    table tr:nth-child(even) {
-        background-color: #fafafa;
-    }
-    
-    table tr:hover {
-        background-color: #f5f5f5;
-    }
-    
-    /* Status dot styles */
-    .status-dot {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        margin-right: 6px;
-    }
-    
-    .status-pending {
-        background-color: orange;
-    }
-    
-    .status-published {
-        background-color: blue;
-    }
-    
-    .status-approved {
-        background-color: green;
-    }
-    
-    .status-unpublished {
-        background-color: grey;
-    }
-    
-    /* Change percentage styles */
-    .positive-change {
-        color: #28a745;
-        font-weight: 600;
-    }
-    
-    .negative-change {
-        color: #dc3545;
-        font-weight: 600;
-    }
-    
-    /* Pagination styles */
-    .pagination {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 20px;
-        font-size: 14px;
-        align-items: center;
-        flex-wrap: wrap;
-    }
-    
-    .pagination .pages {
-        display: flex;
-        gap: 5px;
-    }
-    
-    .pagination .page {
-        padding: 6px 10px;
-        border-radius: 6px;
-        background-color: #eee;
-        cursor: pointer;
-        text-decoration: none;
-        color: #333;
-        transition: background-color 0.3s;
-    }
-    
-    .pagination .page:hover {
-        background-color: #ddd;
-    }
-    
-    .pagination .current {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-    }
-    
-    .pagination .current:hover {
-        background-color: #a52a2a;
-    }
-    
-    /* Selection styles */
-    .selected-count {
-        display: inline-block;
-        background-color: rgba(180, 80, 50, 0.1);
-        color: rgba(180, 80, 50, 1);
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.85rem;
-        margin-left: 5px;
-        font-weight: bold;
-    }
-    
-    /* Sorting styles */
-    .sortable {
-        cursor: pointer;
-        position: relative;
-        user-select: none;
-        padding-right: 20px !important;
-    }
-    
-    .sortable:hover {
-        background-color: #e8e8e8;
-    }
-    
-    .sort-icon {
-        display: inline-block;
-        margin-left: 5px;
-        font-size: 0.8em;
-        opacity: 0.7;
-        position: absolute;
-        right: 8px;
-        top: 50%;
-        transform: translateY(-50%);
-    }
-    
-    .sort-asc .sort-icon::after {
-        content: "↑";
-    }
-    
-    .sort-desc .sort-icon::after {
-        content: "↓";
-    }
-    
-    .sortable.sort-asc,
-    .sortable.sort-desc {
-        background-color: #e9ecef;
-        font-weight: bold;
-    }
-    
-    /* Filter styles */
-    .filter-row th {
-        background-color: white;
-        padding: 8px;
-    }
-    
-    .filter-input {
-        width: 100%;
-        border: 1px solid #e5e7eb;
-        background: white;
-        padding: 6px 8px;
-        border-radius: 4px;
-        font-size: 13px;
-        transition: border-color 0.3s;
-    }
-    
-    .filter-input:focus {
-        outline: none;
-        border-color: rgba(180, 80, 50, 1);
-        box-shadow: 0 0 0 2px rgba(180, 80, 50, 0.1);
-    }
-    
-    /* Stats styles */
-    .stats-section {
-        text-align: left;
-        margin-left: 0;
-        margin-bottom: 20px;
-    }
-    
-    .stats-container {
-        display: flex;
-        gap: 15px;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        width: 100%;
-        max-width: 100%;
-        margin: 0 auto 20px auto;
-    }
-    
-    .stats-container > div {
-        flex: 1;
-        min-width: 200px;
-        background: white;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        text-align: center;
-        min-height: 120px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        transition: transform 0.3s;
-    }
-    
-    .stats-container > div:hover {
-        transform: translateY(-5px);
-    }
-    
-    .stats-icon {
-        width: 50px;
-        height: 50px;
-        margin-bottom: 10px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 24px;
-    }
-    
-    .total-icon {
-        background-color: #9b59b6;
-        color: white;
-    }
-    
-    .pending-icon {
-        background-color: #f39c12;
-        color: white;
-    }
-    
-    .published-icon {
-        background-color: #27ae60;
-        color: white;
-    }
-    
-    .approved-icon {
-        background-color: #3498db;
-        color: white;
-    }
-    
-    .stats-title {
-        font-size: 16px;
-        font-weight: 600;
-        color: #2c3e50;
-        margin: 8px 0 5px 0;
-    }
-    
-    .stats-number {
-        font-size: 28px;
-        font-weight: 700;
-        color: #34495e;
-    }
-    
-    /* Alert styles */
-    .alert {
-        padding: 12px 20px;
-        margin-bottom: 20px;
-        border: 1px solid transparent;
-        border-radius: 4px;
-    }
-    
-    .alert-success {
-        color: #155724;
-        background-color: #d4edda;
-        border-color: #c3e6cb;
-    }
-    
-    .alert-danger {
-        color: #721c24;
-        background-color: #f8d7da;
-        border-color: #f5c6cb;
-    }
-    
-    .alert-warning {
-        color: #856404;
-        background-color: #fff3cd;
-        border-color: #ffeaa7;
-    }
-    
-    /* Form styles */
-    .form-control {
-        margin-bottom: 15px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        padding: 8px;
-        width: 100%;
-    }
-    
-    .form-control:focus {
-        outline: none;
-        border-color: rgba(180, 80, 50, 1);
-        box-shadow: 0 0 5px rgba(180, 80, 50, 0.5);
-    }
-    
-    .form-check {
-        display: flex;
-        align-items: center;
-        margin-bottom: 15px;
-    }
-    
-    .form-check-input {
-        margin-right: 10px;
-    }
-    
-    /* Modal styles */
-    .modal {
-        display: none;
-        position: fixed;
-        z-index: 1050;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        overflow: auto;
-        background-color: rgba(0,0,0,0.4);
-    }
-    
-    .modal.show {
-        display: block;
-    }
-    
-    .modal-dialog {
-        margin: 5% auto;
-        max-width: 800px;
-    }
-    
-    .modal-content {
-        background-color: #fefefe;
-        padding: 20px;
-        border: 1px solid #888;
-        border-radius: 8px;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        max-height: 90vh;
-        overflow-y: auto;
-    }
-    
-    .modal-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-bottom: 15px;
-        border-bottom: 1px solid #dee2e6;
-    }
-    
-    .modal-title {
-        margin: 0;
-        font-size: 1.25rem;
-        color: #333;
-    }
-    
-    .close-modal {
-        color: #aaa;
-        font-size: 28px;
-        font-weight: bold;
-        cursor: pointer;
-        background: none;
-        border: none;
-        transition: color 0.3s;
-    }
-    
-    .close-modal:hover {
-        color: #000;
-    }
-    
-    /* Import instructions */
-    .import-instructions {
-        background-color: #f8f9fa;
-        border-left: 4px solid rgba(180, 80, 50, 1);
-        padding: 15px;
-        margin-bottom: 20px;
-        max-height: 300px;
-        overflow-y: auto;
-        border-radius: 5px;
-    }
-    
-    .import-instructions h5 {
-        color: rgba(180, 80, 50, 1);
-        margin-top: 0;
-        position: sticky;
-        top: 0;
-        background-color: #f8f9fa;
-        padding-bottom: 10px;
-        border-bottom: 1px solid #dee2e6;
-        margin-bottom: 15px;
-    }
-    
-    .import-instructions h6 {
-        color: rgba(180, 80, 50, 0.8);
-        margin-top: 15px;
-    }
-    
-    .download-template {
-        display: inline-block;
-        margin-top: 10px;
-        color: rgba(180, 80, 50, 1);
-        text-decoration: none;
-        font-weight: 600;
-    }
-    
-    .download-template:hover {
-        text-decoration: underline;
-    }
-    
-    /* Scrollbar styling */
-    .import-instructions::-webkit-scrollbar {
-        width: 6px;
-    }
-    
-    .import-instructions::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 3px;
-    }
-    
-    .import-instructions::-webkit-scrollbar-thumb {
-        background: rgba(180, 80, 50, 0.5);
-        border-radius: 3px;
-    }
-    
-    .import-instructions::-webkit-scrollbar-thumb:hover {
-        background: rgba(180, 80, 50, 0.7);
-    }
-    
-    /* Action buttons in table */
-    .btn-group-sm {
-        display: flex;
-        gap: 5px;
-    }
-    
-    .btn-sm {
-        padding: 0.25rem 0.5rem;
-        font-size: 0.875rem;
-        border-radius: 0.2rem;
-    }
-    
-    .btn-primary {
-        background-color: rgba(180, 80, 50, 1);
-        border-color: rgba(180, 80, 50, 1);
-        color: white;
-    }
-    
-    .btn-primary:hover {
-        background-color: #a52a2a;
-        border-color: #a52a2a;
-    }
-    
-    /* Utility classes */
-    .d-flex {
-        display: flex;
-    }
-    
-    .justify-content-between {
-        justify-content: space-between;
-    }
-    
-    .align-items-center {
-        align-items: center;
-    }
-    
-    .text-muted {
-        color: #6c757d !important;
-    }
-    
-    .ms-2 {
-        margin-left: 0.5rem !important;
-    }
-    
-    .mb-0 {
-        margin-bottom: 0 !important;
-    }
-    
-    .form-select {
-        display: inline-block;
-        width: auto;
-        padding: 0.375rem 2.25rem 0.375rem 0.75rem;
-        font-size: 1rem;
-        font-weight: 400;
-        line-height: 1.5;
-        color: #212529;
-        background-color: #fff;
-        background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
-        background-repeat: no-repeat;
-        background-position: right 0.75rem center;
-        background-size: 16px 12px;
-        border: 1px solid #ced4da;
-        border-radius: 0.375rem;
-        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
-    }
-    
-    .form-select:focus {
-        border-color: rgba(180, 80, 50, 0.5);
-        outline: 0;
-        box-shadow: 0 0 0 0.25rem rgba(180, 80, 50, 0.25);
-    }
-    
-    /* Page item styles */
-    .page-item {
-        display: inline-block;
-    }
-    
-    .page-link {
-        position: relative;
-        display: block;
-        padding: 0.375rem 0.75rem;
-        margin-left: -1px;
-        line-height: 1.25;
-        color: rgba(180, 80, 50, 1);
-        background-color: #fff;
-        border: 1px solid #dee2e6;
-        text-decoration: none;
-        transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
-    }
-    
-    .page-link:hover {
-        z-index: 2;
-        color: rgba(180, 80, 50, 0.8);
-        background-color: #e9ecef;
-        border-color: #dee2e6;
-    }
-    
-    .page-item.active .page-link {
-        z-index: 3;
-        color: #fff;
-        background-color: rgba(180, 80, 50, 1);
-        border-color: rgba(180, 80, 50, 1);
-    }
-    
-    .page-item.disabled .page-link {
-        color: #6c757d;
-        pointer-events: none;
-        background-color: #fff;
-        border-color: #dee2e6;
-    }
-    
-    /* Responsive adjustments */
-    @media (max-width: 768px) {
-        .btn-group {
-            justify-content: center;
-        }
-        
-        .stats-container {
-            flex-direction: column;
-        }
-        
-        .stats-container > div {
-            width: 100%;
-            min-width: auto;
-        }
-        
-        table {
-            font-size: 12px;
-        }
-        
-        table th, table td {
-            padding: 8px;
-        }
-        
-        .pagination {
-            flex-direction: column;
-            gap: 10px;
-        }
-    }
+.auth-bg-gradient{background:radial-gradient(circle at top left,rgba(0,69,13,.03),transparent),radial-gradient(circle at bottom right,rgba(128,0,0,.03),transparent)}
+.header-accent-gradient{background:linear-gradient(90deg,#00450d 0%,#800000 50%,#00450d 100%)}
+.table-row-hover:hover{background-color:#fefaf5;transition:all .2s ease}
+.stat-card{transition:all .2s ease;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.stat-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.search-input:focus{border-color:#800000;outline:none}
+.action-btn{padding:.2rem .4rem;border-radius:.375rem;font-size:.7rem;font-weight:500;transition:all .2s;cursor:pointer;border:none;display:inline-flex;align-items:center}
+.pagination-btn{min-width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:.375rem;font-size:.75rem;transition:all .2s ease;cursor:pointer;border:1px solid #e5e7eb;background:white;color:#374151}
+.pagination-btn:hover:not(:disabled):not(.active-page){background-color:#fef3e7;border-color:#800000;color:#800000}
+.pagination-btn.active-page{background-color:#800000;border-color:#800000;color:white;font-weight:600}
+.pagination-btn:disabled{opacity:.35;cursor:not-allowed}
+.page-size-select{font-size:.75rem;padding:.25rem .5rem;border-radius:.375rem;border:1px solid #e5e7eb;background:white;cursor:pointer}
+.sortable{cursor:pointer;user-select:none}
+.sortable:hover{color:#800000}
+.sort-icon{font-size:.7rem;margin-left:.2rem;vertical-align:middle}
+.modal-gradient-header{background:linear-gradient(135deg,#800000 0%,#00450d 100%)}
+.material-symbols-outlined{font-family:'Material Symbols Outlined'!important;font-style:normal;font-weight:normal;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;-webkit-font-feature-settings:'liga';font-feature-settings:'liga';-webkit-font-smoothing:antialiased}
+
+.status-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:.7rem;font-weight:600}
+.status-badge::before{content:'';width:7px;height:7px;border-radius:50%;display:inline-block}
+.status-pending{background:#fef3c7;color:#92400e}
+.status-pending::before{background:#d97706}
+.status-approved{background:#e0f2fe;color:#075985}
+.status-approved::before{background:#0891b2}
+.status-published{background:#dcfce7;color:#166534}
+.status-published::before{background:#16a34a}
+.status-unpublished{background:#fee2e2;color:#991b1b}
+.status-unpublished::before{background:#dc2626}
+
+.change-indicator{display:inline-flex;align-items:center;gap:2px;font-size:.7rem;font-weight:600;padding:2px 6px;border-radius:4px}
+.change-up{background:#dcfce7;color:#16a34a}
+.change-down{background:#fee2e2;color:#dc2626}
+.change-flat{background:#f3f4f6;color:#6b7280}
+
+.price-value{font-family:monospace;font-weight:700;font-size:.85rem}
 </style>
 
-<div class="stats-section">
-    <div class="text-wrapper-8"><h3>Miller Prices Management</h3></div>
-    <p class="p">Manage everything related to Miller Prices data</p>
+<div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
+<div class="max-w-7xl mx-auto">
 
-    <?php
-    // Fetch counts for summary boxes
-    $total_miller_query = "SELECT COUNT(*) AS total FROM miller_prices";
-    $total_miller_result = $con->query($total_miller_query);
-    $total_miller = 0;
-    if ($total_miller_result) {
-        $row = $total_miller_result->fetch_assoc();
-        $total_miller = $row['total'];
-    }
+    <!-- Page Header -->
+    <div class="mb-6">
+        <div class="flex justify-between items-center flex-wrap gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-maroon">Miller Prices Management</h1>
+                <p class="text-gray-600 text-sm mt-1">Manage miller price data across towns and commodities</p>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+                <a href="?export_csv=1&search_country=<?= urlencode($search_country) ?>&search_town=<?= urlencode($search_town) ?>&search_commodity=<?= urlencode($search_commodity) ?>&filter_status=<?= urlencode($filter_status) ?>" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">download</span>Export CSV
+                </a>
+                <button onclick="openImportModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">upload_file</span>Import CSV
+                </button>
+                <button onclick="openAddModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">add_circle</span>Add Price
+                </button>
+            </div>
+        </div>
+        <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
+    </div>
 
-    $pending_query = "SELECT COUNT(*) AS total FROM miller_prices WHERE status = 'pending'";
-    $pending_result = $con->query($pending_query);
-    $pending_count = 0;
-    if ($pending_result) {
-        $row = $pending_result->fetch_assoc();
-        $pending_count = $row['total'];
-    }
-
-    $published_query = "SELECT COUNT(*) AS total FROM miller_prices WHERE status = 'published'";
-    $published_result = $con->query($published_query);
-    $published_count = 0;
-    if ($published_result) {
-        $row = $published_result->fetch_assoc();
-        $published_count = $row['total'];
-    }
-
-    $approved_query = "SELECT COUNT(*) AS total FROM miller_prices WHERE status = 'approved'";
-    $approved_result = $con->query($approved_query);
-    $approved_count = 0;
-    if ($approved_result) {
-        $row = $approved_result->fetch_assoc();
-        $approved_count = $row['total'];
-    }
+    <!-- Alert Messages -->
+    <?php if (isset($_SESSION['import_message'])): ?>
+    <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $_SESSION['import_status'] == 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
+        <span class="material-symbols-outlined text-base"><?= $_SESSION['import_status'] == 'success' ? 'check_circle' : 'error' ?></span>
+        <span class="text-sm font-medium"><?= htmlspecialchars($_SESSION['import_message']) ?></span>
+    </div>
+    <?php 
+        unset($_SESSION['import_message']); 
+        unset($_SESSION['import_status']);
+    endif; 
     ?>
 
-    <div class="stats-container">
-        <div class="overlap-6">
-            <div class="stats-icon total-icon">
-                <i class="fas fa-money-bill-wave"></i>
+    <!-- Stat Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Total Prices</p><p class="text-xl font-bold text-gray-800"><?= number_format($total_prices) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-maroon/40">attach_money</span>
             </div>
-            <div class="stats-title">Total Prices</div>
-            <div class="stats-number"><?php echo $total_miller; ?></div>
         </div>
-        
-        <div class="overlap-6">
-            <div class="stats-icon pending-icon">
-                <i class="fas fa-clock"></i>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-yellow-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Pending</p><p class="text-xl font-bold text-yellow-600"><?= number_format($pending_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-yellow-400/60">pending</span>
             </div>
-            <div class="stats-title">Pending</div>
-            <div class="stats-number"><?php echo $pending_count; ?></div>
         </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon approved-icon">
-                <i class="fas fa-check-circle"></i>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-blue-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Approved</p><p class="text-xl font-bold text-blue-600"><?= number_format($approved_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-blue-400/50">check_circle</span>
             </div>
-            <div class="stats-title">Approved</div>
-            <div class="stats-number"><?php echo $approved_count; ?></div>
         </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon published-icon">
-                <i class="fas fa-upload"></i>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Published</p><p class="text-xl font-bold text-green-600"><?= number_format($published_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-green-500/50">public</span>
             </div>
-            <div class="stats-title">Published</div>
-            <div class="stats-number"><?php echo $published_count; ?></div>
+        </div>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-red-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Unpublished</p><p class="text-xl font-bold text-red-600"><?= number_format($unpublished_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-red-400/50">visibility_off</span>
+            </div>
         </div>
     </div>
-</div>
 
-<?php if (isset($import_message)): ?>
-    <div class="alert alert-<?= $import_status ?>">
-        <?= htmlspecialchars($import_message) ?>
-    </div>
-<?php endif; ?>
-
-<div class="container">
-    <div class="btn-group">
-        <a href="../data/add_miller_prices.php" class="btn btn-add-new">
-            <i class="fas fa-plus" style="margin-right: 5px;"></i>
-            Add New
-        </a>
-
-        <button class="btn btn-import" onclick="openImportModal()">
-            <i class="fas fa-upload" style="margin-right: 5px;"></i>
-            Import
-        </button>
-
-        <button class="btn btn-delete" onclick="deleteSelected()">
-            <i class="fas fa-trash" style="margin-right: 5px;"></i>
-            Delete
-            <?php if (count($_SESSION['selected_miller_prices']) > 0): ?>
-                <span class="selected-count"><?php echo count($_SESSION['selected_miller_prices']); ?></span>
-            <?php endif; ?>
-        </button>
-
-        <button class="btn btn-clear-selections" onclick="clearAllSelections()">
-            <i class="fas fa-times-circle" style="margin-right: 5px;"></i>
-            Clear Selections
-        </button>
-
-        <div class="dropdown">
-            <button class="btn btn-export dropdown-toggle" type="button" onclick="toggleExportDropdown()">
-                <i class="fas fa-file-export" style="margin-right: 5px;"></i>
-                Export
-            </button>
-            <div class="dropdown-menu" id="exportDropdown">
-                <a class="dropdown-item" href="#" onclick="exportSelected('excel')">
-                    <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export Selected (Excel)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportSelected('csv')">
-                    <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export Selected (CSV)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                    <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export Selected (PDF)
-                </a>
-                <div class="dropdown-divider"></div>
-                <a class="dropdown-item" href="#" onclick="exportAll('excel')">
-                    <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export All (Excel)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportAll('csv')">
-                    <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export All (CSV)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportAll('pdf')">
-                    <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export All (PDF)
-                </a>
-                <div class="dropdown-divider"></div>
-                <a class="dropdown-item" href="#" onclick="exportAllWithFilters('excel')">
-                    <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (Excel)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportAllWithFilters('csv')">
-                    <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (CSV)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportAllWithFilters('pdf')">
-                    <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (PDF)
-                </a>
+    <!-- Search & bulk actions -->
+    <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
+        <div class="flex flex-wrap gap-3 items-center justify-between">
+            <div class="flex-1 min-w-[130px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">public</span>
+                    <select id="searchCountry" class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                        <option value="">All Countries</option>
+                        <?php foreach ($distinct_countries as $country): ?>
+                            <option value="<?= htmlspecialchars($country) ?>" <?= $search_country == $country ? 'selected' : '' ?>><?= htmlspecialchars($country) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="flex-1 min-w-[130px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">location_city</span>
+                    <select id="searchTown" class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                        <option value="">All Towns</option>
+                        <?php foreach ($distinct_towns as $town): ?>
+                            <option value="<?= htmlspecialchars($town) ?>" <?= $search_town == $town ? 'selected' : '' ?>><?= htmlspecialchars($town) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="flex-1 min-w-[150px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">eco</span>
+                    <input type="text" id="searchCommodity" placeholder="Search commodity..."
+                        class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                        value="<?= htmlspecialchars($search_commodity) ?>">
+                </div>
+            </div>
+            <div class="w-32">
+                <select id="filterStatus" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                    <option value="">All Status</option>
+                    <option value="pending" <?= $filter_status == 'pending' ? 'selected' : '' ?>>Pending</option>
+                    <option value="approved" <?= $filter_status == 'approved' ? 'selected' : '' ?>>Approved</option>
+                    <option value="published" <?= $filter_status == 'published' ? 'selected' : '' ?>>Published</option>
+                    <option value="unpublished" <?= $filter_status == 'unpublished' ? 'selected' : '' ?>>Unpublished</option>
+                </select>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+                <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">filter_list</span>Filter
+                </button>
+                <button id="clearSelectionsBtn" class="px-3 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition-all inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">clear</span>Clear Selected
+                </button>
+                <button id="bulkDeleteBtn" disabled class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span id="selectedCount">0</span>)
+                </button>
             </div>
         </div>
         
-        <button class="btn btn-clear-filters" onclick="clearAllFilters()">
-            <i class="fas fa-filter" style="margin-right: 5px;"></i>
-            Clear Filters
-        </button>
-
-        <button class="btn btn-approve" onclick="approveSelected()">
-            <i class="fas fa-check-circle" style="margin-right: 5px;"></i>
-            Approve
-        </button>
-
-        <button class="btn btn-unpublish" onclick="unpublishSelected()">
-            <i class="fas fa-ban" style="margin-right: 5px;"></i>
-            Unpublish
-        </button>
-
-        <button class="btn btn-publish" onclick="publishSelected()">
-            <i class="fas fa-upload" style="margin-right: 5px;"></i>
-            Publish
-        </button>
-    </div>
-
-    <table>
-        <thead>
-            <tr style="background-color: #d3d3d3 !important; color: black !important;">
-                <th><input type="checkbox" id="selectAll"></th>
-                <th class="sortable <?php echo getSortClass('id'); ?>" onclick="sortTable('id')">
-                    ID
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('country'); ?>" onclick="sortTable('country')">
-                    Country
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('town'); ?>" onclick="sortTable('town')">
-                    Town
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('commodity'); ?>" onclick="sortTable('commodity')">
-                    Commodity
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('price_usd'); ?>" onclick="sortTable('price_usd')">
-                    Price (USD)
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('day_change'); ?>" onclick="sortTable('day_change')">
-                    Day Change %
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('month_change'); ?>" onclick="sortTable('month_change')">
-                    Month Change %
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('date'); ?>" onclick="sortTable('date')">
-                    Date
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('status'); ?>" onclick="sortTable('status')">
-                    Status
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('data_source'); ?>" onclick="sortTable('data_source')">
-                    Data Source
-                    <span class="sort-icon"></span>
-                </th>
-                <th>Actions</th>
-            </tr>
-            <tr class="filter-row" style="background-color: white !important; color: black !important;">
-                <th></th>
-                <th>
-                    <input type="text" class="filter-input" id="filterId" placeholder="Filter ID"
-                           value="<?php echo isset($_GET['filter_id']) ? htmlspecialchars($_GET['filter_id']) : ''; ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterCountry" 
-                           placeholder="Filter country" 
-                           value="<?php echo htmlspecialchars($filters['country']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterTown" 
-                           placeholder="Filter town" 
-                           value="<?php echo htmlspecialchars($filters['town']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterCommodity" 
-                           placeholder="Filter commodity" 
-                           value="<?php echo htmlspecialchars($filters['commodity']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterPrice" placeholder="Filter price"
-                           value="<?php echo isset($_GET['filter_price']) ? htmlspecialchars($_GET['filter_price']) : ''; ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th></th>
-                <th></th>
-                <th>
-                    <input type="text" class="filter-input" id="filterDate" 
-                           placeholder="YYYY-MM-DD" 
-                           value="<?php echo htmlspecialchars($filters['date']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterStatus" 
-                           placeholder="Filter status" 
-                           value="<?php echo htmlspecialchars($filters['status']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterDataSource" 
-                           placeholder="Filter data source" 
-                           value="<?php echo htmlspecialchars($filters['data_source']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody id="millerTable">
-            <?php foreach ($miller_prices_data as $price): ?>
-                <tr>
-                    <td>
-                        <input type="checkbox" 
-                               class="row-checkbox" 
-                               data-id="<?php echo $price['id']; ?>"
-                               <?php echo in_array($price['id'], $_SESSION['selected_miller_prices']) ? 'checked' : ''; ?>
-                               onchange="updateSelection(this, <?php echo $price['id']; ?>)">
-                    </td>
-                    <td><?php echo htmlspecialchars($price['id']); ?></td>
-                    <td><?php echo htmlspecialchars($price['country']); ?></td>
-                    <td><?php echo htmlspecialchars($price['town']); ?></td>
-                    <td><?php echo htmlspecialchars($price['commodity_display']); ?></td>
-                    <td><?php echo htmlspecialchars($price['price_usd']); ?></td>
-                    <td class="<?php echo ($price['day_change'] > 0) ? 'positive-change' : 'negative-change'; ?>">
-                        <?php echo ($price['day_change'] !== null) ? htmlspecialchars($price['day_change']) . '%' : 'N/A'; ?>
-                    </td>
-                    <td class="<?php echo ($price['month_change'] > 0) ? 'positive-change' : 'negative-change'; ?>">
-                        <?php echo ($price['month_change'] !== null) ? htmlspecialchars($price['month_change']) . '%' : 'N/A'; ?>
-                    </td>
-                    <td><?php echo date('Y-m-d', strtotime($price['date_posted'])); ?></td>
-                    <td><?php echo getStatusDisplay($price['status']); ?></td>
-                    <td><?php echo htmlspecialchars($price['data_source']); ?></td>
-                    <td>
-                        <div class="btn-group" role="group">
-                            <a href="../data/edit_miller_price.php?id=<?= $price['id'] ?>" class="btn btn-sm btn-primary">
-                                <i class="fas fa-edit"></i>
-                            </a>
-                        </div>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-        </tbody>
-    </table>
-
-    <div class="d-flex justify-content-between align-items-center">
-        <div>
-            Displaying <?php echo ($offset + 1) . ' to ' . min($offset + $limit, $total_records) . ' of ' . $total_records; ?> items
-            <?php if (count($_SESSION['selected_miller_prices']) > 0): ?>
-                <span class="selected-count"><?php echo count($_SESSION['selected_miller_prices']); ?> selected across all pages</span>
-            <?php endif; ?>
-            <?php if (!empty($sort_column)): ?>
-                <span class="text-muted ms-2">Sorted by: <?php echo ucfirst(str_replace('_', ' ', $sort_column)); ?> (<?php echo $sort_order; ?>)</span>
-            <?php endif; ?>
-        </div>
-        <div>
-            <label for="itemsPerPage">Show:</label>
-            <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                <option value="10" <?php echo $limit == 10 ? 'selected' : ''; ?>>10</option>
-                <option value="25" <?php echo $limit == 25 ? 'selected' : ''; ?>>25</option>
-                <option value="50" <?php echo $limit == 50 ? 'selected' : ''; ?>>50</option>
-                <option value="100" <?php echo $limit == 100 ? 'selected' : ''; ?>>100</option>
+        <!-- Bulk Status Update Row -->
+        <div class="flex flex-wrap gap-3 items-center mt-3 pt-3 border-t border-gray-100">
+            <span class="text-xs text-gray-500">Bulk Actions:</span>
+            <select id="bulkStatusSelect" class="px-2 py-1 text-sm border border-gray-200 rounded-lg">
+                <option value="">Change Status...</option>
+                <option value="approved">Approve Selected</option>
+                <option value="published">Publish Selected</option>
+                <option value="unpublished">Unpublish Selected</option>
+                <option value="pending">Mark as Pending</option>
             </select>
+            <button id="bulkStatusBtn" disabled class="px-3 py-1 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
+                <span class="material-symbols-outlined text-base">update</span>Apply
+            </button>
         </div>
-        <nav>
-            <ul class="pagination mb-0">
-                <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $limit, $sort_column, $sort_order); ?>">Prev</a>
-                </li>
-                <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                    <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
-                        <a class="page-link" href="<?php echo getPageUrl($i, $limit, $sort_column, $sort_order); ?>"><?php echo $i; ?></a>
-                    </li>
-                <?php endfor; ?>
-                <li class="page-item <?php echo ($page >= $total_pages) ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="<?php echo ($page >= $total_pages) ? '#' : getPageUrl($page + 1, $limit, $sort_column, $sort_order); ?>">Next</a>
-                </li>
-            </ul>
-        </nav>
+    </div>
+
+    <!-- Main Table -->
+    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                        <th class="w-8 px-3 py-2 text-left">
+                            <input type="checkbox" id="selectAllCheckbox" class="rounded border-gray-300">
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="id">ID<?php if($sort_column=='id') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="country">Country<?php if($sort_column=='country') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="town">Town<?php if($sort_column=='town') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="commodity">Commodity<?php if($sort_column=='commodity') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="price_usd">Price (USD)<?php if($sort_column=='price_usd') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Day Δ</th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Month Δ</th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="date_posted">Date<?php if($sort_column=='date_posted') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="status">Status<?php if($sort_column=='status') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="data_source">Data Source<?php if($sort_column=='data_source') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-20">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                <?php if (empty($miller_prices)): ?>
+                    <tr>
+                        <td colspan="12" class="px-3 py-8 text-center text-gray-400">
+                            <span class="material-symbols-outlined text-5xl text-gray-300 block">agriculture</span>
+                            <p class="text-sm mt-1">No miller prices found</p>
+                        </td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($miller_prices as $price): 
+                        $day_change = $price['day_change'] !== null ? round($price['day_change'], 2) . '%' : 'N/A';
+                        $month_change = $price['month_change'] !== null ? round($price['month_change'], 2) . '%' : 'N/A';
+                        $day_class = getChangeClass($price['day_change']);
+                        $month_class = getChangeClass($price['month_change']);
+                        $day_icon = getChangeIcon($price['day_change']);
+                        $month_icon = getChangeIcon($price['month_change']);
+                    ?>
+                    <tr class="table-row-hover" data-id="<?= $price['id'] ?>">
+                        <td class="px-3 py-2">
+                            <input type="checkbox" class="row-checkbox rounded border-gray-300" value="<?= $price['id'] ?>" onchange="onCheckboxChange()">
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-500"><?= $price['id'] ?></td>
+                        <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($price['country']) ?></td>
+                        <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($price['town']) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-700"><?= htmlspecialchars($price['commodity_display']) ?></td>
+                        <td class="px-3 py-2 text-xs font-mono font-semibold text-gray-700">$<?= number_format($price['price_usd'], 2) ?></td>
+                        <td class="px-3 py-2"><span class="change-indicator change-<?= $day_class ?>"><?= $day_icon ?> <?= $day_change ?></span></td>
+                        <td class="px-3 py-2"><span class="change-indicator change-<?= $month_class ?>"><?= $month_icon ?> <?= $month_change ?></span></td>
+                        <td class="px-3 py-2 text-xs text-gray-600"><?= date('M d, Y', strtotime($price['date_posted'])) ?></td>
+                        <td class="px-3 py-2"><?= getStatusBadge($price['status']) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-500"><?= htmlspecialchars($price['data_source']) ?></td>
+                        <td class="px-3 py-2">
+                            <div class="flex items-center justify-center gap-1">
+                                <button onclick="editMillerPrice(<?= $price['id'] ?>)" class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200" title="Edit">
+                                    <span class="material-symbols-outlined text-sm">edit</span>
+                                </button>
+                                <button onclick="deleteSingle(<?= $price['id'] ?>, '<?= htmlspecialchars(addslashes($price['town'])) ?> - <?= htmlspecialchars(addslashes($price['commodity_display'])) ?>')" class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete">
+                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="border-t border-gray-200 px-4 py-3 bg-white">
+            <div class="flex flex-wrap justify-between items-center gap-3">
+                <div class="text-xs text-gray-500">
+                    <?php if ($filtered_records === 0): ?>
+                        No prices found
+                    <?php else: ?>
+                        Showing <strong><?= $showing_from ?></strong> – <strong><?= $showing_to ?></strong>
+                        of <strong><?= number_format($filtered_records) ?></strong> prices
+                        <?php if ($search_country || $search_town || $search_commodity || $filter_status): ?>
+                            <span class="ml-1 text-maroon">(filtered)</span>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs text-gray-500" for="rowsPerPage">Rows:</label>
+                        <select id="rowsPerPage" class="page-size-select" onchange="changeRowsPerPage()">
+                            <?php foreach ([10,20,50,100] as $opt): ?>
+                                <option value="<?= $opt ?>" <?= $limit==$opt?'selected':'' ?>><?= $opt ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <?php if ($total_pages > 1): ?>
+                    <nav class="flex items-center gap-1">
+                        <button class="pagination-btn" onclick="goToPage(1)" <?= $page<=1?'disabled':'' ?>><span class="material-symbols-outlined text-sm">first_page</span></button>
+                        <button class="pagination-btn" onclick="goToPage(<?= $page-1 ?>)" <?= $page<=1?'disabled':'' ?>><span class="material-symbols-outlined text-sm">chevron_left</span></button>
+
+                        <?php
+                        $win = 2;
+                        $sp = max(1, $page - $win);
+                        $ep = min($total_pages, $page + $win);
+                        if ($sp === 1) $ep = min($total_pages, 1 + $win * 2);
+                        if ($ep === $total_pages) $sp = max(1, $total_pages - $win * 2);
+                        if ($sp > 1): ?>
+                            <button class="pagination-btn" onclick="goToPage(1)">1</button>
+                            <?php if ($sp > 2): ?><span class="text-gray-400 text-xs px-1">…</span><?php endif; ?>
+                        <?php endif; ?>
+
+                        <?php for ($i = $sp; $i <= $ep; $i++): ?>
+                            <button class="pagination-btn <?= $i===$page ? 'active-page' : '' ?>" <?= $i===$page ? '' : "onclick=\"goToPage($i)\"" ?>><?= $i ?></button>
+                        <?php endfor; ?>
+
+                        <?php if ($ep < $total_pages): ?>
+                            <?php if ($ep < $total_pages - 1): ?><span class="text-gray-400 text-xs px-1">…</span><?php endif; ?>
+                            <button class="pagination-btn" onclick="goToPage(<?= $total_pages ?>)"><?= $total_pages ?></button>
+                        <?php endif; ?>
+
+                        <button class="pagination-btn" onclick="goToPage(<?= $page+1 ?>)" <?= $page>=$total_pages?'disabled':'' ?>><span class="material-symbols-outlined text-sm">chevron_right</span></button>
+                        <button class="pagination-btn" onclick="goToPage(<?= $total_pages ?>)" <?= $page>=$total_pages?'disabled':'' ?>><span class="material-symbols-outlined text-sm">last_page</span></button>
+                    </nav>
+                    <?php endif; ?>
+                </div>
+
+                <a href="../base/landing_page.php" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all">
+                    <span class="material-symbols-outlined text-base">arrow_back</span>Back
+                </a>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+
+<!-- ============================================================
+     ADD / EDIT MODAL
+============================================================ -->
+<div id="millerPriceModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-lg shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center rounded-t-xl">
+                <h3 id="modalTitle" class="text-base font-semibold text-white">Add Miller Price</h3>
+                <button onclick="closeModal('millerPriceModal')" class="text-white/80 hover:text-white">
+                    <span class="material-symbols-outlined text-base">close</span>
+                </button>
+            </div>
+            <div class="p-5">
+                <form method="POST" action="" id="millerPriceForm">
+                    <input type="hidden" name="price_id" id="priceId">
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Country <span class="text-red-500">*</span></label>
+                            <select name="country" id="modalCountry" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Country</option>
+                                <option value="Kenya">Kenya</option>
+                                <option value="Uganda">Uganda</option>
+                                <option value="Tanzania">Tanzania</option>
+                                <option value="Rwanda">Rwanda</option>
+                                <option value="Burundi">Burundi</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Town <span class="text-red-500">*</span></label>
+                            <input type="text" name="town" id="modalTown" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none"
+                                placeholder="e.g., Nairobi, Kampala">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Commodity <span class="text-red-500">*</span></label>
+                            <select name="commodity_id" id="modalCommodity" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Commodity</option>
+                                <?php foreach ($commodities as $c): ?>
+                                    <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['display_name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Price (Local Currency) <span class="text-red-500">*</span></label>
+                            <input type="number" step="0.01" name="price" id="modalPrice" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none"
+                                placeholder="e.g., 4500.00">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Data Source <span class="text-red-500">*</span></label>
+                            <select name="data_source_id" id="modalDataSource" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Data Source</option>
+                                <?php foreach ($data_sources as $ds): ?>
+                                    <option value="<?= $ds['id'] ?>"><?= htmlspecialchars($ds['data_source_name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Date <span class="text-red-500">*</span></label>
+                            <input type="date" name="date_posted" id="modalDate" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none"
+                                value="<?= date('Y-m-d') ?>">
+                        </div>
+                    </div>
+
+                    <div id="editStatusDiv" class="mb-4 hidden">
+                        <label class="block text-xs text-gray-600 mb-1">Status</label>
+                        <select name="status" id="modalStatus"
+                            class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                            <option value="pending">Pending</option>
+                            <option value="approved">Approved</option>
+                            <option value="published">Published</option>
+                            <option value="unpublished">Unpublished</option>
+                        </select>
+                    </div>
+
+                    <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                        <button type="button" onclick="closeModal('millerPriceModal')"
+                            class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="submit" name="add_miller_price" id="submitBtn"
+                            class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Add Price</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
-<!-- Import Modal (same as before) -->
-<div class="modal" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="importModalLabel">Import Miller Prices</h5>
-                <button type="button" class="close-modal" onclick="closeImportModal()" aria-label="Close">&times;</button>
+<!-- ============================================================
+     IMPORT CSV MODAL
+============================================================ -->
+<div id="importModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-2xl shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center rounded-t-xl">
+                <h3 class="text-base font-semibold text-white flex items-center gap-2">
+                    <span class="material-symbols-outlined text-base">upload_file</span>
+                    Bulk Import Miller Prices (CSV)
+                </h3>
+                <button onclick="closeModal('importModal')" class="text-white/80 hover:text-white">
+                    <span class="material-symbols-outlined text-base">close</span>
+                </button>
             </div>
-            <div class="modal-body">
-                <!-- Import instructions and form -->
+            <div class="p-5">
+                <div class="bg-blue-50 border-l-4 border-blue-500 rounded-r-lg p-4 mb-5 text-sm">
+                    <p class="font-semibold text-blue-800 mb-2">CSV Column Order</p>
+                    <ol class="list-decimal list-inside text-blue-700 space-y-0.5 text-xs">
+                        <li><strong>Country</strong> — required (e.g., Kenya, Uganda, Tanzania, Rwanda, Burundi)</li>
+                        <li><strong>Town</strong> — required (e.g., Nairobi, Kampala)</li>
+                        <li><strong>Commodity ID</strong> — required (integer ID from commodities table)</li>
+                        <li><strong>Price</strong> — required, numeric (in local currency)</li>
+                        <li><strong>Date</strong> — required (e.g., 2025-01-15 or 2025-01-15 14:30:00)</li>
+                        <li><strong>Data Source ID</strong> — optional (integer ID from data_sources table, default 1)</li>
+                        <li><strong>Status</strong> — optional (pending/approved/published/unpublished, default pending)</li>
+                    </ol>
+                    <a href="?download_template=1" class="inline-flex items-center gap-1 mt-3 text-xs text-blue-700 font-medium hover:underline">
+                        <span class="material-symbols-outlined text-sm">download</span>Download example template CSV
+                    </a>
+                </div>
+
+                <form method="POST" enctype="multipart/form-data" id="importForm">
+                    <div class="mb-4">
+                        <label class="block text-xs text-gray-600 mb-1 font-medium">Select CSV File <span class="text-red-500">*</span></label>
+                        <input type="file" name="csv_file" id="importCsvFile" accept=".csv" required
+                            class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none">
+                        <p id="importFileInfo" class="mt-1 text-xs text-gray-400 hidden"></p>
+                    </div>
+
+                    <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none mb-5">
+                        <input type="checkbox" name="overwrite_existing" class="rounded border-gray-300">
+                        <span>Overwrite existing prices with matching Town + Commodity + Date</span>
+                    </label>
+
+                    <div id="importPreviewInfo" class="hidden mb-4 p-3 bg-gray-50 rounded-lg text-xs text-gray-600">
+                        <span class="material-symbols-outlined text-sm align-middle text-blue-500">info</span>
+                        File selected — click <strong>Import</strong> to proceed.
+                    </div>
+
+                    <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                        <button type="button" onclick="closeModal('importModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="submit" name="import_csv" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 inline-flex items-center gap-1">
+                            <span class="material-symbols-outlined text-sm">upload</span>Import
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 </div>
+
+<!-- ============================================================
+     DELETE CONFIRM MODAL
+============================================================ -->
+<div id="deleteModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center">
+    <div class="bg-white rounded-lg w-full max-w-md shadow-xl">
+        <div class="p-4">
+            <div class="flex items-center gap-2 mb-3">
+                <span class="material-symbols-outlined text-red-500">warning</span>
+                <h3 class="text-base font-semibold text-gray-800">Confirm Deletion</h3>
+            </div>
+            <p id="deleteModalText" class="text-sm text-gray-500 mb-3">Are you sure?</p>
+            <div class="bg-red-50 border-l-4 border-red-500 p-2 mb-3 text-xs text-red-700">
+                <span class="material-symbols-outlined text-xs align-middle">info</span> This action cannot be undone.
+            </div>
+            <form method="POST" action="" id="deleteForm">
+                <input type="hidden" name="delete_selected" value="1">
+                <div id="deleteIdsContainer"></div>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('deleteModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================
+     BULK STATUS UPDATE FORM
+============================================================ -->
+<form id="bulkStatusForm" method="POST" action="" style="display:none;">
+    <input type="hidden" name="bulk_status_update" value="1">
+    <input type="hidden" name="new_status" id="bulkNewStatus">
+    <div id="bulkStatusIdsContainer"></div>
+</form>
 
 <script>
-document.addEventListener("DOMContentLoaded", function() {
-    // Initialize select all checkbox
-    updateSelectAllCheckbox();
-    
-    document.getElementById('selectAll').addEventListener('change', function() {
-        const isChecked = this.checked;
-        const checkboxes = document.querySelectorAll('.row-checkbox');
-        
-        // Update all checkboxes on current page
-        checkboxes.forEach(checkbox => {
-            if (checkbox.checked !== isChecked) {
-                checkbox.checked = isChecked;
-                // Trigger the update for each checkbox
-                const id = checkbox.getAttribute('data-id');
-                updateSelection(checkbox, id);
-            }
-        });
-        
-        // Clear all selections if unchecking
-        if (!isChecked) {
-            clearAllSelectionsSilent();
-        }
-    });
+// PHP → JS state
+const PHP = {
+    page: <?= $page ?>,
+    limit: <?= $limit ?>,
+    totalPages: <?= $total_pages ?>,
+    sort: <?= json_encode($sort_column) ?>,
+    dir: <?= json_encode(strtolower($sort_direction)) ?>,
+    searchCountry: <?= json_encode($search_country) ?>,
+    searchTown: <?= json_encode($search_town) ?>,
+    searchCommodity: <?= json_encode($search_commodity) ?>,
+    filterStatus: <?= json_encode($filter_status) ?>,
+};
 
-    // Close dropdown when clicking outside
-    document.addEventListener('click', function(event) {
-        const exportDropdown = document.getElementById('exportDropdown');
-        const exportButton = document.querySelector('.btn-export');
-        
-        if (exportButton && exportDropdown && !exportButton.contains(event.target) && !exportDropdown.contains(event.target)) {
-            exportDropdown.classList.remove('show');
-        }
-    });
+function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+function buildUrl(overrides) {
+    const p = {
+        page: PHP.page,
+        limit: PHP.limit,
+        sort: PHP.sort,
+        dir: PHP.dir,
+        search_country: document.getElementById('searchCountry').value,
+        search_town: document.getElementById('searchTown').value,
+        search_commodity: document.getElementById('searchCommodity').value.trim(),
+        filter_status: document.getElementById('filterStatus').value,
+    };
+    p.limit = document.getElementById('rowsPerPage').value;
+    Object.assign(p, overrides);
     
-    // Update breadcrumb if the function exists
-    if (typeof updateBreadcrumb === 'function') {
-        updateBreadcrumb('Base', 'Miller Prices');
-    }
+    const q = new URLSearchParams();
+    q.set('page', p.page);
+    q.set('limit', p.limit);
+    if (p.sort) q.set('sort', p.sort);
+    if (p.dir) q.set('dir', p.dir);
+    if (p.search_country) q.set('search_country', p.search_country);
+    if (p.search_town) q.set('search_town', p.search_town);
+    if (p.search_commodity) q.set('search_commodity', p.search_commodity);
+    if (p.filter_status) q.set('filter_status', p.filter_status);
+    return '?' + q.toString();
+}
+
+function goToPage(pg) {
+    pg = parseInt(pg, 10);
+    if (isNaN(pg) || pg < 1 || pg > PHP.totalPages) return;
+    window.location.href = buildUrl({ page: pg });
+}
+
+function changeRowsPerPage() { window.location.href = buildUrl({ page: 1 }); }
+function applyFilters() { window.location.href = buildUrl({ page: 1 }); }
+
+function sortTable(col) {
+    const newDir = (PHP.sort === col && PHP.dir === 'asc') ? 'desc' : 'asc';
+    window.location.href = buildUrl({ page: 1, sort: col, dir: newDir });
+}
+
+// Add modal
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = 'Add Miller Price';
+    document.getElementById('priceId').value = '';
+    document.getElementById('modalCountry').value = '';
+    document.getElementById('modalTown').value = '';
+    document.getElementById('modalCommodity').value = '';
+    document.getElementById('modalPrice').value = '';
+    document.getElementById('modalDataSource').value = '';
+    document.getElementById('modalDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('editStatusDiv').classList.add('hidden');
+    document.getElementById('submitBtn').name = 'add_miller_price';
+    document.getElementById('submitBtn').textContent = 'Add Price';
+    openModal('millerPriceModal');
+}
+
+// Edit modal
+function editMillerPrice(id) {
+    fetch(`${window.location.pathname}?get_miller_price=${id}`)
+        .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+        .then(data => {
+            document.getElementById('modalTitle').textContent = 'Edit Miller Price';
+            document.getElementById('priceId').value = data.id;
+            document.getElementById('modalCountry').value = data.country || '';
+            document.getElementById('modalTown').value = data.town || '';
+            document.getElementById('modalCommodity').value = data.commodity_id || '';
+            document.getElementById('modalPrice').value = data.price || '';
+            document.getElementById('modalDataSource').value = data.data_source_id || '';
+            document.getElementById('modalDate').value = data.date_posted ? data.date_posted.split(' ')[0] : '';
+            document.getElementById('modalStatus').value = data.status || 'pending';
+            document.getElementById('editStatusDiv').classList.remove('hidden');
+            document.getElementById('submitBtn').name = 'edit_miller_price';
+            document.getElementById('submitBtn').textContent = 'Update Price';
+            openModal('millerPriceModal');
+        })
+        .catch(err => { console.error(err); alert('Failed to load price data.'); });
+}
+
+// Delete functions
+function deleteSingle(id, label) {
+    document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${escapeHtml(label)}</strong>?`;
+    document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="selected_ids[]" value="${id}">`;
+    openModal('deleteModal');
+}
+
+// Checkbox handling
+function onCheckboxChange() {
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total = document.querySelectorAll('.row-checkbox').length;
+    const selAll = document.getElementById('selectAllCheckbox');
+    document.getElementById('selectedCount').textContent = checked;
+    document.getElementById('bulkDeleteBtn').disabled = checked === 0;
+    document.getElementById('bulkStatusBtn').disabled = checked === 0;
+    selAll.checked = checked > 0 && checked === total;
+    selAll.indeterminate = checked > 0 && checked < total;
+}
+
+// Import modal functions
+function openImportModal() {
+    document.getElementById('importForm').reset();
+    document.getElementById('importFileInfo').classList.add('hidden');
+    document.getElementById('importPreviewInfo').classList.add('hidden');
+    openModal('importModal');
+}
+
+// Bulk status update
+document.getElementById('bulkStatusBtn')?.addEventListener('click', function() {
+    const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
+    const newStatus = document.getElementById('bulkStatusSelect').value;
+    if (!ids.length || !newStatus) return;
+    
+    document.getElementById('bulkNewStatus').value = newStatus;
+    document.getElementById('bulkStatusIdsContainer').innerHTML = ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+    document.getElementById('bulkStatusForm').submit();
 });
 
-function toggleExportDropdown() {
-    const dropdown = document.getElementById('exportDropdown');
-    dropdown.classList.toggle('show');
-}
-
-function sortTable(column) {
-    const url = new URL(window.location);
-    const currentSort = url.searchParams.get('sort');
-    const currentOrder = url.searchParams.get('order');
-    
-    // Toggle order if clicking the same column
-    if (currentSort === column) {
-        const newOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
-        url.searchParams.set('order', newOrder);
-    } else {
-        // New column, default to DESC for ID and date, ASC for others
-        const defaultOrder = (column === 'id' || column === 'date') ? 'DESC' : 'ASC';
-        url.searchParams.set('sort', column);
-        url.searchParams.set('order', defaultOrder);
-    }
-    
-    // Reset to page 1 when sorting
-    url.searchParams.set('page', '1');
-    
-    window.location.href = url.toString();
-}
-
-function applyFilters() {
-    const filters = {
-        id: document.getElementById('filterId').value,
-        country: document.getElementById('filterCountry').value,
-        town: document.getElementById('filterTown').value,
-        commodity: document.getElementById('filterCommodity').value,
-        price: document.getElementById('filterPrice').value,
-        date: document.getElementById('filterDate').value,
-        status: document.getElementById('filterStatus').value,
-        data_source: document.getElementById('filterDataSource').value
-    };
-
-    // Build URL with filter parameters
-    const url = new URL(window.location);
-    
-    // Set filter parameters
-    if (filters.id) url.searchParams.set('filter_id', filters.id);
-    else url.searchParams.delete('filter_id');
-    
-    if (filters.country) url.searchParams.set('filter_country', filters.country);
-    else url.searchParams.delete('filter_country');
-    
-    if (filters.town) url.searchParams.set('filter_town', filters.town);
-    else url.searchParams.delete('filter_town');
-    
-    if (filters.commodity) url.searchParams.set('filter_commodity', filters.commodity);
-    else url.searchParams.delete('filter_commodity');
-    
-    if (filters.price) url.searchParams.set('filter_price', filters.price);
-    else url.searchParams.delete('filter_price');
-    
-    if (filters.date) url.searchParams.set('filter_date', filters.date);
-    else url.searchParams.delete('filter_date');
-    
-    if (filters.status) url.searchParams.set('filter_status', filters.status);
-    else url.searchParams.delete('filter_status');
-    
-    if (filters.data_source) url.searchParams.set('filter_data_source', filters.data_source);
-    else url.searchParams.delete('filter_data_source');
-    
-    // Reset to page 1 when filtering
-    url.searchParams.set('page', '1');
-    
-    // Navigate to filtered URL
-    window.location.href = url.toString();
-}
-
-function clearAllFilters() {
-    // Clear all filter inputs
-    document.getElementById('filterId').value = '';
-    document.getElementById('filterCountry').value = '';
-    document.getElementById('filterTown').value = '';
-    document.getElementById('filterCommodity').value = '';
-    document.getElementById('filterPrice').value = '';
-    document.getElementById('filterDate').value = '';
-    document.getElementById('filterStatus').value = '';
-    document.getElementById('filterDataSource').value = '';
-    
-    // Reload page without filters
-    const url = new URL(window.location.href.split('?')[0], window.location.origin);
-    
-    // Keep current limit
-    const currentLimit = new URLSearchParams(window.location.search).get('limit');
-    if (currentLimit) url.searchParams.set('limit', currentLimit);
-    
-    window.location.href = url.toString();
-}
-
-function updateItemsPerPage(value) {
-    const url = new URL(window.location.href);
-    url.searchParams.set('limit', value);
-    url.searchParams.set('page', '1');
-    window.location.href = url.toString();
-}
-
-/**
- * Update selection via AJAX
- */
-function updateSelection(checkbox, id) {
-    const isSelected = checkbox.checked;
-    
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `action=update_selection&id=${id}&selected=${isSelected}`
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Selection updated:', data);
-        updateSelectAllCheckbox();
-        updateSelectionCount();
-    })
-    .catch(error => console.error('Error updating selection:', error));
-}
-
-function updateSelectAllCheckbox() {
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    const selectAll = document.getElementById('selectAll');
-    
-    if (checkboxes.length === 0) {
-        selectAll.checked = false;
-        return;
-    }
-    
-    // Check if all checkboxes on current page are checked
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
-    
-    selectAll.checked = allChecked;
-    selectAll.indeterminate = !allChecked && someChecked;
-}
-
-function updateSelectionCount() {
-    // Refresh the page to update selection count
-    location.reload();
-}
-
-function clearAllSelections() {
-    if (confirm('Clear all selections across all pages?')) {
-        clearAllSelectionsSilent();
-        alert('All selections cleared.');
-        location.reload();
-    }
-}
-
-function clearAllSelectionsSilent() {
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: 'action=update_selection&clear_all=true'
-    })
-    .catch(error => console.error('Error clearing selections:', error));
-}
-
-/**
- * Get all selected price IDs from session
- */
-function getSelectedPriceIds() {
-    // Return IDs from PHP session (not just current page)
-    return <?php echo json_encode($_SESSION['selected_miller_prices']); ?>;
-}
-
-/**
- * Export selected items
- */
-function exportSelected(format) {
-    const selectedIds = getSelectedPriceIds();
-    
-    if (selectedIds.length === 0) {
-        alert('Please select items to export.');
-        return;
-    }
-    
-    // Create URL parameters for export
-    const params = new URLSearchParams();
-    params.append('export', format);
-    params.append('ids', JSON.stringify(selectedIds));
-    
-    // Open export in new window
-    window.open('export_miller_prices.php?' + params.toString(), '_blank');
-    
-    // Close dropdown
-    document.getElementById('exportDropdown').classList.remove('show');
-}
-
-/**
- * Export all data (without filters)
- */
-function exportAll(format) {
-    if (confirm('Export ALL miller prices? This may take a moment for large datasets.')) {
-        const params = new URLSearchParams();
-        params.append('export', format);
-        params.append('export_all', 'true');
-        
-        window.open('export_miller_prices.php?' + params.toString(), '_blank');
-        
-        // Close dropdown
-        document.getElementById('exportDropdown').classList.remove('show');
-    }
-}
-
-/**
- * Export all data with current filters applied
- */
-function exportAllWithFilters(format) {
-    // Get current filter values
-    const filters = {
-        country: document.getElementById('filterCountry').value,
-        town: document.getElementById('filterTown').value,
-        commodity: document.getElementById('filterCommodity').value,
-        price: document.getElementById('filterPrice').value,
-        date: document.getElementById('filterDate').value,
-        status: document.getElementById('filterStatus').value,
-        data_source: document.getElementById('filterDataSource').value
-    };
-    
-    // Count how many filters are active
-    const activeFilters = Object.values(filters).filter(val => val.trim() !== '').length;
-    
-    let message = 'Export ';
-    if (activeFilters > 0) {
-        message += 'all data with current filters applied?';
-    } else {
-        message += 'ALL miller prices (no filters active)?';
-    }
-    message += ' This may take a moment for large datasets.';
-    
-    if (confirm(message)) {
-        const params = new URLSearchParams();
-        params.append('export', format);
-        params.append('export_all', 'true');
-        params.append('apply_filters', 'true');
-        
-        // Add filters to params
-        Object.keys(filters).forEach(key => {
-            if (filters[key]) {
-                params.append('filter_' + key, filters[key]);
-            }
-        });
-        
-        window.open('export_miller_prices.php?' + params.toString(), '_blank');
-        
-        // Close dropdown
-        document.getElementById('exportDropdown').classList.remove('show');
-    }
-}
-
-// Modal management functions
-function openImportModal() {
-    const modal = document.getElementById('importModal');
-    if (modal) {
-        modal.style.display = 'block';
-        modal.classList.add('show');
-        // Create backdrop
-        const backdrop = document.createElement('div');
-        backdrop.className = 'modal-backdrop fade show';
-        backdrop.style.zIndex = '1040';
-        document.body.appendChild(backdrop);
-        document.body.style.overflow = 'hidden';
-    }
-}
-
-function closeImportModal() {
-    const modal = document.getElementById('importModal');
-    if (modal) {
-        modal.style.display = 'none';
-        modal.classList.remove('show');
-        // Remove backdrop
-        const backdrop = document.querySelector('.modal-backdrop');
-        if (backdrop) {
-            document.body.removeChild(backdrop);
-        }
-        document.body.style.overflow = '';
-    }
-}
-
-// Action functions
-function approveSelected() {
-    const ids = getSelectedPriceIds();
-    confirmAction('approve', ids);
-}
-
-function publishSelected() {
-    const ids = getSelectedPriceIds();
-    if (ids.length === 0) {
-        alert('Please select items to publish.');
-        return;
-    }
-    
-    // Check if all selected items are approved before publishing
-    fetch('../data/check_miller_status.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ids: ids }),
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.allApproved) {
-            confirmAction('publish', ids);
-        } else {
-            alert('Cannot publish. All selected items must be approved first. ' + (data.message || ''));
-        }
-    })
-    .catch(error => {
-        console.error('Fetch error checking approval status:', error);
-        alert('An error occurred while checking approval status: ' + error.message);
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
     });
 }
 
-function unpublishSelected() {
-    const ids = getSelectedPriceIds();
-    if (ids.length === 0) {
-        alert('Please select items to unpublish.');
-        return;
+// DOMContentLoaded
+document.addEventListener('DOMContentLoaded', function() {
+    // Select-all checkbox
+    document.getElementById('selectAllCheckbox')?.addEventListener('change', function() {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = this.checked);
+        onCheckboxChange();
+    });
+    
+    // Clear selections
+    document.getElementById('clearSelectionsBtn')?.addEventListener('click', function() {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+        document.getElementById('selectAllCheckbox').checked = false;
+        document.getElementById('selectAllCheckbox').indeterminate = false;
+        onCheckboxChange();
+    });
+    
+    // Bulk delete
+    document.getElementById('bulkDeleteBtn')?.addEventListener('click', function() {
+        const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
+        if (!ids.length) return;
+        document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${ids.length}</strong> selected price(s)?`;
+        document.getElementById('deleteIdsContainer').innerHTML = ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+        openModal('deleteModal');
+    });
+    
+    // Sortable headers
+    document.querySelectorAll('.sortable').forEach(th =>
+        th.addEventListener('click', () => sortTable(th.dataset.sort))
+    );
+    
+    // Import file preview
+    const importFile = document.getElementById('importCsvFile');
+    if (importFile) {
+        importFile.addEventListener('change', function() {
+            const infoEl = document.getElementById('importFileInfo');
+            const previewEl = document.getElementById('importPreviewInfo');
+            if (this.files[0]) {
+                infoEl.textContent = `Selected: ${this.files[0].name} (${(this.files[0].size/1024).toFixed(1)} KB)`;
+                infoEl.classList.remove('hidden');
+                previewEl.classList.remove('hidden');
+            } else {
+                infoEl.classList.add('hidden');
+                previewEl.classList.add('hidden');
+            }
+        });
     }
     
-    // Check if all selected items are currently published before unpublishing
-    fetch('../data/check_miller_status_for_unpublish.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ids: ids }),
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.allPublished) {
-            confirmAction('unpublish', ids);
-        } else {
-            alert('Cannot unpublish. All selected items must currently be in "Published" status.');
-        }
-    })
-    .catch(error => {
-        console.error('Fetch error checking status for unpublish:', error);
-        alert('An error occurred while checking status for unpublish: ' + error.message);
+    // Enter key on search inputs
+    ['searchCommodity'].forEach(id => {
+        document.getElementById(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
     });
-}
-
-function deleteSelected() {
-    const ids = getSelectedPriceIds();
-    if (ids.length === 0) {
-        alert('Please select items to delete.');
-        return;
-    }
-
-    if (confirm('Are you sure you want to delete ' + ids.length + ' selected miller price(s) across all pages?')) {
-        // Pass all selected IDs from session
-        fetch('delete_miller_prices.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ids: ids })
-        })
-        .then(response => {
-            if (!response.ok) throw new Error('Network error');
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                alert(data.message);
-                // Clear selections after deletion
-                clearAllSelectionsSilent();
-                location.reload();
-            } else {
-                alert('Error: ' + data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error:', error);
-            alert('Request failed: ' + error.message);
-        });
-    }
-}
-
-function confirmAction(action, ids) {
-    if (ids.length === 0) {
-        alert('Please select items to ' + action + '.');
-        return;
-    }
-
-    let message = 'Are you sure you want to ' + action + ' these items?';
-    if (confirm(message)) {
-        fetch('../data/update_miller_status.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                action: action,
-                ids: ids,
-            }),
-        })
-        .then(response => {
-            if (!response.ok) {
-                return response.json().catch(() => {
-                    throw new Error(`HTTP error! status: ${response.status} - No JSON response from server.`);
-                });
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                alert('Items ' + action + ' successfully.');
-                window.location.reload();
-            } else {
-                alert('Failed to ' + action + ' items: ' + (data.message || 'Unknown error.'));
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error during ' + action + ':', error);
-            alert('An error occurred while ' + action + ' items: ' + error.message);
-        });
-    }
-}
-
-// Keyboard support for closing modal
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        closeImportModal();
-    }
+    
+    onCheckboxChange();
 });
 </script>
 
-<?php 
-// Helper function to get sort CSS class
-function getSortClass($column) {
-    $current_sort = isset($_GET['sort']) ? $_GET['sort'] : 'date';
-    $current_order = isset($_GET['order']) ? strtoupper($_GET['order']) : 'DESC';
-    
-    if ($current_sort === $column) {
-        return $current_order === 'ASC' ? 'sort-asc' : 'sort-desc';
-    }
-    return '';
-}
-
-// Helper function to generate page URLs with filters and sorting
-function getPageUrl($pageNum, $itemsPerPage, $sortColumn = null, $sortOrder = null) {
-    global $filters;
-    
-    $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
-    
-    // Add filter parameters
-    if (!empty($filters['country'])) {
-        $url .= '&filter_country=' . urlencode($filters['country']);
-    }
-    if (!empty($filters['town'])) {
-        $url .= '&filter_town=' . urlencode($filters['town']);
-    }
-    if (!empty($filters['commodity'])) {
-        $url .= '&filter_commodity=' . urlencode($filters['commodity']);
-    }
-    if (!empty($filters['date'])) {
-        $url .= '&filter_date=' . urlencode($filters['date']);
-    }
-    if (!empty($filters['status'])) {
-        $url .= '&filter_status=' . urlencode($filters['status']);
-    }
-    if (!empty($filters['data_source'])) {
-        $url .= '&filter_data_source=' . urlencode($filters['data_source']);
-    }
-    
-    // Add sort parameters if provided
-    if ($sortColumn) {
-        $url .= '&sort=' . urlencode($sortColumn);
-    }
-    if ($sortOrder) {
-        $url .= '&order=' . urlencode($sortOrder);
-    }
-    
-    return $url;
-}
-
-include '../admin/includes/footer.php'; 
-?>
+<?php require_once '../admin/includes/admin_footer.php'; ?>
