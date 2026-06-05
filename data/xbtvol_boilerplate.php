@@ -1,173 +1,402 @@
 <?php
-// base/xbtvolumes_boilerplate.php
+// xbt_volumes.php
+session_start();
 
-// Start session at the very beginning
-if (session_status() == PHP_SESSION_NONE) {
-    session_start();
-}
+// ============================================================
+// EXPORT CSV — must run BEFORE admin_header.php is included
+// ============================================================
+if (isset($_GET['export_csv'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
 
-// Initialize session storage for selected items if not exists
-if (!isset($_SESSION['selected_xbt_volumes'])) {
-    $_SESSION['selected_xbt_volumes'] = [];
-}
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="xbt_volumes_export_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
 
-// Include the configuration file first
-include '../admin/includes/config.php';
+    $search_border = $_GET['search_border'] ?? '';
+    $search_commodity = $_GET['search_commodity'] ?? '';
+    $search_source = $_GET['search_source'] ?? '';
+    $search_destination = $_GET['search_destination'] ?? '';
+    $filter_status = $_GET['filter_status'] ?? '';
 
-// Handle AJAX selection updates
-if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
-    $id = $_POST['id'];
-    $isSelected = $_POST['selected'] === 'true';
-    
-    if ($isSelected) {
-        if (!in_array($id, $_SESSION['selected_xbt_volumes'])) {
-            $_SESSION['selected_xbt_volumes'][] = $id;
-        }
-    } else {
-        $key = array_search($id, $_SESSION['selected_xbt_volumes']);
-        if ($key !== false) {
-            unset($_SESSION['selected_xbt_volumes'][$key]);
-            $_SESSION['selected_xbt_volumes'] = array_values($_SESSION['selected_xbt_volumes']);
-        }
+    $where_export = "WHERE 1=1";
+    if (!empty($search_border)) {
+        $where_export .= " AND b.name LIKE '%" . $con->real_escape_string($search_border) . "%'";
     }
-    
-    // Clear all selections if requested
-    if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
-        $_SESSION['selected_xbt_volumes'] = [];
+    if (!empty($search_commodity)) {
+        $where_export .= " AND (c.commodity_name LIKE '%" . $con->real_escape_string($search_commodity) . "%' OR c.variety LIKE '%" . $con->real_escape_string($search_commodity) . "%')";
     }
+    if (!empty($search_source)) {
+        $where_export .= " AND x.source LIKE '%" . $con->real_escape_string($search_source) . "%'";
+    }
+    if (!empty($search_destination)) {
+        $where_export .= " AND x.destination LIKE '%" . $con->real_escape_string($search_destination) . "%'";
+    }
+    if (!empty($filter_status)) {
+        $where_export .= " AND x.status = '" . $con->real_escape_string($filter_status) . "'";
+    }
+
+    $exp_query = "SELECT 
+        x.id, b.name as border_name, 
+        CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
+        x.volume, x.source, x.destination, DATE(x.date_posted) as volume_date, 
+        x.status, ds.data_source_name as data_source
+        FROM xbt_volumes x
+        LEFT JOIN border_points b ON x.border_id = b.id
+        LEFT JOIN commodities c ON x.commodity_id = c.id
+        LEFT JOIN data_sources ds ON x.data_source_id = ds.id
+        $where_export
+        ORDER BY x.date_posted DESC";
     
-    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_xbt_volumes'])]);
+    $exp_result = $con->query($exp_query);
+    $out = fopen('php://output', 'w');
+    fputs($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['ID', 'Border Point', 'Commodity', 'Volume (MT)', 'Source', 'Destination', 'Date', 'Status', 'Data Source']);
+
+    while ($row = $exp_result->fetch_assoc()) {
+        fputcsv($out, [
+            $row['id'], $row['border_name'], $row['commodity_display'],
+            number_format($row['volume'], 2, '.', ''), $row['source'], $row['destination'],
+            $row['volume_date'], $row['status'], $row['data_source']
+        ]);
+    }
+    fclose($out);
     exit;
 }
 
-// Handle CSV import BEFORE any HTML output
+// ============================================================
+// POST: Add XBT Volume via modal
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['add_xbt_volume'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $country = trim($_POST['country']);
+    $border_id = (int)$_POST['border_id'];
+    $commodity_id = (int)$_POST['commodity_id'];
+    $category_id = (int)$_POST['category_id'];
+    $variety = trim($_POST['variety']);
+    $volume = (float)$_POST['volume'];
+    $source = trim($_POST['source']);
+    $destination = trim($_POST['destination']);
+    $data_source_id = (int)$_POST['data_source_id'];
+    
+    // Get border name
+    $border_name = "";
+    $stmt = $con->prepare("SELECT name FROM border_points WHERE id = ?");
+    $stmt->bind_param("i", $border_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $border_name = $row['name'];
+    }
+    $stmt->close();
+    
+    // Get commodity name
+    $commodity_name = "";
+    $stmt = $con->prepare("SELECT commodity_name FROM commodities WHERE id = ?");
+    $stmt->bind_param("i", $commodity_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $commodity_name = $row['commodity_name'];
+    }
+    $stmt->close();
+    
+    // Get category name
+    $category_name = "";
+    $stmt = $con->prepare("SELECT name FROM commodity_categories WHERE id = ?");
+    $stmt->bind_param("i", $category_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $category_name = $row['name'];
+    }
+    $stmt->close();
+    
+    // Get data source name
+    $data_source_name = "";
+    $stmt = $con->prepare("SELECT data_source_name FROM data_sources WHERE id = ?");
+    $stmt->bind_param("i", $data_source_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $data_source_name = $row['data_source_name'];
+    }
+    $stmt->close();
+    
+    $date_posted = date('Y-m-d H:i:s');
+    $day = date('d');
+    $month = date('m');
+    $year = date('Y');
+    $status = 'pending';
+    
+    $stmt = $con->prepare("INSERT INTO xbt_volumes (country, border_id, border_name, commodity_id, commodity_name, category_id, category_name, variety, volume, source, destination, data_source_id, data_source_name, date_posted, day, month, year, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sisssisssdssisiiis", $country, $border_id, $border_name, $commodity_id, $commodity_name, $category_id, $category_name, $variety, $volume, $source, $destination, $data_source_id, $data_source_name, $date_posted, $day, $month, $year, $status);
+    
+    if ($stmt->execute()) {
+        $_SESSION['import_message'] = "XBT volume added successfully!";
+        $_SESSION['import_status'] = "success";
+    } else {
+        $_SESSION['import_message'] = "Error adding XBT volume: " . $stmt->error;
+        $_SESSION['import_status'] = "danger";
+    }
+    $stmt->close();
+    header("Location: xbt_volumes.php");
+    exit;
+}
+
+// ============================================================
+// POST: Edit XBT Volume via modal
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_xbt_volume'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $id = (int)$_POST['volume_id'];
+    $country = trim($_POST['country']);
+    $border_id = (int)$_POST['border_id'];
+    $commodity_id = (int)$_POST['commodity_id'];
+    $category_id = (int)$_POST['category_id'];
+    $variety = trim($_POST['variety']);
+    $volume = (float)$_POST['volume'];
+    $source = trim($_POST['source']);
+    $destination = trim($_POST['destination']);
+    $data_source_id = (int)$_POST['data_source_id'];
+    $status = trim($_POST['status']);
+    
+    // Get border name
+    $border_name = "";
+    $stmt = $con->prepare("SELECT name FROM border_points WHERE id = ?");
+    $stmt->bind_param("i", $border_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $border_name = $row['name'];
+    }
+    $stmt->close();
+    
+    // Get commodity name
+    $commodity_name = "";
+    $stmt = $con->prepare("SELECT commodity_name FROM commodities WHERE id = ?");
+    $stmt->bind_param("i", $commodity_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $commodity_name = $row['commodity_name'];
+    }
+    $stmt->close();
+    
+    // Get category name
+    $category_name = "";
+    $stmt = $con->prepare("SELECT name FROM commodity_categories WHERE id = ?");
+    $stmt->bind_param("i", $category_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $category_name = $row['name'];
+    }
+    $stmt->close();
+    
+    // Get data source name
+    $data_source_name = "";
+    $stmt = $con->prepare("SELECT data_source_name FROM data_sources WHERE id = ?");
+    $stmt->bind_param("i", $data_source_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $data_source_name = $row['data_source_name'];
+    }
+    $stmt->close();
+    
+    $stmt = $con->prepare("UPDATE xbt_volumes SET country=?, border_id=?, border_name=?, commodity_id=?, commodity_name=?, category_id=?, category_name=?, variety=?, volume=?, source=?, destination=?, data_source_id=?, data_source_name=?, status=? WHERE id=?");
+    $stmt->bind_param("sisssisssdssissi", $country, $border_id, $border_name, $commodity_id, $commodity_name, $category_id, $category_name, $variety, $volume, $source, $destination, $data_source_id, $data_source_name, $status, $id);
+    
+    if ($stmt->execute()) {
+        $_SESSION['import_message'] = "XBT volume updated successfully!";
+        $_SESSION['import_status'] = "success";
+    } else {
+        $_SESSION['import_message'] = "Error updating XBT volume: " . $stmt->error;
+        $_SESSION['import_status'] = "danger";
+    }
+    $stmt->close();
+    header("Location: xbt_volumes.php");
+    exit;
+}
+
+// ============================================================
+// POST: Delete XBT Volumes
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['delete_selected']) && !empty($_POST['selected_ids'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $selected_ids = array_map('intval', (array)$_POST['selected_ids']);
+    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+    $stmt = $con->prepare("DELETE FROM xbt_volumes WHERE id IN ($placeholders)");
+    if ($stmt) {
+        $stmt->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
+        if ($stmt->execute()) {
+            $deleted = $stmt->affected_rows;
+            $_SESSION['import_message'] = "Successfully deleted $deleted XBT volume(s).";
+            $_SESSION['import_status'] = "success";
+        } else {
+            $_SESSION['import_message'] = "Error deleting: " . $stmt->error;
+            $_SESSION['import_status'] = "danger";
+        }
+        $stmt->close();
+    }
+    header("Location: xbt_volumes.php");
+    exit;
+}
+
+// ============================================================
+// POST: Bulk Status Update
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['bulk_status_update']) && !empty($_POST['selected_ids']) && isset($_POST['new_status'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $selected_ids = array_map('intval', (array)$_POST['selected_ids']);
+    $new_status = $_POST['new_status'];
+    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+    $stmt = $con->prepare("UPDATE xbt_volumes SET status = ? WHERE id IN ($placeholders)");
+    if ($stmt) {
+        $types = 's' . str_repeat('i', count($selected_ids));
+        $stmt->bind_param($types, $new_status, ...$selected_ids);
+        if ($stmt->execute()) {
+            $updated = $stmt->affected_rows;
+            $_SESSION['import_message'] = "Successfully updated $updated XBT volume(s) to '$new_status'.";
+            $_SESSION['import_status'] = "success";
+        } else {
+            $_SESSION['import_message'] = "Error updating status: " . $stmt->error;
+            $_SESSION['import_status'] = "danger";
+        }
+        $stmt->close();
+    }
+    header("Location: xbt_volumes.php");
+    exit;
+}
+
+// ============================================================
+// CSV IMPORT
+// ============================================================
 if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
     $file = $_FILES['csv_file']['tmp_name'];
     $handle = fopen($file, "r");
     $overwrite = isset($_POST['overwrite_existing']);
-    $data_source = $_POST['data_source'] ?? 'Manual Import';
-    
-    // Skip header row
-    fgetcsv($handle);
+    fgetcsv($handle); // skip header
     
     $successCount = 0;
     $errorCount = 0;
-    $errors = array();
-    
-    // Start transaction
+    $errors = [];
     $con->begin_transaction();
     
     try {
         $rowNumber = 1;
-        
-        while (($data = fgetcsv($handle, 1000, ","))) {
+        while (($data = fgetcsv($handle, 1000, ",")) !== false) {
             $rowNumber++;
+            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) continue;
             
-            // Skip completely empty rows
-            if (empty($data) || (count($data) == 1 && empty(trim($data[0])))) {
-                continue;
-            }
+            if (empty(trim($data[0]))) { $errors[] = "Row $rowNumber: Border ID is required"; $errorCount++; continue; }
+            if (empty(trim($data[1]))) { $errors[] = "Row $rowNumber: Commodity ID is required"; $errorCount++; continue; }
+            if (empty(trim($data[2]))) { $errors[] = "Row $rowNumber: Volume is required"; $errorCount++; continue; }
+            if (empty(trim($data[3]))) { $errors[] = "Row $rowNumber: Date is required"; $errorCount++; continue; }
             
-            // Validate required fields - Based on xbt_volumes table structure
-            if (empty(trim($data[0]))) {
-                $errors[] = "Row $rowNumber: Border ID is required";
-                $errorCount++;
-                continue;
-            }
-            if (empty(trim($data[1]))) {
-                $errors[] = "Row $rowNumber: Commodity ID is required";
-                $errorCount++;
-                continue;
-            }
-            if (empty(trim($data[2]))) {
-                $errors[] = "Row $rowNumber: Volume is required";
-                $errorCount++;
-                continue;
-            }
-            if (empty(trim($data[3]))) {
-                $errors[] = "Row $rowNumber: Date is required";
-                $errorCount++;
-                continue;
-            }
-            
-            // Prepare XBT volume data
-            $border_id = intval(trim($data[0]));
-            $commodity_id = intval(trim($data[1]));
-            $volume = floatval(trim($data[2]));
-            
-            // Date parsing (same as market prices)
-            $raw_date_string = trim($data[3]);
-            error_log("Raw date string from CSV: '$raw_date_string'");
-            
+            $border_id = (int)trim($data[0]);
+            $commodity_id = (int)trim($data[1]);
+            $volume = (float)trim($data[2]);
             $date_string = trim($data[3]);
+            $source = isset($data[4]) ? trim($data[4]) : '';
+            $destination = isset($data[5]) ? trim($data[5]) : '';
+            $country = isset($data[6]) ? trim($data[6]) : 'Kenya';
+            $data_source_id = isset($data[7]) && !empty(trim($data[7])) ? (int)trim($data[7]) : 1;
+            $status = isset($data[8]) ? trim($data[8]) : 'pending';
+            
+            // Parse date
             $date_posted = null;
-            
-            $date_string = preg_replace('/\s+/', ' ', $date_string);
-            
-            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/', $date_string, $matches)) {
-                $year = $matches[1];
-                $month = $matches[2];
-                $day = $matches[3];
-                $hour = $matches[4];
-                $minute = $matches[5];
-                $second = $matches[6];
-                
-                if (checkdate($month, $day, $year) && 
-                    $hour >= 0 && $hour <= 23 && 
-                    $minute >= 0 && $minute <= 59 && 
-                    $second >= 0 && $second <= 59) {
-                    $date_posted = "$year-$month-$day $hour:$minute:$second";
+            if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date_string, $matches)) {
+                $date_posted = "$matches[1]-$matches[2]-$matches[3] 00:00:00";
+            } elseif (preg_match('/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/', $date_string, $matches)) {
+                $date_posted = "$matches[1]-$matches[2]-$matches[3] $matches[4]:$matches[5]:$matches[6]";
+            } else {
+                $timestamp = strtotime($date_string);
+                if ($timestamp !== false && $timestamp > 0) {
+                    $date_posted = date('Y-m-d H:i:s', $timestamp);
                 }
             }
             
             if ($date_posted === null) {
-                try {
-                    $date_time = new DateTime($date_string);
-                    $date_posted = $date_time->format('Y-m-d H:i:s');
-                } catch (Exception $e) {
-                    $timestamp = strtotime($date_string);
-                    if ($timestamp !== false && $timestamp > 0) {
-                        $date_posted = date('Y-m-d H:i:s', $timestamp);
-                    }
-                }
-            }
-            
-            if ($date_posted === null || !preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $date_posted)) {
-                $errors[] = "Row $rowNumber: Invalid date format '$date_string'. Could not parse to valid datetime.";
+                $errors[] = "Row $rowNumber: Invalid date format '$date_string'";
                 $errorCount++;
                 continue;
             }
             
-            $parsed_timestamp = strtotime($date_posted);
-            if ($parsed_timestamp < strtotime('2020-01-01') || $parsed_timestamp > strtotime('2030-12-31')) {
-                $errors[] = "Row $rowNumber: Date '$date_posted' is out of reasonable range (2020-2030)";
-                $errorCount++;
-                continue;
-            }
-            
-            error_log("Successfully parsed date: '$date_string' -> '$date_posted'");
-            
-            // Optional fields with defaults
-            $source = isset($data[4]) ? trim($data[4]) : '';
-            $destination = isset($data[5]) ? trim($data[5]) : '';
-            $country = isset($data[6]) ? trim($data[6]) : 'Kenya'; // Default country
-            
-            // Handle data source ID - ensure it's valid
-            $data_source_id_input = isset($data[7]) ? trim($data[7]) : '';
-            if (empty($data_source_id_input) || $data_source_id_input == '0') {
-                $data_source_id = 1; // Default to AGRA if empty or 0
+            // Get border name
+            $border_name = "";
+            $stmt = $con->prepare("SELECT name FROM border_points WHERE id = ?");
+            $stmt->bind_param("i", $border_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($row = $result->fetch_assoc()) {
+                $border_name = $row['name'];
             } else {
-                $data_source_id = intval($data_source_id_input);
+                $errors[] = "Row $rowNumber: Border ID $border_id not found";
+                $errorCount++;
+                continue;
             }
-
-            $status = isset($data[8]) ? trim($data[8]) : 'pending'; // STATUS ASSIGNMENT BEFORE VALIDATION
+            $stmt->close();
             
-            // Extract date components
+            // Get commodity name and category
+            $commodity_name = "";
+            $variety = "";
+            $category_id = 1;
+            $stmt = $con->prepare("SELECT commodity_name, variety, category_id FROM commodities WHERE id = ?");
+            $stmt->bind_param("i", $commodity_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($row = $result->fetch_assoc()) {
+                $commodity_name = $row['commodity_name'];
+                $variety = $row['variety'];
+                $category_id = $row['category_id'] ?? 1;
+            } else {
+                $errors[] = "Row $rowNumber: Commodity ID $commodity_id not found";
+                $errorCount++;
+                continue;
+            }
+            $stmt->close();
+            
+            // Get category name
+            $category_name = "";
+            $stmt = $con->prepare("SELECT name FROM commodity_categories WHERE id = ?");
+            $stmt->bind_param("i", $category_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($row = $result->fetch_assoc()) {
+                $category_name = $row['name'];
+            }
+            $stmt->close();
+            
+            // Get data source name
+            $data_source_name = "";
+            $stmt = $con->prepare("SELECT data_source_name FROM data_sources WHERE id = ?");
+            $stmt->bind_param("i", $data_source_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($row = $result->fetch_assoc()) {
+                $data_source_name = $row['data_source_name'];
+            }
+            $stmt->close();
+            
             $day = date('d', strtotime($date_posted));
             $month = date('m', strtotime($date_posted));
             $year = date('Y', strtotime($date_posted));
             
-            // Validate status - NOW THIS COMES AFTER STATUS IS ASSIGNED
             $valid_statuses = ['pending', 'approved', 'published', 'unpublished'];
             if (!in_array($status, $valid_statuses)) {
                 $errors[] = "Row $rowNumber: Invalid status '$status'";
@@ -175,137 +404,16 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                 continue;
             }
             
-            // Get border name and country if not provided
-            $border_name = "";
-            $border_country = $country;
-            $border_query = "SELECT name, country FROM border_points WHERE id = ? LIMIT 1";
-            $border_stmt = $con->prepare($border_query);
-            if (!$border_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare border query: " . $con->error;
-                $errorCount++;
-                continue;
-            }
-            $border_stmt->bind_param('i', $border_id);
-            $border_stmt->execute();
-            $border_result = $border_stmt->get_result();
-            if ($border_result->num_rows > 0) {
-                $border_row = $border_result->fetch_assoc();
-                $border_name = $border_row['name'];
-                // Use border country if not provided in CSV
-                if (empty($country) && !empty($border_row['country'])) {
-                    $border_country = $border_row['country'];
-                }
-            } else {
-                $errors[] = "Row $rowNumber: Border ID '$border_id' not found";
-                $errorCount++;
-                $border_stmt->close();
-                continue;
-            }
-            $border_stmt->close();
-            
-            // Get commodity name
-            $commodity_name = "";
-            $commodity_query = "SELECT commodity_name, variety FROM commodities WHERE id = ? LIMIT 1";
-            $commodity_stmt = $con->prepare($commodity_query);
-            if (!$commodity_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare commodity query: " . $con->error;
-                $errorCount++;
-                continue;
-            }
-            $commodity_stmt->bind_param('i', $commodity_id);
-            $commodity_stmt->execute();
-            $commodity_result = $commodity_stmt->get_result();
-            if ($commodity_result->num_rows > 0) {
-                $commodity_row = $commodity_result->fetch_assoc();
-                $commodity_name = $commodity_row['commodity_name'];
-                $variety = $commodity_row['variety'];
-            } else {
-                $errors[] = "Row $rowNumber: Commodity ID '$commodity_id' not found";
-                $errorCount++;
-                $commodity_stmt->close();
-                continue;
-            }
-            $commodity_stmt->close();
-
-            // Get data source name
-            $data_source_name = "AGRA"; // Default
-            $source_query = "SELECT data_source_name FROM data_sources WHERE id = ? LIMIT 1";
-            $source_stmt = $con->prepare($source_query);
-            if ($source_stmt) {
-                $source_stmt->bind_param('i', $data_source_id);
-                $source_stmt->execute();
-                $source_result = $source_stmt->get_result();
-                if ($source_result->num_rows > 0) {
-                    $source_row = $source_result->fetch_assoc();
-                    $data_source_name = $source_row['data_source_name'];
-                } else {
-                    // If data source ID not found, use default and log warning
-                    error_log("Warning: Data Source ID '$data_source_id' not found, using default AGRA");
-                    $data_source_id = 1; // Reset to default AGRA
-                    $data_source_name = "AGRA";
-                }
-                $source_stmt->close();
-            } else {
-                error_log("Failed to prepare data source query: " . $con->error);
-                // Continue with defaults
-            }
-            
-            // DEBUG: Log what we're about to insert
-            error_log("Preparing to insert: border=$border_id, commodity=$commodity_id, volume=$volume, country=$border_country, date=$date_posted");
-            
-            // Check if XBT volume record already exists
-            $check_query = "SELECT id FROM xbt_volumes WHERE border_id = ? AND commodity_id = ? AND DATE(date_posted) = DATE(?)";
-            $check_stmt = $con->prepare($check_query);
-            if (!$check_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare check query: " . $con->error;
-                $errorCount++;
-                continue;
-            }
-            $check_stmt->bind_param('iis', $border_id, $commodity_id, $date_posted);
+            // Check if record exists
+            $check_stmt = $con->prepare("SELECT id FROM xbt_volumes WHERE border_id = ? AND commodity_id = ? AND DATE(date_posted) = DATE(?)");
+            $check_stmt->bind_param("iis", $border_id, $commodity_id, $date_posted);
             $check_stmt->execute();
             $check_result = $check_stmt->get_result();
             
             if ($check_result->num_rows > 0) {
                 if ($overwrite) {
-                    // Update existing volume
-                    $update_query = "UPDATE xbt_volumes SET 
-                        volume = ?,
-                        source = ?,
-                        destination = ?,
-                        country = ?,
-                        data_source_id = ?,
-                        data_source_name = ?,
-                        status = ?,
-                        day = ?,
-                        month = ?,
-                        year = ?
-                        WHERE border_id = ? AND commodity_id = ? AND DATE(date_posted) = DATE(?)";
-                    
-                    $update_stmt = $con->prepare($update_query);
-                    if (!$update_stmt) {
-                        $errors[] = "Row $rowNumber: Failed to prepare update statement: " . $con->error;
-                        $errorCount++;
-                        $check_stmt->close();
-                        continue;
-                    }
-                    
-                    $update_stmt->bind_param(
-                        'dsssisiiiiss',
-                        $volume,
-                        $source,
-                        $destination,
-                        $border_country,
-                        $data_source_id,
-                        $data_source_name,
-                        $status,
-                        $day,
-                        $month,
-                        $year,
-                        $border_id,
-                        $commodity_id,
-                        $date_posted
-                    );
-                    
+                    $update_stmt = $con->prepare("UPDATE xbt_volumes SET volume=?, source=?, destination=?, country=?, data_source_id=?, data_source_name=?, status=?, day=?, month=?, year=? WHERE border_id=? AND commodity_id=? AND DATE(date_posted)=DATE(?)");
+                    $update_stmt->bind_param("dsssisiiiiiis", $volume, $source, $destination, $country, $data_source_id, $data_source_name, $status, $day, $month, $year, $border_id, $commodity_id, $date_posted);
                     if ($update_stmt->execute()) {
                         $successCount++;
                     } else {
@@ -314,7 +422,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
                     }
                     $update_stmt->close();
                 } else {
-                    $errors[] = "Row $rowNumber: XBT volume record already exists (use overwrite option to update)";
+                    $errors[] = "Row $rowNumber: Record already exists (use overwrite to update)";
                     $errorCount++;
                 }
                 $check_stmt->close();
@@ -322,1869 +430,1016 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
             }
             $check_stmt->close();
             
-            // Insert new XBT volume record
-            $insert_query = "INSERT INTO xbt_volumes (
-                border_id,
-                border_name,
-                commodity_id,
-                commodity_name,
-                variety,
-                volume,
-                source,
-                destination,
-                country,
-                data_source_id,
-                data_source_name,
-                date_posted,
-                day,
-                month,
-                year,
-                status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-            $insert_stmt = $con->prepare($insert_query);
-            if (!$insert_stmt) {
-                $errors[] = "Row $rowNumber: Failed to prepare insert statement: " . $con->error;
-                $errorCount++;
-                continue;
-            }
-
-            $insert_stmt->bind_param(
-                'isisdsssissiiis',
-                $border_id,
-                $border_name,
-                $commodity_id,
-                $commodity_name,
-                $variety,
-                $volume,
-                $source,
-                $destination,
-                $border_country,
-                $data_source_id,
-                $data_source_name,
-                $date_posted,
-                $day,
-                $month,
-                $year,
-                $status
-            );
-
+            // Insert new record
+            $insert_stmt = $con->prepare("INSERT INTO xbt_volumes (country, border_id, border_name, commodity_id, commodity_name, category_id, category_name, variety, volume, source, destination, data_source_id, data_source_name, date_posted, day, month, year, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $insert_stmt->bind_param("sisssisssdssisiiis", $country, $border_id, $border_name, $commodity_id, $commodity_name, $category_id, $category_name, $variety, $volume, $source, $destination, $data_source_id, $data_source_name, $date_posted, $day, $month, $year, $status);
+            
             if ($insert_stmt->execute()) {
                 $successCount++;
-                error_log("Insert successful for row $rowNumber");
             } else {
-                $error_msg = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
-                $errors[] = $error_msg;
-                error_log($error_msg);
+                $errors[] = "Row $rowNumber: Insert failed - " . $insert_stmt->error;
                 $errorCount++;
             }
             $insert_stmt->close();
         }
         
-        // Commit or rollback transaction
         if ($errorCount === 0) {
             $con->commit();
             $_SESSION['import_message'] = "Successfully imported $successCount XBT volumes.";
-            $_SESSION['import_status'] = 'success';
+            $_SESSION['import_status'] = "success";
         } else {
             $con->rollback();
-            $_SESSION['import_message'] = "Import failed with $errorCount errors. Errors: " . implode('<br>', array_slice($errors, 0, 10));
-            $_SESSION['import_status'] = 'danger';
+            $_SESSION['import_message'] = "Import failed with $errorCount errors. " . implode('<br>', array_slice($errors, 0, 10));
+            $_SESSION['import_status'] = "danger";
         }
-        
     } catch (Exception $e) {
         $con->rollback();
-        $_SESSION['import_message'] = "Import failed with exception: " . $e->getMessage();
-        $_SESSION['import_status'] = 'danger';
+        $_SESSION['import_message'] = "Import failed: " . $e->getMessage();
+        $_SESSION['import_status'] = "danger";
     }
-    
     fclose($handle);
-    
-    // Redirect to avoid form resubmission
-    header("Location: xbtvol_boilerplate.php");
-    exit;
-    
-} elseif (isset($_POST['import_csv'])) {
-    $_SESSION['import_message'] = "Please select a valid CSV file to import.";
-    $_SESSION['import_status'] = 'danger';
-    header("Location: xbtvol_boilerplate.php");
+    header("Location: xbt_volumes.php");
     exit;
 }
 
-// Include the shared header AFTER handling POST requests
-include '../admin/includes/header.php';
-
-// Check for session messages
-$import_message = null;
-$import_status = null;
-if (isset($_SESSION['import_message'])) {
-    $import_message = $_SESSION['import_message'];
-    $import_status = $_SESSION['import_status'];
-    unset($_SESSION['import_message']);
-    unset($_SESSION['import_status']);
+// ============================================================
+// CSV TEMPLATE DOWNLOAD
+// ============================================================
+if (isset($_GET['download_template'])) {
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="xbt_volumes_template.csv"');
+    header('Pragma: no-cache');
+    $out = fopen('php://output', 'w');
+    fputs($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['Border ID', 'Commodity ID', 'Volume (MT)', 'Date (YYYY-MM-DD)', 'Source', 'Destination', 'Country', 'Data Source ID', 'Status']);
+    fputcsv($out, ['1', '40', '1500.50', '2025-06-03', 'Kenya', 'Uganda', 'Kenya', '1', 'pending']);
+    fputcsv($out, ['2', '41', '2000.75', '2025-06-03', 'Tanzania', 'Rwanda', 'Tanzania', '1', 'approved']);
+    fclose($out);
+    exit;
 }
 
-// Function to fetch XBT volumes data from the database with filters and sorting
-function getXBTVolumesData($con, $limit = 10, $offset = 0, $filters = [], $sort_column = 'date_posted', $sort_order = 'DESC') {
-    $where_clauses = [];
-    $params = [];
-    $types = '';
+// ============================================================
+// API HANDLER — fetch single XBT volume for edit modal
+// ============================================================
+if (isset($_GET['get_xbt_volume']) && is_numeric($_GET['get_xbt_volume'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
     
-    // Apply filters if provided
-    if (!empty($filters['border'])) {
-        $where_clauses[] = "b.name LIKE ?";
-        $params[] = '%' . $filters['border'] . '%';
-        $types .= 's';
+    header('Content-Type: application/json');
+    $get_id = (int)$_GET['get_xbt_volume'];
+    $result = $con->query("SELECT x.*, c.category_id FROM xbt_volumes x LEFT JOIN commodities c ON x.commodity_id = c.id WHERE x.id = $get_id");
+    if ($result && $row = $result->fetch_assoc()) {
+        echo json_encode($row);
+    } else {
+        http_response_code(404);
+        echo json_encode(['error' => 'Not found']);
     }
-    
-    if (!empty($filters['commodity'])) {
-        $where_clauses[] = "(c.commodity_name LIKE ? OR c.variety LIKE ?)";
-        $params[] = '%' . $filters['commodity'] . '%';
-        $params[] = '%' . $filters['commodity'] . '%';
-        $types .= 'ss';
-    }
-    
-    if (!empty($filters['source'])) {
-        $where_clauses[] = "x.source LIKE ?";
-        $params[] = '%' . $filters['source'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['destination'])) {
-        $where_clauses[] = "x.destination LIKE ?";
-        $params[] = '%' . $filters['destination'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['date'])) {
-        $where_clauses[] = "DATE(x.date_posted) LIKE ?";
-        $params[] = '%' . $filters['date'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['status'])) {
-        $where_clauses[] = "x.status LIKE ?";
-        $params[] = '%' . $filters['status'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['data_source'])) {
-        $where_clauses[] = "ds.data_source_name LIKE ?";
-        $params[] = '%' . $filters['data_source'] . '%';
-        $types .= 's';
-    }
-    
-    $where_sql = '';
-    if (!empty($where_clauses)) {
-        $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
-    }
-    
-    // Map sortable columns to database columns
-    $sortable_columns = [
-        'id' => 'x.id',
-        'border' => 'b.name',
-        'commodity' => 'c.commodity_name',
-        'volume' => 'x.volume',
-        'source' => 'x.source',
-        'destination' => 'x.destination',
-        'date' => 'x.date_posted',
-        'status' => 'x.status',
-        'data_source' => 'ds.data_source_name'
-    ];
-    
-    $default_sort_column = 'date_posted';
-    $default_sort_order = 'DESC';
-    
-    $db_sort_column = isset($sortable_columns[$sort_column]) ? $sortable_columns[$sort_column] : $sortable_columns['date'];
-    $db_sort_order = in_array(strtoupper($sort_order), ['ASC', 'DESC']) ? strtoupper($sort_order) : $default_sort_order;
-    
-    $sql = "SELECT
-                x.id,
-                b.name AS border_name,
-                c.commodity_name,
-                c.variety,
-                CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
-                x.volume,
-                x.source,
-                x.destination,
-                x.date_posted,
-                x.status,
-                ds.data_source_name AS data_source
-            FROM
-                xbt_volumes x
-            LEFT JOIN
-                border_points b ON x.border_id = b.id
-            LEFT JOIN
-                commodities c ON x.commodity_id = c.id
-            LEFT JOIN
-                data_sources ds ON x.data_source_id = ds.id
-            $where_sql
-            ORDER BY
-                $db_sort_column $db_sort_order
-            LIMIT $limit OFFSET $offset";
-
-    $stmt = $con->prepare($sql);
-    if (!$stmt) {
-        error_log("Error preparing statement: " . $con->error);
-        return [];
-    }
-    
-    if (!empty($params)) {
-        $stmt->bind_param($types, ...$params);
-    }
-    
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $data = [];
-    
-    if ($result) {
-        if ($result->num_rows > 0) {
-            while ($row = $result->fetch_assoc()) {
-                $data[] = $row;
-            }
-        }
-        $result->free();
-    }
-    $stmt->close();
-    
-    return $data;
+    exit;
 }
 
-function getTotalXBTVolumeRecords($con, $filters = []) {
-    $where_clauses = [];
-    $params = [];
-    $types = '';
-    
-    // Apply filters if provided
-    if (!empty($filters['border'])) {
-        $where_clauses[] = "b.name LIKE ?";
-        $params[] = '%' . $filters['border'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['commodity'])) {
-        $where_clauses[] = "(c.commodity_name LIKE ? OR c.variety LIKE ?)";
-        $params[] = '%' . $filters['commodity'] . '%';
-        $params[] = '%' . $filters['commodity'] . '%';
-        $types .= 'ss';
-    }
-    
-    if (!empty($filters['source'])) {
-        $where_clauses[] = "x.source LIKE ?";
-        $params[] = '%' . $filters['source'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['destination'])) {
-        $where_clauses[] = "x.destination LIKE ?";
-        $params[] = '%' . $filters['destination'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['date'])) {
-        $where_clauses[] = "DATE(x.date_posted) LIKE ?";
-        $params[] = '%' . $filters['date'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['status'])) {
-        $where_clauses[] = "x.status LIKE ?";
-        $params[] = '%' . $filters['status'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($filters['data_source'])) {
-        $where_clauses[] = "ds.data_source_name LIKE ?";
-        $params[] = '%' . $filters['data_source'] . '%';
-        $types .= 's';
-    }
-    
-    $where_sql = '';
-    if (!empty($where_clauses)) {
-        $where_sql = 'WHERE ' . implode(' AND ', $where_clauses);
-    }
-    
-    $sql = "SELECT count(*) as total 
-            FROM xbt_volumes x
-            LEFT JOIN border_points b ON x.border_id = b.id
-            LEFT JOIN commodities c ON x.commodity_id = c.id
-            LEFT JOIN data_sources ds ON x.data_source_id = ds.id
-            $where_sql";
-    
-    $stmt = $con->prepare($sql);
-    if (!$stmt) {
-        error_log("Error preparing count statement: " . $con->error);
-        return 0;
-    }
-    
-    if (!empty($params)) {
-        $stmt->bind_param($types, ...$params);
-    }
-    
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $total = 0;
-    
-    if ($result) {
-        $row = $result->fetch_assoc();
-        $total = $row['total'];
-    }
-    $stmt->close();
-    
-    return $total;
+// ============================================================
+// CHECK ADMIN LOGIN
+// ============================================================
+require_once '../admin/includes/admin_header.php';
+
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    header("Location: ../admin/login.php");
+    exit;
 }
 
-// Get filter values from GET parameters
-$filters = [
-    'border' => isset($_GET['filter_border']) ? trim($_GET['filter_border']) : '',
-    'commodity' => isset($_GET['filter_commodity']) ? trim($_GET['filter_commodity']) : '',
-    'source' => isset($_GET['filter_source']) ? trim($_GET['filter_source']) : '',
-    'destination' => isset($_GET['filter_destination']) ? trim($_GET['filter_destination']) : '',
-    'date' => isset($_GET['filter_date']) ? trim($_GET['filter_date']) : '',
-    'status' => isset($_GET['filter_status']) ? trim($_GET['filter_status']) : '',
-    'data_source' => isset($_GET['filter_data_source']) ? trim($_GET['filter_data_source']) : ''
-];
+// ============================================================
+// INCLUDE CONFIG
+// ============================================================
+if (file_exists('includes/config.php')) include 'includes/config.php';
+elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
 
-// Get sort parameters
-$sortable_columns = ['id', 'border', 'commodity', 'volume', 'source', 'destination', 'date', 'status', 'data_source'];
-$default_sort_column = 'date';
-$default_sort_order = 'DESC';
+// ============================================================
+// STATISTICS
+// ============================================================
+$total_volumes = (int)($con->query("SELECT COUNT(*) as t FROM xbt_volumes")->fetch_assoc()['t'] ?? 0);
+$pending_count = (int)($con->query("SELECT COUNT(*) as t FROM xbt_volumes WHERE status = 'pending'")->fetch_assoc()['t'] ?? 0);
+$approved_count = (int)($con->query("SELECT COUNT(*) as t FROM xbt_volumes WHERE status = 'approved'")->fetch_assoc()['t'] ?? 0);
+$published_count = (int)($con->query("SELECT COUNT(*) as t FROM xbt_volumes WHERE status = 'published'")->fetch_assoc()['t'] ?? 0);
+$unpublished_count = (int)($con->query("SELECT COUNT(*) as t FROM xbt_volumes WHERE status = 'unpublished'")->fetch_assoc()['t'] ?? 0);
 
-$sort_column = isset($_GET['sort']) && in_array($_GET['sort'], $sortable_columns) ? $_GET['sort'] : $default_sort_column;
-$sort_order = isset($_GET['order']) && in_array(strtoupper($_GET['order']), ['ASC', 'DESC']) ? strtoupper($_GET['order']) : $default_sort_order;
+// Get distinct borders for filter
+$borders_result = $con->query("SELECT DISTINCT b.id, b.name FROM xbt_volumes x LEFT JOIN border_points b ON x.border_id = b.id ORDER BY b.name");
+$distinct_borders = [];
+while ($row = $borders_result->fetch_assoc()) {
+    if ($row['name']) $distinct_borders[] = $row['name'];
+}
 
-// Get total number of records with filters
-$total_records = getTotalXBTVolumeRecords($con, $filters);
+// Get distinct sources/destinations
+$sources_result = $con->query("SELECT DISTINCT source FROM xbt_volumes ORDER BY source");
+$distinct_sources = [];
+while ($row = $sources_result->fetch_assoc()) {
+    if ($row['source']) $distinct_sources[] = $row['source'];
+}
 
-// Set pagination parameters
-$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 10;
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$destinations_result = $con->query("SELECT DISTINCT destination FROM xbt_volumes ORDER BY destination");
+$distinct_destinations = [];
+while ($row = $destinations_result->fetch_assoc()) {
+    if ($row['destination']) $distinct_destinations[] = $row['destination'];
+}
+
+// ============================================================
+// PAGINATION + SORTING + FILTERING
+// ============================================================
+$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 20;
+if (!in_array($limit, [10, 20, 50, 100])) $limit = 20;
+
+$sort_column = $_GET['sort'] ?? 'date_posted';
+$sort_direction = (isset($_GET['dir']) && strtolower($_GET['dir']) === 'asc') ? 'ASC' : 'DESC';
+$allowed_sorts = ['id', 'border', 'commodity', 'volume', 'source', 'destination', 'date_posted', 'status', 'data_source'];
+if (!in_array($sort_column, $allowed_sorts)) $sort_column = 'date_posted';
+
+$search_border = trim($_GET['search_border'] ?? '');
+$search_commodity = trim($_GET['search_commodity'] ?? '');
+$search_source = trim($_GET['search_source'] ?? '');
+$search_destination = trim($_GET['search_destination'] ?? '');
+$filter_status = trim($_GET['filter_status'] ?? '');
+
+$where = "WHERE 1=1";
+$params = [];
+$types = "";
+
+if ($search_border !== '') {
+    $where .= " AND b.name LIKE ?";
+    $params[] = '%' . $search_border . '%';
+    $types .= "s";
+}
+if ($search_commodity !== '') {
+    $where .= " AND (c.commodity_name LIKE ? OR c.variety LIKE ?)";
+    $params[] = '%' . $search_commodity . '%';
+    $params[] = '%' . $search_commodity . '%';
+    $types .= "ss";
+}
+if ($search_source !== '') {
+    $where .= " AND x.source LIKE ?";
+    $params[] = '%' . $search_source . '%';
+    $types .= "s";
+}
+if ($search_destination !== '') {
+    $where .= " AND x.destination LIKE ?";
+    $params[] = '%' . $search_destination . '%';
+    $types .= "s";
+}
+if ($filter_status !== '') {
+    $where .= " AND x.status = ?";
+    $params[] = $filter_status;
+    $types .= "s";
+}
+
+// Count total records
+$count_stmt = $con->prepare("SELECT COUNT(*) as total FROM xbt_volumes x LEFT JOIN border_points b ON x.border_id = b.id LEFT JOIN commodities c ON x.commodity_id = c.id LEFT JOIN data_sources ds ON x.data_source_id = ds.id $where");
+if (!empty($params)) $count_stmt->bind_param($types, ...$params);
+$count_stmt->execute();
+$filtered_records = (int)$count_stmt->get_result()->fetch_assoc()['total'];
+$count_stmt->close();
+
+$total_pages = max(1, (int)ceil($filtered_records / $limit));
+$page = isset($_GET['page']) ? max(1, min((int)$_GET['page'], $total_pages)) : 1;
 $offset = ($page - 1) * $limit;
 
-// Fetch XBT volumes data with filters and sorting
-$xbt_volumes_data = getXBTVolumesData($con, $limit, $offset, $filters, $sort_column, $sort_order);
+// Map sort column to database column
+$sort_map = [
+    'id' => 'x.id',
+    'border' => 'b.name',
+    'commodity' => 'c.commodity_name',
+    'volume' => 'x.volume',
+    'source' => 'x.source',
+    'destination' => 'x.destination',
+    'date_posted' => 'x.date_posted',
+    'status' => 'x.status',
+    'data_source' => 'ds.data_source_name'
+];
+$order_by = $sort_map[$sort_column] ?? 'x.date_posted';
+$dir = $sort_direction === 'ASC' ? 'ASC' : 'DESC';
 
-// Calculate total pages
-$total_pages = ceil($total_records / $limit);
+// Fetch data
+$data_params = array_merge($params, [$limit, $offset]);
+$data_types = $types . "ii";
 
-// Function to get status display
-function getStatusDisplay($status) {
+$query = "SELECT 
+    x.id, x.volume, x.source, x.destination, x.date_posted, x.status,
+    b.name as border_name,
+    CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
+    ds.data_source_name as data_source
+    FROM xbt_volumes x
+    LEFT JOIN border_points b ON x.border_id = b.id
+    LEFT JOIN commodities c ON x.commodity_id = c.id
+    LEFT JOIN data_sources ds ON x.data_source_id = ds.id
+    $where 
+    ORDER BY $order_by $dir
+    LIMIT ? OFFSET ?";
+
+$data_stmt = $con->prepare($query);
+$data_stmt->bind_param($data_types, ...$data_params);
+$data_stmt->execute();
+$xbt_volumes = $data_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$data_stmt->close();
+
+$showing_from = $filtered_records > 0 ? $offset + 1 : 0;
+$showing_to = $filtered_records > 0 ? min($offset + $limit, $filtered_records) : 0;
+
+// Get data for modals
+$border_points = [];
+$bp_result = $con->query("SELECT id, name FROM border_points ORDER BY name");
+while ($row = $bp_result->fetch_assoc()) {
+    $border_points[] = $row;
+}
+
+$commodities = [];
+$comm_result = $con->query("SELECT id, commodity_name, variety, category_id FROM commodities ORDER BY commodity_name");
+while ($row = $comm_result->fetch_assoc()) {
+    $row['display_name'] = $row['commodity_name'] . (!empty($row['variety']) ? ' (' . $row['variety'] . ')' : '');
+    $commodities[] = $row;
+}
+
+$categories = [];
+$cat_result = $con->query("SELECT id, name FROM commodity_categories ORDER BY name");
+while ($row = $cat_result->fetch_assoc()) {
+    $categories[] = $row;
+}
+
+$data_sources = [];
+$ds_result = $con->query("SELECT id, data_source_name FROM data_sources ORDER BY data_source_name");
+while ($row = $ds_result->fetch_assoc()) {
+    $data_sources[] = $row;
+}
+
+function getStatusBadge($status) {
     switch ($status) {
-        case 'pending':
-            return '<span class="status-dot status-pending"></span> Pending';
-        case 'published':
-            return '<span class="status-dot status-published"></span> Published';
-        case 'approved':
-            return '<span class="status-dot status-approved"></span> Approved';
-        case 'unpublished':
-            return '<span class="status-dot status-unpublished"></span> Unpublished';
-        default:
-            return '<span class="status-dot"></span> Unknown';
+        case 'pending': return '<span class="status-badge status-pending">Pending</span>';
+        case 'approved': return '<span class="status-badge status-approved">Approved</span>';
+        case 'published': return '<span class="status-badge status-published">Published</span>';
+        case 'unpublished': return '<span class="status-badge status-unpublished">Unpublished</span>';
+        default: return '<span class="status-badge">Unknown</span>';
     }
 }
 ?>
 
 <style>
-    .container {
-        background: #fff;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        margin: 20px;
-    }
-    h2 {
-        margin: 0 0 5px;
-    }
-    p.subtitle {
-        color: #777;
-        font-size: 14px;
-        margin: 0 0 20px;
-    }
-    
-    /* Button group styling - FIXED */
-    .btn-group {
-        margin-bottom: 15px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-    }
-    
-    .btn-add-new {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        padding: 10px 20px;
-        font-size: 16px;
-        border: none;
-        border-radius: 5px;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        height: 52px;
-        min-width: 140px;
-        text-align: center;
-    }
-    
-    .btn-add-new:hover {
-        background-color: darkred;
-        color: white;
-        text-decoration: none;
-    }
-    
-    .btn-delete, .btn-export, .btn-import, .btn-bulk-export, .btn-clear-selections,
-    .btn-approve, .btn-publish, .btn-unpublish, .btn-clear-filters {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-        padding: 8px 16px;
-        border-radius: 5px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        height: 40px;
-        font-size: 14px;
-    }
-    
-    .btn-delete:hover, .btn-export:hover, .btn-import:hover, 
-    .btn-bulk-export:hover, .btn-clear-selections:hover,
-    .btn-clear-filters:hover {
-        background-color: #f8f9fa;
-    }
-    
-    .btn-clear-selections {
-        background-color: #ffc107;
-        color: black;
-    }
-    
-    .btn-clear-selections:hover {
-        background-color: #e0a800;
-    }
-    
-    .btn-approve {
-        background-color: #28a745;
-        color: white;
-        border: none;
-    }
-    
-    .btn-approve:hover {
-        background-color: #218838;
-    }
-    
-    .btn-unpublish {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        border: none;
-    }
-    
-    .btn-unpublish:hover {
-        background-color: darkred;
-    }
-    
-    .btn-publish {
-        background-color: rgba(180, 80, 50, 1);
-        color: white;
-        border: none;
-    }
-    
-    .btn-publish:hover {
-        background-color: darkred;
-    }
-    
-    .btn-clear-filters {
-        background-color: white;
-        color: black;
-        border: 1px solid #ddd;
-    }
-    
-    .btn-clear-filters:hover {
-        background-color: #f8f9fa;
-    }
-    
-    .dropdown-menu {
-        min-width: 120px;
-    }
-    
-    .dropdown-item {
-        cursor: pointer;
-    }
-    
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 14px;
-    }
-    table th, table td {
-        padding: 12px;
-        border-bottom: 1px solid #eee;
-        text-align: left;
-        vertical-align: top;
-    }
-    table th {
-        background-color: #f1f1f1;
-    }
-    table tr:nth-child(even) {
-        background-color: #fafafa;
-    }
-    .status-dot {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        margin-right: 6px;
-    }
-    .status-pending {
-        background-color: orange;
-    }
-    .status-published {
-        background-color: blue;
-    }
-    .status-approved {
-        background-color: green;
-    }
-    .status-unpublished {
-        background-color: grey;
-    }
-    .actions {
-        display: flex;
-        gap: 8px;
-    }
-     .pagination {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 20px;
-        font-size: 14px;
-        align-items: center;
-        flex-wrap: wrap;
-    }
-    .pagination .pages {
-        display: flex;
-        gap: 5px;
-    }
-    .pagination .page {
-        padding: 6px 10px;
-        border-radius: 6px;
-        background-color: #eee;
-        cursor: pointer;
-        text-decoration: none;
-        color: #333;
-    }
-    .pagination .current {
-        background-color: #cddc39;
-    }
-    select {
-        padding: 6px;
-        margin-left: 5px;
-    }
-    
-    /* Import instructions styles */
-    .import-instructions {
-        background-color: #f8f9fa;
-        border-left: 4px solid rgba(180, 80, 50, 1);
-        padding: 15px;
-        margin-bottom: 20px;
-        max-height: 300px;
-        overflow-y: auto;
-        border-radius: 5px;
-    }
-    .import-instructions h5 {
-        color: rgba(180, 80, 50, 1);
-        margin-top: 0;
-        position: sticky;
-        top: 0;
-        background-color: #f8f9fa;
-        padding-bottom: 10px;
-        border-bottom: 1px solid #dee2e6;
-        margin-bottom: 15px;
-    }
-    .import-instructions h6 {
-        color: rgba(180, 80, 50, 0.8);
-        margin-top: 15px;
-    }
-    .download-template {
-        display: inline-block;
-        margin-top: 10px;
-        color: rgba(180, 80, 50, 1);
-        text-decoration: none;
-    }
-    .download-template:hover {
-        text-decoration: underline;
-    }
-    
-    /* Filter styles */
-    .filter-row th {
-        background-color: white;
-        padding: 8px;
-    }
-    .filter-input {
-        width: 100%;
-        border: 1px solid #e5e7eb;
-        background: white;
-        padding: 6px 8px;
-        border-radius: 4px;
-        font-size: 13px;
-    }
-    .filter-input:focus {
-        outline: none;
-        border-color: rgba(180, 80, 50, 1);
-        box-shadow: 0 0 0 2px rgba(180, 80, 50, 0.1);
-    }
-    
-    /* Dropdown styles */
-    .dropdown {
-        position: relative;
-        display: inline-block;
-    }
-    .dropdown-menu {
-        display: none;
-        position: absolute;
-        background-color: white;
-        min-width: 160px;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-        z-index: 1000;
-        border-radius: 4px;
-        padding: 5px 0;
-    }
-    .dropdown-menu.show {
-        display: block;
-    }
-    .dropdown-item {
-        padding: 8px 16px;
-        text-decoration: none;
-        display: block;
-        color: #333;
-        cursor: pointer;
-    }
-    .dropdown-item:hover {
-        background-color: #f8f9fa;
-    }
-    .dropdown-divider {
-        height: 1px;
-        margin: 5px 0;
-        background-color: #e5e7eb;
-    }
-    
-    /* Fixed Modal styles */
-    .modal {
-        display: none;
-        position: fixed;
-        z-index: 1050;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        overflow: auto;
-        background-color: rgba(0,0,0,0.4);
-    }
-    
-    .modal.show {
-        display: block;
-    }
-    
-    .modal-dialog {
-        margin: 5% auto;
-        max-width: 800px;
-    }
-    
-    .modal-content {
-        background-color: #fefefe;
-        padding: 20px;
-        border: 1px solid #888;
-        border-radius: 8px;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        max-height: 90vh;
-        overflow-y: auto;
-    }
-    
-    .modal-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-bottom: 15px;
-        border-bottom: 1px solid #dee2e6;
-    }
-    
-    .modal-title {
-        margin: 0;
-        font-size: 1.25rem;
-    }
-    
-    .close-modal {
-        color: #aaa;
-        font-size: 28px;
-        font-weight: bold;
-        cursor: pointer;
-        background: none;
-        border: none;
-    }
-    
-    .close-modal:hover {
-        color: black;
-    }
-    
-    /* Instructions scrollbar styling */
-    .import-instructions::-webkit-scrollbar {
-        width: 6px;
-    }
-    .import-instructions::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 3px;
-    }
-    .import-instructions::-webkit-scrollbar-thumb {
-        background: rgba(180, 80, 50, 0.5);
-        border-radius: 3px;
-    }
-    .import-instructions::-webkit-scrollbar-thumb:hover {
-        background: rgba(180, 80, 50, 0.7);
-    }
-    
-    /* Alert styles */
-    .alert {
-        padding: 12px 20px;
-        margin-bottom: 20px;
-        border: 1px solid transparent;
-        border-radius: 4px;
-    }
-    
-    .alert-success {
-        color: #155724;
-        background-color: #d4edda;
-        border-color: #c3e6cb;
-    }
-    
-    .alert-danger {
-        color: #721c24;
-        background-color: #f8d7da;
-        border-color: #f5c6cb;
-    }
-    
-    .alert-warning {
-        color: #856404;
-        background-color: #fff3cd;
-        border-color: #ffeaa7;
-    }
-    
-    /* Selection styles */
-    .selected-count {
-        display: inline-block;
-        background-color: rgba(180, 80, 50, 0.1);
-        color: rgba(180, 80, 50, 1);
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.85rem;
-        margin-left: 5px;
-        font-weight: bold;
-    }
-    
-    /* Sorting styles */
-    .sortable {
-        cursor: pointer;
-        position: relative;
-        user-select: none;
-    }
-    
-    .sortable:hover {
-        background-color: #f0f0f0;
-    }
-    
-    .sort-icon {
-        display: inline-block;
-        margin-left: 5px;
-        font-size: 0.8em;
-        opacity: 0.7;
-    }
-    
-    .sort-asc .sort-icon::after {
-        content: "↑";
-    }
-    
-    .sort-desc .sort-icon::after {
-        content: "↓";
-    }
-    
-    .sortable.sort-asc,
-    .sortable.sort-desc {
-        background-color: #e9ecef;
-        font-weight: bold;
-    }
-    
-    .date-added {
-        font-size: 0.8em;
-        color: #6c757d;
-    }
-    
-    /* Toolbar layout */
-    .toolbar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-        flex-wrap: wrap;
-        gap: 15px;
-    }
-    
-    .toolbar-left,
-    .toolbar-right {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-    }
-    
-    .stats-section {
-        text-align: left;
-        margin-left: 0;
-        margin-bottom: 20px;
-    }
-    
-    .stats-container {
-        display: flex;
-        gap: 15px;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: nowrap;
-        width: 100%;
-        max-width: 100%;
-        margin: 0 auto 20px auto;
-    }
-    
-    .stats-container > div {
-        flex: 1;
-        background: white;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        text-align: center;
-        min-height: 120px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-    }
-    
-    .stats-icon {
-        width: 40px;
-        height: 40px;
-        margin-bottom: 10px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-    }
-    
-    .total-icon {
-        background-color: #9b59b6;
-        color: white;
-    }
-    
-    .pending-icon {
-        background-color: #f39c12;
-        color: white;
-    }
-    
-    .published-icon {
-        background-color: #27ae60;
-        color: white;
-    }
-    
-    .approved-icon {
-        background-color: #3498db;
-        color: white;
-    }
-    
-    .stats-title {
-        font-size: 16px;
-        font-weight: 600;
-        color: #2c3e50;
-        margin: 8px 0 5px 0;
-    }
-    
-    .stats-number {
-        font-size: 24px;
-        font-weight: 700;
-        color: #34495e;
-    }
+.auth-bg-gradient{background:radial-gradient(circle at top left,rgba(0,69,13,.03),transparent),radial-gradient(circle at bottom right,rgba(128,0,0,.03),transparent)}
+.header-accent-gradient{background:linear-gradient(90deg,#00450d 0%,#800000 50%,#00450d 100%)}
+.table-row-hover:hover{background-color:#fefaf5;transition:all .2s ease}
+.stat-card{transition:all .2s ease;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.stat-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.search-input:focus{border-color:#800000;outline:none}
+.action-btn{padding:.2rem .4rem;border-radius:.375rem;font-size:.7rem;font-weight:500;transition:all .2s;cursor:pointer;border:none;display:inline-flex;align-items:center}
+.pagination-btn{min-width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:.375rem;font-size:.75rem;transition:all .2s ease;cursor:pointer;border:1px solid #e5e7eb;background:white;color:#374151}
+.pagination-btn:hover:not(:disabled):not(.active-page){background-color:#fef3e7;border-color:#800000;color:#800000}
+.pagination-btn.active-page{background-color:#800000;border-color:#800000;color:white;font-weight:600}
+.pagination-btn:disabled{opacity:.35;cursor:not-allowed}
+.page-size-select{font-size:.75rem;padding:.25rem .5rem;border-radius:.375rem;border:1px solid #e5e7eb;background:white;cursor:pointer}
+.sortable{cursor:pointer;user-select:none}
+.sortable:hover{color:#800000}
+.sort-icon{font-size:.7rem;margin-left:.2rem;vertical-align:middle}
+.modal-gradient-header{background:linear-gradient(135deg,#800000 0%,#00450d 100%)}
+.material-symbols-outlined{font-family:'Material Symbols Outlined'!important;font-style:normal;font-weight:normal;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;-webkit-font-feature-settings:'liga';font-feature-settings:'liga';-webkit-font-smoothing:antialiased}
+
+.status-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:.7rem;font-weight:600}
+.status-badge::before{content:'';width:7px;height:7px;border-radius:50%;display:inline-block}
+.status-pending{background:#fef3c7;color:#92400e}
+.status-pending::before{background:#d97706}
+.status-approved{background:#e0f2fe;color:#075985}
+.status-approved::before{background:#0891b2}
+.status-published{background:#dcfce7;color:#166534}
+.status-published::before{background:#16a34a}
+.status-unpublished{background:#fee2e2;color:#991b1b}
+.status-unpublished::before{background:#dc2626}
+
+.volume-value{font-family:monospace;font-weight:700;font-size:.85rem}
 </style>
 
-<div class="stats-section">
-    <div class="text-wrapper-8"><h3>XBT Volumes Management</h3></div>
-    <p class="p">Manage everything related to Cross Border Trade Volume Data</p>
+<div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
+<div class="max-w-7xl mx-auto">
 
-    <?php
-    // Fetch counts for summary boxes
-    $total_xbt_query = "SELECT COUNT(*) AS total FROM xbt_volumes";
-    $total_xbt_result = $con->query($total_xbt_query);
-    $total_xbt = 0;
-    if ($total_xbt_result) {
-        $row = $total_xbt_result->fetch_assoc();
-        $total_xbt = $row['total'];
-    }
-
-    $pending_query = "SELECT COUNT(*) AS total FROM xbt_volumes WHERE status = 'pending'";
-    $pending_result = $con->query($pending_query);
-    $pending_count = 0;
-    if ($pending_result) {
-        $row = $pending_result->fetch_assoc();
-        $pending_count = $row['total'];
-    }
-
-    $published_query = "SELECT COUNT(*) AS total FROM xbt_volumes WHERE status = 'published'";
-    $published_result = $con->query($published_query);
-    $published_count = 0;
-    if ($published_result) {
-        $row = $published_result->fetch_assoc();
-        $published_count = $row['total'];
-    }
-
-    $approved_query = "SELECT COUNT(*) AS total FROM xbt_volumes WHERE status = 'approved'";
-    $approved_result = $con->query($approved_query);
-    $approved_count = 0;
-    if ($approved_result) {
-        $row = $approved_result->fetch_assoc();
-        $approved_count = $row['total'];
-    }
-    ?>
-
-    <div class="stats-container">
-        <div class="overlap-6">
-            <div class="stats-icon total-icon">
-                <i class="fas fa-database"></i>
+    <!-- Page Header -->
+    <div class="mb-6">
+        <div class="flex justify-between items-center flex-wrap gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-maroon">XBT Volumes Management</h1>
+                <p class="text-gray-600 text-sm mt-1">Manage cross-border trade volume data</p>
             </div>
-            <div class="stats-title">Total Volumes</div>
-            <div class="stats-number"><?php echo $total_xbt; ?></div>
-        </div>
-        
-        <div class="overlap-6">
-            <div class="stats-icon pending-icon">
-                <i class="fas fa-clock"></i>
-            </div>
-            <div class="stats-title">Pending</div>
-            <div class="stats-number"><?php echo $pending_count; ?></div>
-        </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon approved-icon">
-                <i class="fas fa-check-circle"></i>
-            </div>
-            <div class="stats-title">Approved</div>
-            <div class="stats-number"><?php echo $approved_count; ?></div>
-        </div>
-        
-        <div class="overlap-7">
-            <div class="stats-icon published-icon">
-                <i class="fas fa-upload"></i>
-            </div>
-            <div class="stats-title">Published</div>
-            <div class="stats-number"><?php echo $published_count; ?></div>
-        </div>
-    </div>
-</div>
-
-<?php if (isset($import_message)): ?>
-    <div class="alert alert-<?= $import_status ?>">
-        <?= htmlspecialchars($import_message) ?>
-    </div>
-<?php endif; ?>
-
-<div class="container">
-    <div class="btn-group">
-        <a href="../data/add_xbtvol.php" class="btn btn-add-new">
-            <i class="fas fa-plus" style="margin-right: 5px;"></i>
-            Add New
-        </a>
-
-        <button class="btn btn-import" onclick="openImportModal()">
-            <i class="fas fa-upload" style="margin-right: 5px;"></i>
-            Import
-        </button>
-
-        <button class="btn btn-delete" onclick="deleteSelected()">
-            <i class="fas fa-trash" style="margin-right: 5px;"></i>
-            Delete
-            <?php if (count($_SESSION['selected_xbt_volumes']) > 0): ?>
-                <span class="selected-count"><?php echo count($_SESSION['selected_xbt_volumes']); ?></span>
-            <?php endif; ?>
-        </button>
-
-        <button class="btn btn-clear-selections" onclick="clearAllSelections()">
-            <i class="fas fa-times-circle" style="margin-right: 5px;"></i>
-            Clear Selections
-        </button>
-
-        <div class="dropdown">
-            <button class="btn btn-export dropdown-toggle" type="button" onclick="toggleExportDropdown()">
-                <i class="fas fa-file-export" style="margin-right: 5px;"></i>
-                Export
-            </button>
-            <div class="dropdown-menu" id="exportDropdown">
-                <a class="dropdown-item" href="#" onclick="exportSelected('excel')">
-                    <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export Selected (Excel)
+            <div class="flex gap-2 flex-wrap">
+                <a href="?export_csv=1&search_border=<?= urlencode($search_border) ?>&search_commodity=<?= urlencode($search_commodity) ?>&search_source=<?= urlencode($search_source) ?>&search_destination=<?= urlencode($search_destination) ?>&filter_status=<?= urlencode($filter_status) ?>" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">download</span>Export CSV
                 </a>
-                <a class="dropdown-item" href="#" onclick="exportSelected('csv')">
-                    <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export Selected (CSV)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportSelected('pdf')">
-                    <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export Selected (PDF)
-                </a>
-                <div class="dropdown-divider"></div>
-                <a class="dropdown-item" href="#" onclick="exportAll('excel')">
-                    <i class="fas fa-file-excel" style="margin-right: 8px;"></i>Export All (Excel)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportAll('csv')">
-                    <i class="fas fa-file-csv" style="margin-right: 8px;"></i>Export All (CSV)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportAll('pdf')">
-                    <i class="fas fa-file-pdf" style="margin-right: 8px;"></i>Export All (PDF)
-                </a>
-                <div class="dropdown-divider"></div>
-                <a class="dropdown-item" href="#" onclick="exportAllWithFilters('excel')">
-                    <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (Excel)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportAllWithFilters('csv')">
-                    <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (CSV)
-                </a>
-                <a class="dropdown-item" href="#" onclick="exportAllWithFilters('pdf')">
-                    <i class="fas fa-filter" style="margin-right: 8px;"></i>Export Filtered (PDF)
-                </a>
-            </div>
-        </div>
-        
-        <button class="btn btn-clear-filters" onclick="clearAllFilters()">
-            <i class="fas fa-filter" style="margin-right: 5px;"></i>
-            Clear Filters
-        </button>
-
-        <button class="btn btn-approve" onclick="approveSelected()">
-            <i class="fas fa-check-circle" style="margin-right: 5px;"></i>
-            Approve
-        </button>
-
-        <button class="btn btn-unpublish" onclick="unpublishSelected()">
-            <i class="fas fa-ban" style="margin-right: 5px;"></i>
-            Unpublish
-        </button>
-
-        <button class="btn btn-publish" onclick="publishSelected()">
-            <i class="fas fa-upload" style="margin-right: 5px;"></i>
-            Publish
-        </button>
-    </div>
-
-    <table>
-        <thead>
-            <tr style="background-color: #d3d3d3 !important; color: black !important;">
-                <th><input type="checkbox" id="selectAll"></th>
-                <th class="sortable <?php echo getSortClass('id'); ?>" onclick="sortTable('id')">
-                    ID
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('border'); ?>" onclick="sortTable('border')">
-                    Border Point
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('commodity'); ?>" onclick="sortTable('commodity')">
-                    Commodity
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('volume'); ?>" onclick="sortTable('volume')">
-                    Volume (MT)
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('source'); ?>" onclick="sortTable('source')">
-                    Source
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('destination'); ?>" onclick="sortTable('destination')">
-                    Destination
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('date'); ?>" onclick="sortTable('date')">
-                    Date
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('status'); ?>" onclick="sortTable('status')">
-                    Status
-                    <span class="sort-icon"></span>
-                </th>
-                <th class="sortable <?php echo getSortClass('data_source'); ?>" onclick="sortTable('data_source')">
-                    Data Source
-                    <span class="sort-icon"></span>
-                </th>
-                <th>Actions</th>
-            </tr>
-            <tr class="filter-row" style="background-color: white !important; color: black !important;">
-                <th></th>
-                <th>
-                    <input type="text" class="filter-input" id="filterId" placeholder="Filter ID"
-                           value="<?php echo isset($_GET['filter_id']) ? htmlspecialchars($_GET['filter_id']) : ''; ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterBorder" 
-                           placeholder="Filter border" 
-                           value="<?php echo htmlspecialchars($filters['border']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterCommodity" 
-                           placeholder="Filter commodity" 
-                           value="<?php echo htmlspecialchars($filters['commodity']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterVolume" placeholder="Filter volume"
-                           value="<?php echo isset($_GET['filter_volume']) ? htmlspecialchars($_GET['filter_volume']) : ''; ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterSource" 
-                           placeholder="Filter source" 
-                           value="<?php echo htmlspecialchars($filters['source']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterDestination" 
-                           placeholder="Filter destination" 
-                           value="<?php echo htmlspecialchars($filters['destination']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterDate" 
-                           placeholder="YYYY-MM-DD" 
-                           value="<?php echo htmlspecialchars($filters['date']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterStatus" 
-                           placeholder="Filter status" 
-                           value="<?php echo htmlspecialchars($filters['status']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th>
-                    <input type="text" class="filter-input" id="filterDataSource" 
-                           placeholder="Filter data source" 
-                           value="<?php echo htmlspecialchars($filters['data_source']); ?>"
-                           onkeyup="applyFilters()">
-                </th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody id="xbtTable">
-            <?php foreach ($xbt_volumes_data as $volume): ?>
-                <tr>
-                    <td>
-                        <input type="checkbox" 
-                               class="row-checkbox" 
-                               data-id="<?php echo $volume['id']; ?>"
-                               <?php echo in_array($volume['id'], $_SESSION['selected_xbt_volumes']) ? 'checked' : ''; ?>
-                               onchange="updateSelection(this, <?php echo $volume['id']; ?>)">
-                    </td>
-                    <td><?php echo htmlspecialchars($volume['id']); ?></td>
-                    <td><?php echo htmlspecialchars($volume['border_name']); ?></td>
-                    <td><?php echo htmlspecialchars($volume['commodity_display']); ?></td>
-                    <td><?php echo htmlspecialchars($volume['volume']); ?></td>
-                    <td><?php echo htmlspecialchars($volume['source']); ?></td>
-                    <td><?php echo htmlspecialchars($volume['destination']); ?></td>
-                    <td class="date-added"><?php echo date('Y-m-d', strtotime($volume['date_posted'])); ?></td>
-                    <td><?php echo getStatusDisplay($volume['status']); ?></td>
-                    <td><?php echo htmlspecialchars($volume['data_source']); ?></td>
-                    <td>
-                        <div class="btn-group" role="group">
-                            <a href="../data/edit_xbt_volume.php?id=<?= $volume['id'] ?>" class="btn btn-sm btn-primary">
-                                <i class="fas fa-edit"></i>
-                            </a>
-                        </div>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-        </tbody>
-    </table>
-
-    <div class="d-flex justify-content-between align-items-center">
-        <div>
-            Displaying <?php echo ($offset + 1) . ' to ' . min($offset + $limit, $total_records) . ' of ' . $total_records; ?> items
-            <?php if (count($_SESSION['selected_xbt_volumes']) > 0): ?>
-                <span class="selected-count"><?php echo count($_SESSION['selected_xbt_volumes']); ?> selected across all pages</span>
-            <?php endif; ?>
-            <?php if (!empty($sort_column)): ?>
-                <span class="text-muted ms-2">Sorted by: <?php echo ucfirst(str_replace('_', ' ', $sort_column)); ?> (<?php echo $sort_order; ?>)</span>
-            <?php endif; ?>
-        </div>
-        <div>
-            <label for="itemsPerPage">Show:</label>
-            <select id="itemsPerPage" class="form-select d-inline w-auto" onchange="updateItemsPerPage(this.value)">
-                <option value="10" <?php echo $limit == 10 ? 'selected' : ''; ?>>10</option>
-                <option value="25" <?php echo $limit == 25 ? 'selected' : ''; ?>>25</option>
-                <option value="50" <?php echo $limit == 50 ? 'selected' : ''; ?>>50</option>
-                <option value="100" <?php echo $limit == 100 ? 'selected' : ''; ?>>100</option>
-            </select>
-        </div>
-        <nav>
-            <ul class="pagination mb-0">
-                <li class="page-item <?php echo ($page <= 1) ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="<?php echo ($page <= 1) ? '#' : getPageUrl($page - 1, $limit, $sort_column, $sort_order); ?>">Prev</a>
-                </li>
-                <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                    <li class="page-item <?php echo ($page == $i) ? 'active' : ''; ?>">
-                        <a class="page-link" href="<?php echo getPageUrl($i, $limit, $sort_column, $sort_order); ?>"><?php echo $i; ?></a>
-                    </li>
-                <?php endfor; ?>
-                <li class="page-item <?php echo ($page >= $total_pages) ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="<?php echo ($page >= $total_pages) ? '#' : getPageUrl($page + 1, $limit, $sort_column, $sort_order); ?>">Next</a>
-                </li>
-            </ul>
-        </nav>
-    </div>
-</div>
-
-<!-- Import Modal -->
-<div class="modal" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="importModalLabel">Import XBT Volumes</h5>
-                <button type="button" class="close-modal" onclick="closeImportModal()" aria-label="Close">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="import-instructions">
-                    <h5>CSV Import Instructions</h5>
-                    <p>Your CSV file should have the following columns in order:</p>
-                    <ol>
-                        <li><strong>Border ID</strong> (required) - Border Point ID from border_points table</li>
-                        <li><strong>Commodity ID</strong> (required) - Commodity ID from commodities table</li>
-                        <li><strong>Volume</strong> (required) - Volume in metric tons (numeric)</li>
-                        <li><strong>Date Posted</strong> (required) - YYYY-MM-DD format</li>
-                        <li><strong>Source</strong> (optional) - Source country/region</li>
-                        <li><strong>Destination</strong> (optional) - Destination country/region</li>
-                        <li><strong>Data Source ID</strong> (optional) - Data Source ID from data_sources table (default: 1)</li>
-                        <li><strong>Status</strong> (optional) - pending/approved/published/unpublished (default: pending)</li>
-                    </ol>
-                    
-                    <h6>Example CSV Format:</h6>
-                    <pre>Border ID,Commodity ID,Volume,Date Posted,Source,Destination,Data Source ID,Status
-1,40,1500.50,2025-06-03,Kenya,Uganda,1,published
-2,41,2000.75,2025-06-03,Tanzania,Rwanda,1,approved</pre>
-                    
-                    <p><strong>Important Notes:</strong></p>
-                    <ul>
-                        <li>Border IDs must exist in your border_points table</li>
-                        <li>Commodity IDs must exist in your commodities table</li>
-                        <li>Data Source IDs must exist in your data_sources table</li>
-                        <li>Border names and commodity names will be automatically fetched</li>
-                        <li>All required fields must have values</li>
-                    </ul>
-                    
-                    <a href="downloads/xbt_volumes_template.csv" class="download-template">
-                        <i class="fas fa-download"></i> Download CSV Template
-                    </a>
-                </div>
-                
-                <form method="POST" enctype="multipart/form-data" id="importForm">
-                    <div class="mb-3">
-                        <label for="csv_file" class="form-label">Select CSV File</label>
-                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="data_source" class="form-label">Data Source</label>
-                        <input type="text" class="form-control" id="data_source" name="data_source" placeholder="Source of this data" required>
-                    </div>
-                    
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="overwriteExisting" name="overwrite_existing">
-                        <label class="form-check-label" for="overwriteExisting">
-                            Overwrite existing volumes with matching border, commodity and date
-                        </label>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
-                <button type="submit" form="importForm" name="import_csv" class="btn btn-primary">
-                    <i class="fas fa-upload"></i> Import
+                <button onclick="openImportModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">upload_file</span>Import CSV
+                </button>
+                <button onclick="openAddModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
+                    <span class="material-symbols-outlined text-base">add_circle</span>Add Volume
                 </button>
             </div>
         </div>
+        <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
+    </div>
+
+    <!-- Alert Messages -->
+    <?php if (isset($_SESSION['import_message'])): ?>
+    <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $_SESSION['import_status'] == 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
+        <span class="material-symbols-outlined text-base"><?= $_SESSION['import_status'] == 'success' ? 'check_circle' : 'error' ?></span>
+        <span class="text-sm font-medium"><?= htmlspecialchars($_SESSION['import_message']) ?></span>
+    </div>
+    <?php 
+        unset($_SESSION['import_message']); 
+        unset($_SESSION['import_status']);
+    endif; 
+    ?>
+
+    <!-- Stat Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Total Volumes</p><p class="text-xl font-bold text-gray-800"><?= number_format($total_volumes) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-maroon/40">bar_chart</span>
+            </div>
+        </div>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-yellow-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Pending</p><p class="text-xl font-bold text-yellow-600"><?= number_format($pending_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-yellow-400/60">pending</span>
+            </div>
+        </div>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-blue-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Approved</p><p class="text-xl font-bold text-blue-600"><?= number_format($approved_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-blue-400/50">check_circle</span>
+            </div>
+        </div>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Published</p><p class="text-xl font-bold text-green-600"><?= number_format($published_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-green-500/50">public</span>
+            </div>
+        </div>
+        <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-red-500">
+            <div class="flex items-center justify-between">
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Unpublished</p><p class="text-xl font-bold text-red-600"><?= number_format($unpublished_count) ?></p></div>
+                <span class="material-symbols-outlined text-3xl text-red-400/50">visibility_off</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search & bulk actions -->
+    <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
+        <div class="flex flex-wrap gap-3 items-center justify-between">
+            <div class="flex-1 min-w-[130px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">warehouse</span>
+                    <select id="searchBorder" class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                        <option value="">All Borders</option>
+                        <?php foreach ($distinct_borders as $border): ?>
+                            <option value="<?= htmlspecialchars($border) ?>" <?= $search_border == $border ? 'selected' : '' ?>><?= htmlspecialchars($border) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="flex-1 min-w-[150px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">eco</span>
+                    <input type="text" id="searchCommodity" placeholder="Search commodity..."
+                        class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20"
+                        value="<?= htmlspecialchars($search_commodity) ?>">
+                </div>
+            </div>
+            <div class="flex-1 min-w-[130px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">flight_takeoff</span>
+                    <select id="searchSource" class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                        <option value="">All Sources</option>
+                        <?php foreach ($distinct_sources as $source): ?>
+                            <option value="<?= htmlspecialchars($source) ?>" <?= $search_source == $source ? 'selected' : '' ?>><?= htmlspecialchars($source) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="flex-1 min-w-[130px]">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">flight_land</span>
+                    <select id="searchDestination" class="search-input w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maroon/20">
+                        <option value="">All Destinations</option>
+                        <?php foreach ($distinct_destinations as $dest): ?>
+                            <option value="<?= htmlspecialchars($dest) ?>" <?= $search_destination == $dest ? 'selected' : '' ?>><?= htmlspecialchars($dest) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="w-32">
+                <select id="filterStatus" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                    <option value="">All Status</option>
+                    <option value="pending" <?= $filter_status == 'pending' ? 'selected' : '' ?>>Pending</option>
+                    <option value="approved" <?= $filter_status == 'approved' ? 'selected' : '' ?>>Approved</option>
+                    <option value="published" <?= $filter_status == 'published' ? 'selected' : '' ?>>Published</option>
+                    <option value="unpublished" <?= $filter_status == 'unpublished' ? 'selected' : '' ?>>Unpublished</option>
+                </select>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+                <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">filter_list</span>Filter
+                </button>
+                <button id="clearSelectionsBtn" class="px-3 py-1.5 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 transition-all inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">clear</span>Clear Selected
+                </button>
+                <button id="bulkDeleteBtn" disabled class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span id="selectedCount">0</span>)
+                </button>
+            </div>
+        </div>
+        
+        <!-- Bulk Status Update Row -->
+        <div class="flex flex-wrap gap-3 items-center mt-3 pt-3 border-t border-gray-100">
+            <span class="text-xs text-gray-500">Bulk Actions:</span>
+            <select id="bulkStatusSelect" class="px-2 py-1 text-sm border border-gray-200 rounded-lg">
+                <option value="">Change Status...</option>
+                <option value="approved">Approve Selected</option>
+                <option value="published">Publish Selected</option>
+                <option value="unpublished">Unpublish Selected</option>
+                <option value="pending">Mark as Pending</option>
+            </select>
+            <button id="bulkStatusBtn" disabled class="px-3 py-1 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
+                <span class="material-symbols-outlined text-base">update</span>Apply
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Table -->
+    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                        <th class="w-8 px-3 py-2 text-left">
+                            <input type="checkbox" id="selectAllCheckbox" class="rounded border-gray-300">
+                        </th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="id">ID<?php if($sort_column=='id') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="border">Border Point<?php if($sort_column=='border') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="commodity">Commodity<?php if($sort_column=='commodity') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="volume">Volume (MT)<?php if($sort_column=='volume') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="source">Source<?php if($sort_column=='source') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="destination">Destination<?php if($sort_column=='destination') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="date_posted">Date<?php if($sort_column=='date_posted') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="status">Status<?php if($sort_column=='status') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase sortable" data-sort="data_source">Data Source<?php if($sort_column=='data_source') echo '<span class="sort-icon">'.($sort_direction=='ASC'?'↑':'↓').'</span>'; ?></th>
+                        <th class="px-3 py-2 text-center text-xs font-semibold text-gray-500 uppercase w-20">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                <?php if (empty($xbt_volumes)): ?>
+                    <tr>
+                        <td colspan="11" class="px-3 py-8 text-center text-gray-400">
+                            <span class="material-symbols-outlined text-5xl text-gray-300 block">swap_horiz</span>
+                            <p class="text-sm mt-1">No XBT volumes found</p>
+                        </td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($xbt_volumes as $volume): ?>
+                    <tr class="table-row-hover" data-id="<?= $volume['id'] ?>">
+                        <td class="px-3 py-2">
+                            <input type="checkbox" class="row-checkbox rounded border-gray-300" value="<?= $volume['id'] ?>" onchange="onCheckboxChange()">
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-500"><?= $volume['id'] ?></td>
+                        <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($volume['border_name']) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-700"><?= htmlspecialchars($volume['commodity_display']) ?></td>
+                        <td class="px-3 py-2 text-xs font-mono font-semibold text-gray-700"><?= number_format($volume['volume'], 2) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-600"><?= htmlspecialchars($volume['source']) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-600"><?= htmlspecialchars($volume['destination']) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-600"><?= date('M d, Y', strtotime($volume['date_posted'])) ?></td>
+                        <td class="px-3 py-2"><?= getStatusBadge($volume['status']) ?></td>
+                        <td class="px-3 py-2 text-xs text-gray-500"><?= htmlspecialchars($volume['data_source']) ?></td>
+                        <td class="px-3 py-2">
+                            <div class="flex items-center justify-center gap-1">
+                                <button onclick="editXBTVolume(<?= $volume['id'] ?>)" class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200" title="Edit">
+                                    <span class="material-symbols-outlined text-sm">edit</span>
+                                </button>
+                                <button onclick="deleteSingle(<?= $volume['id'] ?>, '<?= htmlspecialchars(addslashes($volume['border_name'])) ?> - <?= htmlspecialchars(addslashes($volume['commodity_display'])) ?>')" class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete">
+                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                </button>
+                            </div>
+                        </tr>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="border-t border-gray-200 px-4 py-3 bg-white">
+            <div class="flex flex-wrap justify-between items-center gap-3">
+                <div class="text-xs text-gray-500">
+                    <?php if ($filtered_records === 0): ?>
+                        No volumes found
+                    <?php else: ?>
+                        Showing <strong><?= $showing_from ?></strong> – <strong><?= $showing_to ?></strong>
+                        of <strong><?= number_format($filtered_records) ?></strong> volumes
+                        <?php if ($search_border || $search_commodity || $search_source || $search_destination || $filter_status): ?>
+                            <span class="ml-1 text-maroon">(filtered)</span>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs text-gray-500" for="rowsPerPage">Rows:</label>
+                        <select id="rowsPerPage" class="page-size-select" onchange="changeRowsPerPage()">
+                            <?php foreach ([10,20,50,100] as $opt): ?>
+                                <option value="<?= $opt ?>" <?= $limit==$opt?'selected':'' ?>><?= $opt ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <?php if ($total_pages > 1): ?>
+                    <nav class="flex items-center gap-1">
+                        <button class="pagination-btn" onclick="goToPage(1)" <?= $page<=1?'disabled':'' ?>><span class="material-symbols-outlined text-sm">first_page</span></button>
+                        <button class="pagination-btn" onclick="goToPage(<?= $page-1 ?>)" <?= $page<=1?'disabled':'' ?>><span class="material-symbols-outlined text-sm">chevron_left</span></button>
+
+                        <?php
+                        $win = 2;
+                        $sp = max(1, $page - $win);
+                        $ep = min($total_pages, $page + $win);
+                        if ($sp === 1) $ep = min($total_pages, 1 + $win * 2);
+                        if ($ep === $total_pages) $sp = max(1, $total_pages - $win * 2);
+                        if ($sp > 1): ?>
+                            <button class="pagination-btn" onclick="goToPage(1)">1</button>
+                            <?php if ($sp > 2): ?><span class="text-gray-400 text-xs px-1">…</span><?php endif; ?>
+                        <?php endif; ?>
+
+                        <?php for ($i = $sp; $i <= $ep; $i++): ?>
+                            <button class="pagination-btn <?= $i===$page ? 'active-page' : '' ?>" <?= $i===$page ? '' : "onclick=\"goToPage($i)\"" ?>><?= $i ?></button>
+                        <?php endfor; ?>
+
+                        <?php if ($ep < $total_pages): ?>
+                            <?php if ($ep < $total_pages - 1): ?><span class="text-gray-400 text-xs px-1">…</span><?php endif; ?>
+                            <button class="pagination-btn" onclick="goToPage(<?= $total_pages ?>)"><?= $total_pages ?></button>
+                        <?php endif; ?>
+
+                        <button class="pagination-btn" onclick="goToPage(<?= $page+1 ?>)" <?= $page>=$total_pages?'disabled':'' ?>><span class="material-symbols-outlined text-sm">chevron_right</span></button>
+                        <button class="pagination-btn" onclick="goToPage(<?= $total_pages ?>)" <?= $page>=$total_pages?'disabled':'' ?>><span class="material-symbols-outlined text-sm">last_page</span></button>
+                    </nav>
+                    <?php endif; ?>
+                </div>
+
+                <a href="../base/landing_page.php" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all">
+                    <span class="material-symbols-outlined text-base">arrow_back</span>Back
+                </a>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+
+<!-- ============================================================
+     ADD / EDIT MODAL
+============================================================ -->
+<div id="xbtVolumeModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-lg shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center rounded-t-xl">
+                <h3 id="modalTitle" class="text-base font-semibold text-white">Add XBT Volume</h3>
+                <button onclick="closeModal('xbtVolumeModal')" class="text-white/80 hover:text-white">
+                    <span class="material-symbols-outlined text-base">close</span>
+                </button>
+            </div>
+            <div class="p-5">
+                <form method="POST" action="" id="xbtVolumeForm">
+                    <input type="hidden" name="volume_id" id="volumeId">
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Country <span class="text-red-500">*</span></label>
+                            <select name="country" id="modalCountry" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Country</option>
+                                <option value="Kenya">Kenya</option>
+                                <option value="Uganda">Uganda</option>
+                                <option value="Tanzania">Tanzania</option>
+                                <option value="Rwanda">Rwanda</option>
+                                <option value="Burundi">Burundi</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Border Point <span class="text-red-500">*</span></label>
+                            <select name="border_id" id="modalBorder" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Border</option>
+                                <?php foreach ($border_points as $bp): ?>
+                                    <option value="<?= $bp['id'] ?>"><?= htmlspecialchars($bp['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Commodity <span class="text-red-500">*</span></label>
+                            <select name="commodity_id" id="modalCommodity" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Commodity</option>
+                                <?php foreach ($commodities as $c): ?>
+                                    <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['display_name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Category <span class="text-red-500">*</span></label>
+                            <select name="category_id" id="modalCategory" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Category</option>
+                                <?php foreach ($categories as $cat): ?>
+                                    <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Variety</label>
+                            <input type="text" name="variety" id="modalVariety"
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none"
+                                placeholder="e.g., Yellow, White">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Volume (MT) <span class="text-red-500">*</span></label>
+                            <input type="number" step="0.01" name="volume" id="modalVolume" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none"
+                                placeholder="e.g., 1500.50">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Source Country <span class="text-red-500">*</span></label>
+                            <select name="source" id="modalSource" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Source</option>
+                                <option value="Kenya">Kenya</option>
+                                <option value="Uganda">Uganda</option>
+                                <option value="Tanzania">Tanzania</option>
+                                <option value="Rwanda">Rwanda</option>
+                                <option value="Burundi">Burundi</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Destination Country <span class="text-red-500">*</span></label>
+                            <select name="destination" id="modalDestination" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Destination</option>
+                                <option value="Kenya">Kenya</option>
+                                <option value="Uganda">Uganda</option>
+                                <option value="Tanzania">Tanzania</option>
+                                <option value="Rwanda">Rwanda</option>
+                                <option value="Burundi">Burundi</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">Data Source <span class="text-red-500">*</span></label>
+                            <select name="data_source_id" id="modalDataSource" required
+                                class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                                <option value="">Select Data Source</option>
+                                <?php foreach ($data_sources as $ds): ?>
+                                    <option value="<?= $ds['id'] ?>"><?= htmlspecialchars($ds['data_source_name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="editStatusDiv" class="mb-4 hidden">
+                        <label class="block text-xs text-gray-600 mb-1">Status</label>
+                        <select name="status" id="modalStatus"
+                            class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-maroon focus:outline-none">
+                            <option value="pending">Pending</option>
+                            <option value="approved">Approved</option>
+                            <option value="published">Published</option>
+                            <option value="unpublished">Unpublished</option>
+                        </select>
+                    </div>
+
+                    <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                        <button type="button" onclick="closeModal('xbtVolumeModal')"
+                            class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="submit" name="add_xbt_volume" id="submitBtn"
+                            class="px-3 py-1.5 text-sm bg-maroon text-white rounded-lg hover:bg-[#660000]">Add Volume</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
-<script>
-document.addEventListener("DOMContentLoaded", function() {
-    // Initialize select all checkbox
-    updateSelectAllCheckbox();
-    
-    document.getElementById('selectAll').addEventListener('change', function() {
-        const isChecked = this.checked;
-        const checkboxes = document.querySelectorAll('.row-checkbox');
-        
-        // Update all checkboxes on current page
-        checkboxes.forEach(checkbox => {
-            if (checkbox.checked !== isChecked) {
-                checkbox.checked = isChecked;
-                // Trigger the update for each checkbox
-                const id = checkbox.getAttribute('data-id');
-                updateSelection(checkbox, id);
-            }
-        });
-        
-        // Clear all selections if unchecking
-        if (!isChecked) {
-            clearAllSelectionsSilent();
-        }
-    });
+<!-- ============================================================
+     IMPORT CSV MODAL
+============================================================ -->
+<div id="importModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
+    <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-2xl shadow-xl">
+            <div class="modal-gradient-header px-5 py-3 flex justify-between items-center rounded-t-xl">
+                <h3 class="text-base font-semibold text-white flex items-center gap-2">
+                    <span class="material-symbols-outlined text-base">upload_file</span>
+                    Bulk Import XBT Volumes (CSV)
+                </h3>
+                <button onclick="closeModal('importModal')" class="text-white/80 hover:text-white">
+                    <span class="material-symbols-outlined text-base">close</span>
+                </button>
+            </div>
+            <div class="p-5">
+                <div class="bg-blue-50 border-l-4 border-blue-500 rounded-r-lg p-4 mb-5 text-sm">
+                    <p class="font-semibold text-blue-800 mb-2">CSV Column Order</p>
+                    <ol class="list-decimal list-inside text-blue-700 space-y-0.5 text-xs">
+                        <li><strong>Border ID</strong> — required (integer ID from border_points table)</li>
+                        <li><strong>Commodity ID</strong> — required (integer ID from commodities table)</li>
+                        <li><strong>Volume (MT)</strong> — required (numeric)</li>
+                        <li><strong>Date</strong> — required (e.g., 2025-01-15 or 2025-01-15 14:30:00)</li>
+                        <li><strong>Source</strong> — optional (e.g., Kenya, Uganda)</li>
+                        <li><strong>Destination</strong> — optional (e.g., Kenya, Uganda)</li>
+                        <li><strong>Country</strong> — optional (default Kenya)</li>
+                        <li><strong>Data Source ID</strong> — optional (default 1)</li>
+                        <li><strong>Status</strong> — optional (pending/approved/published/unpublished, default pending)</li>
+                    </ol>
+                    <a href="?download_template=1" class="inline-flex items-center gap-1 mt-3 text-xs text-blue-700 font-medium hover:underline">
+                        <span class="material-symbols-outlined text-sm">download</span>Download example template CSV
+                    </a>
+                </div>
 
-    // Close dropdown when clicking outside
-    document.addEventListener('click', function(event) {
-        const exportDropdown = document.getElementById('exportDropdown');
-        const exportButton = document.querySelector('.btn-export');
-        
-        if (exportButton && exportDropdown && !exportButton.contains(event.target) && !exportDropdown.contains(event.target)) {
-            exportDropdown.classList.remove('show');
-        }
-    });
+                <form method="POST" enctype="multipart/form-data" id="importForm">
+                    <div class="mb-4">
+                        <label class="block text-xs text-gray-600 mb-1 font-medium">Select CSV File <span class="text-red-500">*</span></label>
+                        <input type="file" name="csv_file" id="importCsvFile" accept=".csv" required
+                            class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none">
+                        <p id="importFileInfo" class="mt-1 text-xs text-gray-400 hidden"></p>
+                    </div>
+
+                    <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none mb-5">
+                        <input type="checkbox" name="overwrite_existing" class="rounded border-gray-300">
+                        <span>Overwrite existing volumes with matching Border + Commodity + Date</span>
+                    </label>
+
+                    <div id="importPreviewInfo" class="hidden mb-4 p-3 bg-gray-50 rounded-lg text-xs text-gray-600">
+                        <span class="material-symbols-outlined text-sm align-middle text-blue-500">info</span>
+                        File selected — click <strong>Import</strong> to proceed.
+                    </div>
+
+                    <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                        <button type="button" onclick="closeModal('importModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                        <button type="submit" name="import_csv" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 inline-flex items-center gap-1">
+                            <span class="material-symbols-outlined text-sm">upload</span>Import
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================
+     DELETE CONFIRM MODAL
+============================================================ -->
+<div id="deleteModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center">
+    <div class="bg-white rounded-lg w-full max-w-md shadow-xl">
+        <div class="p-4">
+            <div class="flex items-center gap-2 mb-3">
+                <span class="material-symbols-outlined text-red-500">warning</span>
+                <h3 class="text-base font-semibold text-gray-800">Confirm Deletion</h3>
+            </div>
+            <p id="deleteModalText" class="text-sm text-gray-500 mb-3">Are you sure?</p>
+            <div class="bg-red-50 border-l-4 border-red-500 p-2 mb-3 text-xs text-red-700">
+                <span class="material-symbols-outlined text-xs align-middle">info</span> This action cannot be undone.
+            </div>
+            <form method="POST" action="" id="deleteForm">
+                <input type="hidden" name="delete_selected" value="1">
+                <div id="deleteIdsContainer"></div>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('deleteModal')" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================
+     BULK STATUS UPDATE FORM
+============================================================ -->
+<form id="bulkStatusForm" method="POST" action="" style="display:none;">
+    <input type="hidden" name="bulk_status_update" value="1">
+    <input type="hidden" name="new_status" id="bulkNewStatus">
+    <div id="bulkStatusIdsContainer"></div>
+</form>
+
+<script>
+// PHP → JS state
+const PHP = {
+    page: <?= $page ?>,
+    limit: <?= $limit ?>,
+    totalPages: <?= $total_pages ?>,
+    sort: <?= json_encode($sort_column) ?>,
+    dir: <?= json_encode(strtolower($sort_direction)) ?>,
+    searchBorder: <?= json_encode($search_border) ?>,
+    searchCommodity: <?= json_encode($search_commodity) ?>,
+    searchSource: <?= json_encode($search_source) ?>,
+    searchDestination: <?= json_encode($search_destination) ?>,
+    filterStatus: <?= json_encode($filter_status) ?>,
+};
+
+function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+function buildUrl(overrides) {
+    const p = {
+        page: PHP.page,
+        limit: PHP.limit,
+        sort: PHP.sort,
+        dir: PHP.dir,
+        search_border: document.getElementById('searchBorder').value,
+        search_commodity: document.getElementById('searchCommodity').value.trim(),
+        search_source: document.getElementById('searchSource').value,
+        search_destination: document.getElementById('searchDestination').value,
+        filter_status: document.getElementById('filterStatus').value,
+    };
+    p.limit = document.getElementById('rowsPerPage').value;
+    Object.assign(p, overrides);
     
-    // Update breadcrumb if the function exists
-    if (typeof updateBreadcrumb === 'function') {
-        updateBreadcrumb('Base', 'XBT Volumes');
-    }
+    const q = new URLSearchParams();
+    q.set('page', p.page);
+    q.set('limit', p.limit);
+    if (p.sort) q.set('sort', p.sort);
+    if (p.dir) q.set('dir', p.dir);
+    if (p.search_border) q.set('search_border', p.search_border);
+    if (p.search_commodity) q.set('search_commodity', p.search_commodity);
+    if (p.search_source) q.set('search_source', p.search_source);
+    if (p.search_destination) q.set('search_destination', p.search_destination);
+    if (p.filter_status) q.set('filter_status', p.filter_status);
+    return '?' + q.toString();
+}
+
+function goToPage(pg) {
+    pg = parseInt(pg, 10);
+    if (isNaN(pg) || pg < 1 || pg > PHP.totalPages) return;
+    window.location.href = buildUrl({ page: pg });
+}
+
+function changeRowsPerPage() { window.location.href = buildUrl({ page: 1 }); }
+function applyFilters() { window.location.href = buildUrl({ page: 1 }); }
+
+function sortTable(col) {
+    const newDir = (PHP.sort === col && PHP.dir === 'asc') ? 'desc' : 'asc';
+    window.location.href = buildUrl({ page: 1, sort: col, dir: newDir });
+}
+
+// Add modal
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = 'Add XBT Volume';
+    document.getElementById('volumeId').value = '';
+    document.getElementById('modalCountry').value = '';
+    document.getElementById('modalBorder').value = '';
+    document.getElementById('modalCommodity').value = '';
+    document.getElementById('modalCategory').value = '';
+    document.getElementById('modalVariety').value = '';
+    document.getElementById('modalVolume').value = '';
+    document.getElementById('modalSource').value = '';
+    document.getElementById('modalDestination').value = '';
+    document.getElementById('modalDataSource').value = '';
+    document.getElementById('editStatusDiv').classList.add('hidden');
+    document.getElementById('submitBtn').name = 'add_xbt_volume';
+    document.getElementById('submitBtn').textContent = 'Add Volume';
+    openModal('xbtVolumeModal');
+}
+
+// Edit modal
+function editXBTVolume(id) {
+    fetch(`${window.location.pathname}?get_xbt_volume=${id}`)
+        .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+        .then(data => {
+            document.getElementById('modalTitle').textContent = 'Edit XBT Volume';
+            document.getElementById('volumeId').value = data.id;
+            document.getElementById('modalCountry').value = data.country || '';
+            document.getElementById('modalBorder').value = data.border_id || '';
+            document.getElementById('modalCommodity').value = data.commodity_id || '';
+            document.getElementById('modalCategory').value = data.category_id || '';
+            document.getElementById('modalVariety').value = data.variety || '';
+            document.getElementById('modalVolume').value = data.volume || '';
+            document.getElementById('modalSource').value = data.source || '';
+            document.getElementById('modalDestination').value = data.destination || '';
+            document.getElementById('modalDataSource').value = data.data_source_id || '';
+            document.getElementById('modalStatus').value = data.status || 'pending';
+            document.getElementById('editStatusDiv').classList.remove('hidden');
+            document.getElementById('submitBtn').name = 'edit_xbt_volume';
+            document.getElementById('submitBtn').textContent = 'Update Volume';
+            openModal('xbtVolumeModal');
+        })
+        .catch(err => { console.error(err); alert('Failed to load XBT volume data.'); });
+}
+
+// Delete functions
+function deleteSingle(id, label) {
+    document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${escapeHtml(label)}</strong>?`;
+    document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="selected_ids[]" value="${id}">`;
+    openModal('deleteModal');
+}
+
+// Checkbox handling
+function onCheckboxChange() {
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total = document.querySelectorAll('.row-checkbox').length;
+    const selAll = document.getElementById('selectAllCheckbox');
+    document.getElementById('selectedCount').textContent = checked;
+    document.getElementById('bulkDeleteBtn').disabled = checked === 0;
+    document.getElementById('bulkStatusBtn').disabled = checked === 0;
+    selAll.checked = checked > 0 && checked === total;
+    selAll.indeterminate = checked > 0 && checked < total;
+}
+
+// Import modal functions
+function openImportModal() {
+    document.getElementById('importForm').reset();
+    document.getElementById('importFileInfo').classList.add('hidden');
+    document.getElementById('importPreviewInfo').classList.add('hidden');
+    openModal('importModal');
+}
+
+// Bulk status update
+document.getElementById('bulkStatusBtn')?.addEventListener('click', function() {
+    const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
+    const newStatus = document.getElementById('bulkStatusSelect').value;
+    if (!ids.length || !newStatus) return;
+    
+    document.getElementById('bulkNewStatus').value = newStatus;
+    document.getElementById('bulkStatusIdsContainer').innerHTML = ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+    document.getElementById('bulkStatusForm').submit();
 });
 
-function toggleExportDropdown() {
-    const dropdown = document.getElementById('exportDropdown');
-    dropdown.classList.toggle('show');
-}
-
-function sortTable(column) {
-    const url = new URL(window.location);
-    const currentSort = url.searchParams.get('sort');
-    const currentOrder = url.searchParams.get('order');
-    
-    // Toggle order if clicking the same column
-    if (currentSort === column) {
-        const newOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
-        url.searchParams.set('order', newOrder);
-    } else {
-        // New column, default to DESC for ID and date, ASC for others
-        const defaultOrder = (column === 'id' || column === 'date') ? 'DESC' : 'ASC';
-        url.searchParams.set('sort', column);
-        url.searchParams.set('order', defaultOrder);
-    }
-    
-    // Reset to page 1 when sorting
-    url.searchParams.set('page', '1');
-    
-    window.location.href = url.toString();
-}
-
-function applyFilters() {
-    const filters = {
-        id: document.getElementById('filterId').value,
-        border: document.getElementById('filterBorder').value,
-        commodity: document.getElementById('filterCommodity').value,
-        volume: document.getElementById('filterVolume').value,
-        source: document.getElementById('filterSource').value,
-        destination: document.getElementById('filterDestination').value,
-        date: document.getElementById('filterDate').value,
-        status: document.getElementById('filterStatus').value,
-        data_source: document.getElementById('filterDataSource').value
-    };
-
-    // Build URL with filter parameters
-    const url = new URL(window.location);
-    
-    // Set filter parameters
-    if (filters.id) url.searchParams.set('filter_id', filters.id);
-    else url.searchParams.delete('filter_id');
-    
-    if (filters.border) url.searchParams.set('filter_border', filters.border);
-    else url.searchParams.delete('filter_border');
-    
-    if (filters.commodity) url.searchParams.set('filter_commodity', filters.commodity);
-    else url.searchParams.delete('filter_commodity');
-    
-    if (filters.volume) url.searchParams.set('filter_volume', filters.volume);
-    else url.searchParams.delete('filter_volume');
-    
-    if (filters.source) url.searchParams.set('filter_source', filters.source);
-    else url.searchParams.delete('filter_source');
-    
-    if (filters.destination) url.searchParams.set('filter_destination', filters.destination);
-    else url.searchParams.delete('filter_destination');
-    
-    if (filters.date) url.searchParams.set('filter_date', filters.date);
-    else url.searchParams.delete('filter_date');
-    
-    if (filters.status) url.searchParams.set('filter_status', filters.status);
-    else url.searchParams.delete('filter_status');
-    
-    if (filters.data_source) url.searchParams.set('filter_data_source', filters.data_source);
-    else url.searchParams.delete('filter_data_source');
-    
-    // Reset to page 1 when filtering
-    url.searchParams.set('page', '1');
-    
-    // Navigate to filtered URL
-    window.location.href = url.toString();
-}
-
-function clearAllFilters() {
-    // Clear all filter inputs
-    document.getElementById('filterId').value = '';
-    document.getElementById('filterBorder').value = '';
-    document.getElementById('filterCommodity').value = '';
-    document.getElementById('filterVolume').value = '';
-    document.getElementById('filterSource').value = '';
-    document.getElementById('filterDestination').value = '';
-    document.getElementById('filterDate').value = '';
-    document.getElementById('filterStatus').value = '';
-    document.getElementById('filterDataSource').value = '';
-    
-    // Reload page without filters
-    const url = new URL(window.location.href.split('?')[0], window.location.origin);
-    
-    // Keep current limit
-    const currentLimit = new URLSearchParams(window.location.search).get('limit');
-    if (currentLimit) url.searchParams.set('limit', currentLimit);
-    
-    window.location.href = url.toString();
-}
-
-function updateItemsPerPage(value) {
-    const url = new URL(window.location.href);
-    url.searchParams.set('limit', value);
-    url.searchParams.set('page', '1');
-    window.location.href = url.toString();
-}
-
-/**
- * Update selection via AJAX
- */
-function updateSelection(checkbox, id) {
-    const isSelected = checkbox.checked;
-    
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `action=update_selection&id=${id}&selected=${isSelected}`
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Selection updated:', data);
-        updateSelectAllCheckbox();
-        updateSelectionCount();
-    })
-    .catch(error => console.error('Error updating selection:', error));
-}
-
-function updateSelectAllCheckbox() {
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    const selectAll = document.getElementById('selectAll');
-    
-    if (checkboxes.length === 0) {
-        selectAll.checked = false;
-        return;
-    }
-    
-    // Check if all checkboxes on current page are checked
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
-    
-    selectAll.checked = allChecked;
-    selectAll.indeterminate = !allChecked && someChecked;
-}
-
-function updateSelectionCount() {
-    // Refresh the page to update selection count
-    location.reload();
-}
-
-function clearAllSelections() {
-    if (confirm('Clear all selections across all pages?')) {
-        clearAllSelectionsSilent();
-        alert('All selections cleared.');
-        location.reload();
-    }
-}
-
-function clearAllSelectionsSilent() {
-    fetch(window.location.href, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: 'action=update_selection&clear_all=true'
-    })
-    .catch(error => console.error('Error clearing selections:', error));
-}
-
-/**
- * Get all selected volume IDs from session
- */
-function getSelectedVolumeIds() {
-    // Return IDs from PHP session (not just current page)
-    return <?php echo json_encode($_SESSION['selected_xbt_volumes']); ?>;
-}
-
-/**
- * Export selected items
- */
-function exportSelected(format) {
-    const selectedIds = getSelectedVolumeIds();
-    
-    if (selectedIds.length === 0) {
-        alert('Please select items to export.');
-        return;
-    }
-    
-    // Create URL parameters for export
-    const params = new URLSearchParams();
-    params.append('export', format);
-    params.append('ids', JSON.stringify(selectedIds));
-    
-    // Open export in new window
-    window.open('export_xbt_volumes.php?' + params.toString(), '_blank');
-    
-    // Close dropdown
-    document.getElementById('exportDropdown').classList.remove('show');
-}
-
-/**
- * Export all data (without filters)
- */
-function exportAll(format) {
-    if (confirm('Export ALL XBT volumes? This may take a moment for large datasets.')) {
-        const params = new URLSearchParams();
-        params.append('export', format);
-        params.append('export_all', 'true');
-        
-        window.open('export_xbt_volumes.php?' + params.toString(), '_blank');
-        
-        // Close dropdown
-        document.getElementById('exportDropdown').classList.remove('show');
-    }
-}
-
-/**
- * Export all data with current filters applied
- */
-function exportAllWithFilters(format) {
-    // Get current filter values
-    const filters = {
-        border: document.getElementById('filterBorder').value,
-        commodity: document.getElementById('filterCommodity').value,
-        source: document.getElementById('filterSource').value,
-        destination: document.getElementById('filterDestination').value,
-        date: document.getElementById('filterDate').value,
-        status: document.getElementById('filterStatus').value,
-        data_source: document.getElementById('filterDataSource').value
-    };
-    
-    // Count how many filters are active
-    const activeFilters = Object.values(filters).filter(val => val.trim() !== '').length;
-    
-    let message = 'Export ';
-    if (activeFilters > 0) {
-        message += 'all data with current filters applied?';
-    } else {
-        message += 'ALL XBT volumes (no filters active)?';
-    }
-    message += ' This may take a moment for large datasets.';
-    
-    if (confirm(message)) {
-        const params = new URLSearchParams();
-        params.append('export', format);
-        params.append('export_all', 'true');
-        params.append('apply_filters', 'true');
-        
-        // Add filters to params
-        Object.keys(filters).forEach(key => {
-            if (filters[key]) {
-                params.append('filter_' + key, filters[key]);
-            }
-        });
-        
-        window.open('export_xbt_volumes.php?' + params.toString(), '_blank');
-        
-        // Close dropdown
-        document.getElementById('exportDropdown').classList.remove('show');
-    }
-}
-
-/**
- * Displays a confirmation dialog and sends a request to update item status or delete items.
- */
-function confirmAction(action, ids) {
-    if (ids.length === 0) {
-        alert('Please select items to ' + action + '.');
-        return;
-    }
-
-    let message = 'Are you sure you want to ' + action + ' these items?';
-    if (confirm(message)) {
-        fetch('../data/update_xbt_status.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                action: action,
-                ids: ids,
-            }),
-        })
-        .then(response => {
-            if (!response.ok) {
-                return response.json().catch(() => {
-                    throw new Error(`HTTP error! status: ${response.status} - No JSON response from server.`);
-                });
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                alert('Items ' + action + ' successfully.');
-                window.location.reload();
-            } else {
-                alert('Failed to ' + action + ' items: ' + (data.message || 'Unknown error.'));
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error during ' + action + ':', error);
-            alert('An error occurred while ' + action + ' items: ' + error.message);
-        });
-    }
-}
-
-// Modal management functions
-function openImportModal() {
-    const modal = document.getElementById('importModal');
-    if (modal) {
-        modal.style.display = 'block';
-        modal.classList.add('show');
-        // Create backdrop
-        const backdrop = document.createElement('div');
-        backdrop.className = 'modal-backdrop fade show';
-        backdrop.style.zIndex = '1040';
-        document.body.appendChild(backdrop);
-        document.body.style.overflow = 'hidden';
-    }
-}
-
-function closeImportModal() {
-    const modal = document.getElementById('importModal');
-    if (modal) {
-        modal.style.display = 'none';
-        modal.classList.remove('show');
-        // Remove backdrop
-        const backdrop = document.querySelector('.modal-backdrop');
-        if (backdrop) {
-            document.body.removeChild(backdrop);
-        }
-        document.body.style.overflow = '';
-    }
-}
-
-// Action functions
-function approveSelected() {
-    const ids = getSelectedVolumeIds();
-    confirmAction('approve', ids);
-}
-
-function publishSelected() {
-    const ids = getSelectedVolumeIds();
-    if (ids.length === 0) {
-        alert('Please select items to publish.');
-        return;
-    }
-    
-    // Check if all selected items are approved before publishing
-    fetch('../data/check_xbt_status.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ids: ids }),
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.allApproved) {
-            confirmAction('publish', ids);
-        } else {
-            alert('Cannot publish. All selected items must be approved first. ' + (data.message || ''));
-        }
-    })
-    .catch(error => {
-        console.error('Fetch error checking approval status:', error);
-        alert('An error occurred while checking approval status: ' + error.message);
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
     });
 }
 
-function unpublishSelected() {
-    const ids = getSelectedVolumeIds();
-    if (ids.length === 0) {
-        alert('Please select items to unpublish.');
-        return;
-    }
-    
-    // Check if all selected items are currently published before unpublishing
-    fetch('../data/check_xbt_status_for_unpublish.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ids: ids }),
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.allPublished) {
-            confirmAction('unpublish', ids);
-        } else {
-            alert('Cannot unpublish. All selected items must currently be in "Published" status.');
-        }
-    })
-    .catch(error => {
-        console.error('Fetch error checking status for unpublish:', error);
-        alert('An error occurred while checking status for unpublish: ' + error.message);
+// DOMContentLoaded
+document.addEventListener('DOMContentLoaded', function() {
+    // Select-all checkbox
+    document.getElementById('selectAllCheckbox')?.addEventListener('change', function() {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = this.checked);
+        onCheckboxChange();
     });
-}
-
-function deleteSelected() {
-    const ids = getSelectedVolumeIds();
-    if (ids.length === 0) {
-        alert('Please select items to delete.');
-        return;
-    }
-
-    if (confirm('Are you sure you want to delete ' + ids.length + ' selected XBT volume(s) across all pages?')) {
-        // Pass all selected IDs from session
-        fetch('delete_xbt_volumes.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ids: ids })
-        })
-        .then(response => {
-            if (!response.ok) throw new Error('Network error');
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                alert(data.message);
-                // Clear selections after deletion
-                clearAllSelectionsSilent();
-                location.reload();
+    
+    // Clear selections
+    document.getElementById('clearSelectionsBtn')?.addEventListener('click', function() {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+        document.getElementById('selectAllCheckbox').checked = false;
+        document.getElementById('selectAllCheckbox').indeterminate = false;
+        onCheckboxChange();
+    });
+    
+    // Bulk delete
+    document.getElementById('bulkDeleteBtn')?.addEventListener('click', function() {
+        const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
+        if (!ids.length) return;
+        document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${ids.length}</strong> selected volume(s)?`;
+        document.getElementById('deleteIdsContainer').innerHTML = ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+        openModal('deleteModal');
+    });
+    
+    // Sortable headers
+    document.querySelectorAll('.sortable').forEach(th =>
+        th.addEventListener('click', () => sortTable(th.dataset.sort))
+    );
+    
+    // Import file preview
+    const importFile = document.getElementById('importCsvFile');
+    if (importFile) {
+        importFile.addEventListener('change', function() {
+            const infoEl = document.getElementById('importFileInfo');
+            const previewEl = document.getElementById('importPreviewInfo');
+            if (this.files[0]) {
+                infoEl.textContent = `Selected: ${this.files[0].name} (${(this.files[0].size/1024).toFixed(1)} KB)`;
+                infoEl.classList.remove('hidden');
+                previewEl.classList.remove('hidden');
             } else {
-                alert('Error: ' + data.message);
+                infoEl.classList.add('hidden');
+                previewEl.classList.add('hidden');
             }
-        })
-        .catch(error => {
-            console.error('Fetch error:', error);
-            alert('Request failed: ' + error.message);
         });
     }
-}
-
-// Keyboard support for closing modal
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        closeImportModal();
-    }
+    
+    // Enter key on search inputs
+    ['searchCommodity'].forEach(id => {
+        document.getElementById(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
+    });
+    
+    onCheckboxChange();
 });
 </script>
 
-<?php 
-// Helper function to build filter parameters for URLs
-function getFilterParams($filters, $sort_column = null, $sort_order = null) {
-    $params = '';
-    
-    // Add filter parameters
-    if (!empty($filters['border'])) {
-        $params .= '&filter_border=' . urlencode($filters['border']);
-    }
-    if (!empty($filters['commodity'])) {
-        $params .= '&filter_commodity=' . urlencode($filters['commodity']);
-    }
-    if (!empty($filters['source'])) {
-        $params .= '&filter_source=' . urlencode($filters['source']);
-    }
-    if (!empty($filters['destination'])) {
-        $params .= '&filter_destination=' . urlencode($filters['destination']);
-    }
-    if (!empty($filters['date'])) {
-        $params .= '&filter_date=' . urlencode($filters['date']);
-    }
-    if (!empty($filters['status'])) {
-        $params .= '&filter_status=' . urlencode($filters['status']);
-    }
-    if (!empty($filters['data_source'])) {
-        $params .= '&filter_data_source=' . urlencode($filters['data_source']);
-    }
-    
-    // Add sort parameters
-    if ($sort_column) {
-        $params .= '&sort=' . urlencode($sort_column);
-    }
-    if ($sort_order) {
-        $params .= '&order=' . urlencode($sort_order);
-    }
-    
-    return $params;
-}
-
-// Helper function to generate page URLs with filters and sorting
-function getPageUrl($pageNum, $itemsPerPage, $sortColumn = null, $sortOrder = null) {
-    global $filters;
-    
-    $url = '?page=' . $pageNum . '&limit=' . $itemsPerPage;
-    
-    // Add filter parameters
-    if (!empty($filters['border'])) {
-        $url .= '&filter_border=' . urlencode($filters['border']);
-    }
-    if (!empty($filters['commodity'])) {
-        $url .= '&filter_commodity=' . urlencode($filters['commodity']);
-    }
-    if (!empty($filters['source'])) {
-        $url .= '&filter_source=' . urlencode($filters['source']);
-    }
-    if (!empty($filters['destination'])) {
-        $url .= '&filter_destination=' . urlencode($filters['destination']);
-    }
-    if (!empty($filters['date'])) {
-        $url .= '&filter_date=' . urlencode($filters['date']);
-    }
-    if (!empty($filters['status'])) {
-        $url .= '&filter_status=' . urlencode($filters['status']);
-    }
-    if (!empty($filters['data_source'])) {
-        $url .= '&filter_data_source=' . urlencode($filters['data_source']);
-    }
-    
-    // Add sort parameters if provided
-    if ($sortColumn) {
-        $url .= '&sort=' . urlencode($sortColumn);
-    }
-    if ($sortOrder) {
-        $url .= '&order=' . urlencode($sortOrder);
-    }
-    
-    return $url;
-}
-
-// Helper function to get sort CSS class
-function getSortClass($column) {
-    $current_sort = isset($_GET['sort']) ? $_GET['sort'] : 'date';
-    $current_order = isset($_GET['order']) ? strtoupper($_GET['order']) : 'DESC';
-    
-    if ($current_sort === $column) {
-        return $current_order === 'ASC' ? 'sort-asc' : 'sort-desc';
-    }
-    return '';
-}
-
-include '../admin/includes/footer.php'; 
-?>
+<?php require_once '../admin/includes/admin_footer.php'; ?>
