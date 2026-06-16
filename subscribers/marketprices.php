@@ -1,2122 +1,1450 @@
 <?php
-// market_prices_view.php
-session_start();
+// marketprices_dashboard.php — Extended Market Prices Dashboard (Public Reporting View)
+// Tabs: Table | Charts | Cards | Map
+// READ-ONLY: published records only, no data manipulation
 
-// Check if user is logged in, redirect to login if not
-if (!isset($_SESSION['user_logged_in']) || $_SESSION['user_logged_in'] !== true) {
-    header("Location: index.php");
-    exit;
-}
+// ── JSON ENDPOINT: chart data ─────────────────────────────────
+if (isset($_GET['chart_data'])) {
+    if (session_status() == PHP_SESSION_NONE) session_start();
+    include '../admin/includes/config.php';
+    header('Content-Type: application/json');
+    $commodity_id = isset($_GET['commodity_id']) ? (int)$_GET['commodity_id'] : 0;
+    $market_id    = isset($_GET['market_id'])    ? (int)$_GET['market_id']    : 0;
+    $country      = isset($_GET['country'])      ? trim($_GET['country'])      : '';
+    $days         = isset($_GET['days'])         ? min((int)$_GET['days'], 730): 90;
+    // Custom date range
+    $date_from    = isset($_GET['date_from'])    ? trim($_GET['date_from'])    : '';
+    $date_to      = isset($_GET['date_to'])      ? trim($_GET['date_to'])      : '';
 
-// Include your database configuration file
-include '../admin/includes/config.php';
+    // Only published records
+    $where = ["mp.status = 'published'"];
+    $params = []; $types = '';
 
-// Function to geocode market name to coordinates using OpenStreetMap Nominatim API
-function geocodeMarket($market, $country) {
-    // Prepare the query - combine market and country for better results
-    $query = urlencode("$market, $country");
-    $url = "https://nominatim.openstreetmap.org/search?format=json&q=$query&limit=1";
-    
-    // Create context with proper headers
-    $context = stream_context_create([
-        'http' => [
-            'header' => "User-Agent: RATIN Market Prices App/1.0\r\n",
-            'timeout' => 10 // 10 second timeout
-        ]
-    ]);
-    
-    try {
-        $response = @file_get_contents($url, false, $context);
-        if ($response === FALSE) {
-            error_log("Geocoding API request failed for: $market, $country");
-            return null;
-        }
-        
-        $data = json_decode($response, true);
-        
-        if (!empty($data) && isset($data[0]['lat']) && isset($data[0]['lon'])) {
-            return [
-                'latitude' => (float)$data[0]['lat'],
-                'longitude' => (float)$data[0]['lon']
-            ];
-        } else {
-            error_log("No coordinates found for: $market, $country");
-            return null;
-        }
-    } catch (Exception $e) {
-        error_log("Geocoding error for $market, $country: " . $e->getMessage());
-        return null;
-    }
-}
-
-// Function to convert USD to local currency using date-matched exchange rates
-function convertToLocal($usdAmount, $country, $date, $con) {
-    if (!is_numeric($usdAmount)) {
-        error_log("Invalid amount provided to convertToLocal: " . var_export($usdAmount, true));
-        return 0;
-    }
-
-    $exchangeRate = 1; // Default to 1 (assuming 1:1 if no rate is found)
-
-    // Check if $con is a valid mysqli object before preparing statement
-    if ($con instanceof mysqli && !$con->connect_error) {
-        // First try to find exact date match
-        $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? AND effective_date = ? ORDER BY date_created DESC LIMIT 1");
-        if ($stmt) {
-            $dateOnly = date('Y-m-d', strtotime($date));
-            $stmt->bind_param("ss", $country, $dateOnly);
-            $stmt->execute();
-            $result = $stmt->get_result();
-
-            if ($result && $result->num_rows > 0) {
-                $row = $result->fetch_assoc();
-                $exchangeRate = (float)$row['exchange_rate'];
-            } else {
-                // If no exact date match, find the most recent rate before the price date
-                $stmt->close();
-                $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? AND effective_date <= ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
-                if ($stmt) {
-                    $stmt->bind_param("ss", $country, $dateOnly);
-                    $stmt->execute();
-                    $result = $stmt->get_result();
-                    
-                    if ($result && $result->num_rows > 0) {
-                        $row = $result->fetch_assoc();
-                        $exchangeRate = (float)$row['exchange_rate'];
-                    } else {
-                        // Fallback to latest available rate
-                        $stmt->close();
-                        $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
-                        if ($stmt) {
-                            $stmt->bind_param("s", $country);
-                            $stmt->execute();
-                            $result = $stmt->get_result();
-                            
-                            if ($result && $result->num_rows > 0) {
-                                $row = $result->fetch_assoc();
-                                $exchangeRate = (float)$row['exchange_rate'];
-                            } else {
-                                error_log("No exchange rate found in DB for " . $country . ". Using default rate: " . $exchangeRate);
-                            }
-                        }
-                    }
-                }
-            }
-            if ($stmt) $stmt->close();
-        } else {
-            error_log("Error preparing currency query for " . $country . ": " . $con->error);
-        }
+    if ($date_from && $date_to) {
+        $where[] = "mp.date_posted BETWEEN ? AND ?";
+        $params[] = $date_from . ' 00:00:00'; $types .= 's';
+        $params[] = $date_to   . ' 23:59:59'; $types .= 's';
     } else {
-        error_log("Database connection not valid in convertToLocal function. Skipping currency rate fetch.");
+        $where[] = "mp.date_posted >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+        $params[] = $days; $types .= 'i';
     }
 
-    // Ensure exchangeRate is not zero to prevent multiplication by zero errors.
-    if ($exchangeRate == 0) {
-        error_log("Exchange rate for " . $country . " is zero or invalid. Returning 0 for conversion to prevent multiplication by zero.");
-        return 0;
-    }
+    if ($commodity_id) { $where[] = "mp.commodity = ?"; $params[] = $commodity_id; $types .= 'i'; }
+    if ($market_id)    { $where[] = "mp.market_id = ?"; $params[] = $market_id;    $types .= 'i'; }
+    if ($country)      { $where[] = "mp.country_admin_0 = ?"; $params[] = $country; $types .= 's'; }
 
-    return round($usdAmount * $exchangeRate, 2);
+    $sql = "SELECT DATE(mp.date_posted) as date_label,
+                   mp.price_type,
+                   AVG(mp.Price) as avg_price,
+                   MIN(mp.Price) as min_price,
+                   MAX(mp.Price) as max_price,
+                   COUNT(*) as record_count
+            FROM market_prices mp
+            WHERE " . implode(' AND ', $where) . "
+            GROUP BY DATE(mp.date_posted), mp.price_type
+            ORDER BY date_label ASC";
+    $stmt = $con->prepare($sql);
+    if ($params) { $stmt->bind_param($types, ...$params); }
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $rows = [];
+    while ($r = $result->fetch_assoc()) $rows[] = $r;
+    $stmt->close();
+    echo json_encode(['success' => true, 'data' => $rows]); exit;
 }
 
-// Function to get exchange rate for display (date-matched) - SAME AS BEFORE
-function getExchangeRate($country, $date, $con) {
-    $exchangeRate = 1; // Default to 1
-
-    if ($con instanceof mysqli && !$con->connect_error) {
-        // First try to find exact date match
-        $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? AND effective_date = ? ORDER BY date_created DESC LIMIT 1");
-        if ($stmt) {
-            $dateOnly = date('Y-m-d', strtotime($date));
-            $stmt->bind_param("ss", $country, $dateOnly);
-            $stmt->execute();
-            $result = $stmt->get_result();
-
-            if ($result && $result->num_rows > 0) {
-                $row = $result->fetch_assoc();
-                $exchangeRate = (float)$row['exchange_rate'];
-            } else {
-                // If no exact date match, find the most recent rate before the price date
-                $stmt->close();
-                $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? AND effective_date <= ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
-                if ($stmt) {
-                    $stmt->bind_param("ss", $country, $dateOnly);
-                    $stmt->execute();
-                    $result = $stmt->get_result();
-                    
-                    if ($result && $result->num_rows > 0) {
-                        $row = $result->fetch_assoc();
-                        $exchangeRate = (float)$row['exchange_rate'];
-                    } else {
-                        // Fallback to latest available rate
-                        $stmt->close();
-                        $stmt = $con->prepare("SELECT exchange_rate FROM currencies WHERE country = ? ORDER BY effective_date DESC, date_created DESC LIMIT 1");
-                        if ($stmt) {
-                            $stmt->bind_param("s", $country);
-                            $stmt->execute();
-                            $result = $stmt->get_result();
-                            
-                            if ($result && $result->num_rows > 0) {
-                                $row = $result->fetch_assoc();
-                                $exchangeRate = (float)$row['exchange_rate'];
-                            }
-                        }
-                    }
-                }
-            }
-            if ($stmt) $stmt->close();
-        }
-    }
-
-    return $exchangeRate;
+// ── JSON ENDPOINT: filtered commodities by country/market ─────
+if (isset($_GET['get_commodities'])) {
+    if (session_status() == PHP_SESSION_NONE) session_start();
+    include '../admin/includes/config.php';
+    header('Content-Type: application/json');
+    $country   = trim($_GET['country']   ?? '');
+    $market_id = (int)($_GET['market_id'] ?? 0);
+    $where = ["mp.status = 'published'"]; $params = []; $types = '';
+    if ($country)   { $where[] = "mp.country_admin_0 = ?"; $params[] = $country; $types .= 's'; }
+    if ($market_id) { $where[] = "mp.market_id = ?"; $params[] = $market_id; $types .= 'i'; }
+    // Include variety in commodity display
+    $sql = "SELECT DISTINCT c.id,
+                   CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
+                   c.commodity_name, c.variety
+            FROM commodities c
+            INNER JOIN market_prices mp ON mp.commodity = c.id
+            WHERE " . implode(' AND ', $where)
+         . " ORDER BY c.commodity_name, c.variety";
+    $stmt = $con->prepare($sql);
+    if ($params) $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $r = $stmt->get_result(); $data = [];
+    while ($row = $r->fetch_assoc()) $data[] = $row;
+    $stmt->close();
+    echo json_encode($data); exit;
 }
 
-// Function to get currency code for a country
-function getCurrencyCode($country) {
-    $currencies = [
-        'Kenya' => 'KES',
-        'Tanzania' => 'TSH',
-        'Uganda' => 'UGX',
-        'Rwanda' => 'RWF',
-        'Ethiopia' => 'ETB'
-    ];
-    
-    return $currencies[$country] ?? 'USD';
+// ── JSON ENDPOINT: filtered markets by country ────────────────
+if (isset($_GET['get_markets'])) {
+    if (session_status() == PHP_SESSION_NONE) session_start();
+    include '../admin/includes/config.php';
+    header('Content-Type: application/json');
+    $country = trim($_GET['country'] ?? '');
+    $sql = "SELECT DISTINCT m.id, m.market_name FROM markets m
+            INNER JOIN market_prices mp ON mp.market_id = m.id
+            WHERE mp.status = 'published'"
+         . ($country ? " AND mp.country_admin_0 = ?" : '')
+         . " ORDER BY m.market_name";
+    $stmt = $con->prepare($sql);
+    if ($country) $stmt->bind_param('s', $country);
+    $stmt->execute();
+    $r = $stmt->get_result(); $data = [];
+    while ($row = $r->fetch_assoc()) $data[] = $row;
+    $stmt->close();
+    echo json_encode($data); exit;
 }
 
-// Function to build the SQL query with filters
-function buildPricesQuery($filters = []) {
-    $sql = "SELECT
-                p.id,
-                p.market,
-                p.commodity,
-                c.commodity_name,
-                c.variety,
-                p.price_type,
-                p.Price,
-                p.date_posted,
-                p.status,
-                p.data_source,
-                p.country_admin_0,
-                p.unit
-            FROM
-                market_prices p
-            LEFT JOIN
-                commodities c ON p.commodity = c.id
-            WHERE
-                p.status IN ('published', 'approved')";
-    
-    // Apply filters
-    if (!empty($filters['country'])) {
-        $sql .= " AND p.country_admin_0 = '" . $filters['country'] . "'";
-    }
-    
-    if (!empty($filters['market'])) {
-        $sql .= " AND p.market = '" . $filters['market'] . "'";
-    }
-    
-    if (!empty($filters['commodity'])) {
-        $sql .= " AND p.commodity = " . (int)$filters['commodity'];
-    }
-    
-    if (!empty($filters['price_type'])) {
-        $sql .= " AND p.price_type = '" . $filters['price_type'] . "'";
-    }
-    
-    if (!empty($filters['data_source'])) {
-        $sql .= " AND p.data_source = '" . $filters['data_source'] . "'";
-    }
-    
-    if (!empty($filters['commodity_category'])) {
-        $sql .= " AND c.category = '" . $filters['commodity_category'] . "'";
-    }
-    
-    if (!empty($filters['date_from'])) {
-        $sql .= " AND DATE(p.date_posted) >= '" . $filters['date_from'] . "'";
-    }
-    
-    if (!empty($filters['date_to'])) {
-        $sql .= " AND DATE(p.date_posted) <= '" . $filters['date_to'] . "'";
-    }
-    
-    if (!empty($filters['price_range'])) {
-        // Handle price range filter (assuming format like "100-200")
-        $priceRange = explode('-', $filters['price_range']);
-        if (count($priceRange) == 2) {
-            $minPrice = (float)$priceRange[0];
-            $maxPrice = (float)$priceRange[1];
-            $sql .= " AND p.Price BETWEEN $minPrice AND $maxPrice";
-        }
-    }
-    
-    $sql .= " ORDER BY p.date_posted DESC";
-    
-    return $sql;
+// ── JSON ENDPOINT: map data ───────────────────────────────────
+if (isset($_GET['map_data'])) {
+    if (session_status() == PHP_SESSION_NONE) session_start();
+    include '../admin/includes/config.php';
+    header('Content-Type: application/json');
+    $commodity_id = isset($_GET['commodity_id']) ? (int)$_GET['commodity_id'] : 0;
+    $price_type   = in_array($_GET['price_type'] ?? '', ['Wholesale','Retail']) ? $_GET['price_type'] : 'Wholesale';
+    $where = ["mp.status = 'published'", "mp.price_type = ?"];
+    $params = [$price_type]; $types = 's';
+    if ($commodity_id) { $where[] = "mp.commodity = ?"; $params[] = $commodity_id; $types .= 'i'; }
+    $sql = "SELECT mp.market, mp.market_id, mp.country_admin_0,
+                   AVG(mp.Price) as avg_price, MAX(mp.date_posted) as latest_date,
+                   m.latitude, m.longitude
+            FROM market_prices mp
+            LEFT JOIN markets m ON mp.market_id = m.id
+            WHERE " . implode(' AND ', $where) . "
+            AND mp.date_posted >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+            AND m.latitude IS NOT NULL AND m.longitude IS NOT NULL
+            GROUP BY mp.market_id, mp.market, mp.country_admin_0, m.latitude, m.longitude
+            ORDER BY avg_price DESC";
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $r = $stmt->get_result(); $data = [];
+    while ($row = $r->fetch_assoc()) $data[] = $row;
+    $stmt->close();
+    echo json_encode(['success' => true, 'data' => $data]); exit;
 }
 
-// Function to fetch prices data from the database with filters
-function getPricesData($con, $limit = 10, $offset = 0, $filters = []) {
-    $sql = buildPricesQuery($filters);
-    $sql .= " LIMIT $limit OFFSET $offset";
-    
-    $result = $con->query($sql);
+// ── POST: Export functionality ─────────────────────────────────
+if (isset($_POST['export_format'])) {
+    if (session_status() == PHP_SESSION_NONE) session_start();
+    include '../admin/includes/config.php';
+    $format = $_POST['export_format'];
+    $selected_ids = isset($_POST['selected_ids']) && !empty($_POST['selected_ids']) ? explode(',', $_POST['selected_ids']) : [];
+    $export_all = isset($_POST['export_all']) && $_POST['export_all'] == 'true';
     $data = [];
-    if ($result) {
-        if ($result->num_rows > 0) {
-            while ($row = $result->fetch_assoc()) {
-                $data[] = $row;
-            }
-        }
-        $result->free();
-    } else {
-        error_log("Error fetching prices data: " . $con->error);
+    
+    if ($export_all) {
+        $sql = "SELECT p.market, c.commodity_name as commodity, p.price_type, p.Price as price, p.date_posted, p.status, p.data_source as source, p.variety 
+                FROM market_prices p 
+                LEFT JOIN commodities c ON p.commodity = c.id 
+                WHERE p.status = 'published' 
+                ORDER BY p.date_posted DESC";
+        $result = $con->query($sql);
+        if ($result) { while ($row = $result->fetch_assoc()) $data[] = $row; }
+    } elseif (!empty($selected_ids)) {
+        $ids = implode(',', array_map('intval', $selected_ids));
+        $sql = "SELECT p.market, c.commodity_name as commodity, p.price_type, p.Price as price, p.date_posted, p.status, p.data_source as source, p.variety 
+                FROM market_prices p 
+                LEFT JOIN commodities c ON p.commodity = c.id 
+                WHERE p.id IN ($ids) AND p.status = 'published' 
+                ORDER BY p.date_posted DESC";
+        $result = $con->query($sql);
+        if ($result) { while ($row = $result->fetch_assoc()) $data[] = $row; }
     }
+    
+    if ($format == 'excel' || $format == 'csv') {
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="market_prices_' . date('Y-m-d') . '.csv"');
+        $out = fopen('php://output', 'w'); fputs($out, "\xEF\xBB\xBF");
+        fputcsv($out, ['Market','Commodity','Price Type','Price (USD)','Date Posted','Status','Source','Variety']);
+        foreach ($data as $r) fputcsv($out, [$r['market'],$r['commodity'],$r['price_type'],$r['price'],$r['date_posted'],$r['status'],$r['source'],$r['variety']]);
+        fclose($out); exit;
+    } elseif ($format == 'pdf') { ?>
+<!DOCTYPE html><html><head><title>Market Prices Export</title><style>body{font-family:Arial}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px}th{background:#f2f2f2}</style></head>
+<body><h1>Market Prices Export</h1><p>Exported: <?= date('Y-m-d H:i:s') ?> | Records: <?= count($data) ?></p>
+<table><thead><tr><th>Market</th><th>Commodity</th><th>Type</th><th>Price ($)</th><th>Date</th><th>Status</th><th>Source</th><th>Variety</th></tr></thead><tbody>
+<?php foreach ($data as $row): ?>
+<tr><td><?= htmlspecialchars($row['market']) ?></td><td><?= htmlspecialchars($row['commodity']) ?></td><td><?= htmlspecialchars($row['price_type']) ?></td><td><?= htmlspecialchars($row['price']) ?></td><td><?= htmlspecialchars($row['date_posted']) ?></td><td><?= htmlspecialchars($row['status']) ?></td><td><?= htmlspecialchars($row['source']) ?></td><td><?= htmlspecialchars($row['variety']) ?></td></tr>
+<?php endforeach; ?>
+</tbody></table><script>window.onload=function(){window.print();}</script></body></html>
+<?php exit; } }
+
+// ─────────────────────────────────────────────────────────────
+if (session_status() == PHP_SESSION_NONE) { session_start(); }
+include '../admin/includes/config.php';
+include 'user_header.php';
+
+function getPricesData($con, $limit = 20, $offset = 0, $sort_col = 'date_posted', $sort_dir = 'DESC') {
+    $allowed = ['market'=>'p.market','commodity'=>'c.commodity_name','date_posted'=>'p.date_posted','price_type'=>'p.price_type','Price'=>'p.Price','status'=>'p.status'];
+    $order_by = $allowed[$sort_col] ?? 'p.date_posted';
+    $dir = $sort_dir === 'ASC' ? 'ASC' : 'DESC';
+    // Only published records
+    $sql = "SELECT p.id,p.market,p.commodity,c.commodity_name,c.variety,
+                   CONCAT(c.commodity_name,IF(c.variety IS NOT NULL AND c.variety!='',CONCAT(' (',c.variety,')'),'')) AS commodity_display,
+                   p.price_type,p.Price,p.date_posted,p.status,p.data_source,p.market_id,p.category,p.weight,p.unit
+            FROM market_prices p LEFT JOIN commodities c ON p.commodity=c.id
+            WHERE p.status = 'published'
+            ORDER BY $order_by $dir, p.date_posted DESC LIMIT $limit OFFSET $offset";
+    $result = $con->query($sql); $data = [];
+    if ($result) { while ($row = $result->fetch_assoc()) $data[] = $row; $result->free(); }
     return $data;
 }
 
-function getTotalPriceRecords($con, $filters = []) {
-    $sql = buildPricesQuery($filters);
-    $sql = "SELECT COUNT(*) as total FROM ($sql) as count_query";
-    $result = $con->query($sql);
-     if ($result) {
-        $row = $result->fetch_assoc();
-        return $row['total'];
-     }
-     return 0;
+function getTotalPriceRecords($con) {
+    $r = $con->query("SELECT count(*) as total FROM market_prices WHERE status = 'published'");
+    if ($r) { $row = $r->fetch_assoc(); return $row['total']; }
+    return 0;
 }
 
-// Get filter values from request
-$filters = [
-    'country' => isset($_GET['country']) ? $_GET['country'] : '',
-    'market' => isset($_GET['market']) ? $_GET['market'] : '',
-    'commodity' => isset($_GET['commodity']) ? $_GET['commodity'] : '',
-    'price_type' => isset($_GET['price_type']) ? $_GET['price_type'] : '',
-    'data_source' => isset($_GET['data_source']) ? $_GET['data_source'] : '',
-    'commodity_category' => isset($_GET['commodity_category']) ? $_GET['commodity_category'] : '',
-    'date_from' => isset($_GET['date_from']) ? $_GET['date_from'] : '',
-    'date_to' => isset($_GET['date_to']) ? $_GET['date_to'] : '',
-    'price_range' => isset($_GET['price_range']) ? $_GET['price_range'] : ''
-];
-
-// Get total number of records with filters
-$total_records = getTotalPriceRecords($con, $filters);
-
-// Get pagination parameters from request
-$limit_options = [10, 25, 50, 100];
-$limit = isset($_GET['limit']) && in_array((int)$_GET['limit'], $limit_options) ? (int)$_GET['limit'] : 10;
+$sort_column    = $_GET['sort'] ?? 'date_posted';
+$sort_direction = (isset($_GET['dir']) && strtolower($_GET['dir']) === 'asc') ? 'ASC' : 'DESC';
+$search_market  = trim($_GET['search_market'] ?? '');
+$search_commodity = trim($_GET['search_commodity'] ?? '');
+$total_records  = getTotalPriceRecords($con);
+$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 20;
+if (!in_array($limit, [10,20,50,100])) $limit = 20;
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
-
-// Fetch prices data with filters
-$prices_data = getPricesData($con, $limit, $offset, $filters);
-
-// Calculate total pages
+$prices_data = getPricesData($con, $limit, $offset, $sort_column, $sort_direction);
 $total_pages = ceil($total_records / $limit);
 
-// Fetch prices data with filters
-$prices_data = getPricesData($con, $limit, $offset, $filters);
-
-// Calculate total pages
-$total_pages = ceil($total_records / $limit);
-
-// Function to calculate price changes
-function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $con) {
-    if ($currentPrice === null || $currentPrice === '') return 0;
-
-    $yesterday = date('Y-m-d', strtotime('-1 day'));
-
-    $sql = "SELECT Price FROM market_prices
-            WHERE commodity = " . (int)$commodityId . "
-            AND market = '" . $con->real_escape_string($market) . "'
-            AND price_type = '" . $con->real_escape_string($priceType) . "'
-            AND DATE(date_posted) = '$yesterday'";
-
-    $result = $con->query($sql);
-
-    if ($result && $result->num_rows > 0) {
-        $yesterdayData = $result->fetch_assoc();
-        $yesterdayPrice = $yesterdayData['Price'];
-        if($yesterdayPrice != 0){
-            $change = (($currentPrice - $yesterdayPrice) / $yesterdayPrice) * 100;
-            return round($change, 2);
-        }
-        return 0;
-    }
-    return 0;
+function getStatusBadge($status) {
+    $map = ['pending'=>'mp-badge-pending','published'=>'mp-badge-published','approved'=>'mp-badge-approved','unpublished'=>'mp-badge-unpublished'];
+    $cls = $map[$status] ?? '';
+    return '<span class="mp-badge '.$cls.'">'.ucfirst($status).'</span>';
 }
 
-function calculateDoMChange($currentPrice, $commodityId, $market, $priceType, $con) {
-    if ($currentPrice === null || $currentPrice === '') return 0;
-
-    $firstDayOfLastMonth = date('Y-m-01', strtotime('-1 month'));
-    $lastDayOfLastMonth = date('Y-m-t', strtotime('-1 month'));
-
-    $sql = "SELECT AVG(Price) as avg_price FROM market_prices
-            WHERE commodity = " . (int)$commodityId . "
-            AND market = '" . $con->real_escape_string($market) . "'
-            AND price_type = '" . $con->real_escape_string($priceType) . "'
-            AND DATE(date_posted) BETWEEN '$firstDayOfLastMonth' AND '$lastDayOfLastMonth'";
-
-    $result = $con->query($sql);
-
-    if ($result && $result->num_rows > 0) {
-        $monthData = $result->fetch_assoc();
-        $averagePrice = $monthData['avg_price'];
-        if($averagePrice != 0){
-             $change = (($currentPrice - $averagePrice) / $averagePrice) * 100;
-             return round($change, 2);
-        }
-        return 0;
-    }
-    return 0;
+function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
+    $stmt = $con->prepare("SELECT Price FROM market_prices WHERE commodity=? AND market=? AND price_type=? AND DATE(date_posted)<DATE(?) AND status='published' ORDER BY date_posted DESC LIMIT 1");
+    if (!$stmt) return 'N/A';
+    $stmt->bind_param('isss', $commodityId, $market, $priceType, $currentDate);
+    $stmt->execute(); $r = $stmt->get_result();
+    if ($r && $r->num_rows > 0) { $prev = $r->fetch_assoc(); if ($prev['Price'] != 0) { $c = (($currentPrice - $prev['Price']) / $prev['Price']) * 100; $stmt->close(); return round($c, 2).'%'; } }
+    $stmt->close(); return 'N/A';
 }
 
-// Group data by market, commodity, date, and source
-$grouped_data = [];
-foreach ($prices_data as $price) {
-    $date = date('Y-m-d', strtotime($price['date_posted']));
-    $group_key = $date . '_' . $price['market'] . '_' . $price['commodity'] . '_' . $price['data_source'];
-    $grouped_data[$group_key][] = $price;
+function calculateMoMChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
+    $ago = date('Y-m-d', strtotime($currentDate . ' -30 days'));
+    $stmt = $con->prepare("SELECT Price,ABS(DATEDIFF(DATE(date_posted),?)) as dd FROM market_prices WHERE commodity=? AND market=? AND price_type=? AND status='published' AND DATE(date_posted) BETWEEN DATE_SUB(?,INTERVAL 35 DAY) AND DATE_SUB(?,INTERVAL 25 DAY) ORDER BY dd ASC LIMIT 1");
+    if (!$stmt) return 'N/A';
+    $stmt->bind_param('sissss', $ago, $commodityId, $market, $priceType, $ago, $ago);
+    $stmt->execute(); $r = $stmt->get_result();
+    if ($r && $r->num_rows > 0) { $d = $r->fetch_assoc(); if ($d['Price'] != 0) { $c = (($currentPrice - $d['Price']) / $d['Price']) * 100; $stmt->close(); return round($c, 2).'%'; } }
+    $stmt->close(); return 'N/A';
 }
 
-// Get filter options for dropdowns
-$countries = [];
-$markets = [];
-$commodities = [];
-$price_types = [];
-$data_sources = [];
+// ── STATS (published only) ─────────────────────────────────────
+$total_prices    = (int)(($con->query("SELECT COUNT(*) AS t FROM market_prices WHERE status='published'")->fetch_assoc())['t'] ?? 0);
+$markets_count   = (int)(($con->query("SELECT COUNT(DISTINCT market_id) AS t FROM market_prices WHERE status='published'")->fetch_assoc())['t'] ?? 0);
+$wholesale_count = (int)(($con->query("SELECT COUNT(*) AS t FROM market_prices WHERE status='published' AND price_type='Wholesale'")->fetch_assoc())['t'] ?? 0);
+$countries_count = (int)(($con->query("SELECT COUNT(DISTINCT country_admin_0) AS t FROM market_prices WHERE status='published'")->fetch_assoc())['t'] ?? 0);
 
-$options_query = "SELECT DISTINCT country_admin_0 FROM market_prices WHERE status IN ('published', 'approved')";
-$result = $con->query($options_query);
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        $countries[] = $row['country_admin_0'];
-    }
-    $result->free();
-}
+// Distinct countries in DB (published only)
+$countries_in_db = [];
+$ctr = $con->query("SELECT DISTINCT country_admin_0 FROM market_prices WHERE country_admin_0 != '' AND status='published' ORDER BY country_admin_0");
+if ($ctr) { while ($r = $ctr->fetch_assoc()) $countries_in_db[] = $r['country_admin_0']; }
 
-$options_query = "SELECT DISTINCT market FROM market_prices WHERE status IN ('published', 'approved')";
-$result = $con->query($options_query);
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        $markets[] = $row['market'];
-    }
-    $result->free();
-}
+// All markets (published only)
+$all_markets = [];
+$amr = $con->query("SELECT DISTINCT mp.market_id, mp.market, mp.country_admin_0 FROM market_prices mp WHERE mp.status='published' ORDER BY mp.country_admin_0, mp.market");
+if ($amr) { while ($r = $amr->fetch_assoc()) $all_markets[] = $r; }
 
-// Get commodities with varieties
-$commodities = [];
-$commodities_with_varieties = []; // For map and chart filters
+// All commodities with variety (published only)
+$all_commodities_q = $con->query("SELECT DISTINCT c.id,
+    CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
+    c.commodity_name, c.variety
+    FROM commodities c INNER JOIN market_prices mp ON mp.commodity=c.id
+    WHERE mp.status='published'
+    ORDER BY c.commodity_name, c.variety");
+$all_commodities = [];
+if ($all_commodities_q) { while ($r = $all_commodities_q->fetch_assoc()) $all_commodities[] = $r; }
 
-$options_query = "SELECT id, commodity_name, variety FROM commodities WHERE variety IS NOT NULL AND variety != ''";
-$result = $con->query($options_query);
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        $commodity_display = $row['commodity_name'] . ($row['variety'] ? " ({$row['variety']})" : '');
-        $commodities[$row['id']] = $commodity_display;
-        $commodities_with_varieties[] = $commodity_display;
-    }
-    $result->free();
-}
-
-// Also get commodities without varieties
-$options_query = "SELECT id, commodity_name FROM commodities WHERE variety IS NULL OR variety = ''";
-$result = $con->query($options_query);
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        $commodities[$row['id']] = $row['commodity_name'];
-        if (!in_array($row['commodity_name'], $commodities_with_varieties)) {
-            $commodities_with_varieties[] = $row['commodity_name'];
-        }
-    }
-    $result->free();
-}
-
-$options_query = "SELECT DISTINCT price_type FROM market_prices WHERE status IN ('published', 'approved')";
-$result = $con->query($options_query);
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        $price_types[] = $row['price_type'];
-    }
-    $result->free();
-}
-
-$options_query = "SELECT DISTINCT data_source FROM market_prices WHERE status IN ('published', 'approved')";
-$result = $con->query($options_query);
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        $data_sources[] = $row['data_source'];
-    }
-    $result->free();
-}
-
-// Get data for charts and maps (without pagination)
-$chart_data = getPricesData($con, 1000, 0, $filters); // Increased limit for better chart data
-
-// Prepare market coordinates for map
-$marketCoordinates = [];
-foreach ($markets as $market) {
-    // Find the country for this market from the actual data
-    $marketCountry = '';
-    foreach ($prices_data as $price) {
-        if ($price['market'] === $market) {
-            $marketCountry = $price['country_admin_0'];
-            break;
-        }
-    }
-    if (empty($marketCountry)) {
-        $marketCountry = 'Kenya'; // Default fallback
-    }
-    $coords = geocodeMarket($market, $marketCountry);
-    $marketCoordinates[$market] = $coords;
-}
+$active_tab = $_GET['tab'] ?? 'table';
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RATIN - Market Prices</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f8f9fa;
-            margin: 0;
-            padding: 0;
-            color: #333;
-        }
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<style>
+:root {
+    --mp-primary: #800000;
+    --mp-primary-dk: #660000;
+    --mp-green: #00450d;
+    --mp-accent: #b45032;
+    --mp-bg: #f9fafb;
+    --mp-card: #ffffff;
+    --mp-border: #e5e7eb;
+    --mp-text: #1f2937;
+    --mp-muted: #6b7280;
+    --mp-radius: .625rem;
+}
+.mp-wrap { min-height: 100vh; padding: 0 0 60px; font-family: 'Segoe UI', system-ui, sans-serif; color: var(--mp-text); }
+.mp-page-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 4px; }
+.mp-page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--mp-primary); margin: 0; }
+.mp-page-header p  { font-size: .875rem; color: var(--mp-muted); margin: 4px 0 0; }
+.mp-accent-bar { height: 3px; background: linear-gradient(90deg, var(--mp-green) 0%, var(--mp-primary) 50%, var(--mp-green) 100%); border-radius: 99px; margin: 10px 0 20px; }
 
-        .wrapper {
-            display: flex;
-            min-height: 100vh;
-        }
+/* ── Tab navigation ── */
+.mp-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--mp-border); margin-bottom: 20px; overflow-x: auto; }
+.mp-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 20px; font-size: .875rem; font-weight: 500;
+    color: var(--mp-muted); border-bottom: 2px solid transparent;
+    cursor: pointer; transition: all .2s; white-space: nowrap;
+    margin-bottom: -2px; text-decoration: none;
+    background: none; border-top: none; border-left: none; border-right: none;
+}
+.mp-tab:hover { color: var(--mp-primary); background: rgba(128,0,0,.03); }
+.mp-tab.active { color: var(--mp-primary); border-bottom-color: var(--mp-primary); font-weight: 600; }
+.mp-tab .ms { font-size: 1.1rem; }
 
-        /* Sidebar Styles */
-        .sidebar {
-            width: 250px;
-            background-color: #ffffff;
-            border-right: 0px solid #ddd;
-            padding: 15px;
-            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
-            position: fixed;
-            top: 0;
-            left: 0;
-            bottom: 0;
-            z-index: 1000;
-            overflow-y: auto;
-        }
-        .sidebar .logo {
-            text-align: center;
-            margin-bottom: 20px;
-        }
+/* ── Tab panels ── */
+.mp-panel { display: none; }
+.mp-panel.active { display: block; }
 
-        .sidebar .ratin-logo {
-            max-width: 150px;
-            height: auto;
-        }
+/* ── Stat cards ── */
+.mp-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.mp-stat-card { background: var(--mp-card); border-radius: var(--mp-radius); padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 3px rgba(0,0,0,.06); border-left: 4px solid var(--mp-primary); transition: transform .2s, box-shadow .2s; }
+.mp-stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.1); }
+.mp-stat-card.stat-markets   { border-left-color: #d97706; }
+.mp-stat-card.stat-countries { border-left-color: #16a34a; }
+.mp-stat-card.stat-wholesale { border-left-color: #2563eb; }
+.mp-stat-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--mp-muted); margin-bottom: 4px; }
+.mp-stat-value { font-size: 1.4rem; font-weight: 700; color: var(--mp-text); }
+.mp-stat-icon  { font-size: 2rem; opacity: .25; }
+.mp-stat-icon.ic-total     { color: var(--mp-primary); opacity: .3; }
+.mp-stat-icon.ic-markets   { color: #d97706; opacity: .3; }
+.mp-stat-icon.ic-countries { color: #16a34a; opacity: .3; }
+.mp-stat-icon.ic-wholesale { color: #2563eb; opacity: .3; }
 
-        .sidebar h6 {
-            color: #6c757d;
-            font-weight: bold;
-            margin-top: 20px;
-            padding-left: 10px;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-            font-size: 0.85em;
-        }
+/* ── Toolbar ── */
+.mp-toolbar { background: var(--mp-card); border-radius: var(--mp-radius); padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 14px; }
+.mp-toolbar-left  { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.mp-toolbar-right { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-        .sidebar .nav-link {
-            color: #333;
-            padding: 12px 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-radius: 5px;
-            transition: all 0.2s ease-in-out;
-            font-size: 1.0em;
-            text-decoration: none;
-        }
+/* ── Buttons ── */
+.mp-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 14px; border-radius: 6px; font-size: .8125rem; font-weight: 500; border: 1px solid var(--mp-border); background: white; color: var(--mp-text); cursor: pointer; transition: all .2s; white-space: nowrap; }
+.mp-btn:hover { background: #f3f4f6; }
+.mp-btn.primary  { background: var(--mp-primary); color: white; border-color: var(--mp-primary); }
+.mp-btn.primary:hover { background: var(--mp-primary-dk); }
+.mp-btn.ghost    { background: transparent; border-color: var(--mp-border); color: var(--mp-muted); }
+.mp-btn.ghost:hover { background: #f9fafb; color: var(--mp-text); }
+.mp-badge-count  { background: rgba(0,0,0,.1); color: inherit; font-size: .7rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; margin-left: 2px; }
 
-        .sidebar .nav-link i {
-            margin-right: 10px;
-            width: 20px;
-            text-align: center;
-        }
+/* ── Dropdown ── */
+.mp-dropdown { position: relative; }
+.mp-dropdown-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 190px; z-index: 200; background: white; border: 1px solid var(--mp-border); border-radius: var(--mp-radius); box-shadow: 0 8px 24px rgba(0,0,0,.1); display: none; }
+.mp-dropdown-menu.open { display: block; }
+.mp-dropdown-item { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: .8125rem; color: var(--mp-text); cursor: pointer; transition: background .15s; }
+.mp-dropdown-item:hover { background: #f9fafb; }
+.mp-dropdown-divider { border: none; border-top: 1px solid var(--mp-border); margin: 4px 0; }
 
-        .sidebar .nav-link:hover, .sidebar .nav-link.active {
-            background-color: #f5d6c6;
-            color: #8B4513;
-        }
+/* ── Search bar ── */
+.mp-search-bar { background: var(--mp-card); border-radius: var(--mp-radius); padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 14px; }
+.mp-search-field { position: relative; flex: 1; min-width: 150px; }
+.mp-search-field input, .mp-search-field select { width: 100%; padding: 6px 10px 6px 32px; border: 1px solid var(--mp-border); border-radius: 6px; font-size: .8125rem; color: var(--mp-text); transition: border-color .2s; box-sizing: border-box; background: white; }
+.mp-search-field input:focus, .mp-search-field select:focus { outline: none; border-color: var(--mp-primary); box-shadow: 0 0 0 3px rgba(128,0,0,.1); }
+.mp-search-field select { padding-left: 32px; }
+.mp-search-icon { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--mp-muted); font-size: 1rem; pointer-events: none; z-index: 1; }
 
-        /* Header */
-        .header-container {
-            flex-grow: 1;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px 20px;
-            background-color: #fff;
-            border-bottom: 1px solid #eee;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.03);
-            z-index: 999;
-            position: sticky;
-            top: 0;
-            margin-left: 250px;
-            height: 64px;
-        }
+/* ── Table ── */
+.mp-table-card { background: var(--mp-card); border-radius: var(--mp-radius); box-shadow: 0 1px 3px rgba(0,0,0,.06); overflow: hidden; }
+.mp-table-wrap { overflow-x: auto; }
+.mp-table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+.mp-table thead tr { background: #f8f9fa; }
+.mp-table th { padding: 10px 12px; text-align: left; font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--mp-muted); border-bottom: 2px solid var(--mp-border); white-space: nowrap; }
+.mp-table td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
+.mp-table tbody tr:hover { background: #fefaf5; }
+.mp-table tbody tr.mp-selected { background: rgba(128,0,0,.06) !important; }
+.mp-table td.muted { color: var(--mp-muted); font-size: .75rem; }
 
-        .breadcrumb {
-            margin: 0;
-            font-size: 17px;
-            color: #6c757d;
-        }
+/* ── Badges ── */
+.mp-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 99px; font-size: .7rem; font-weight: 600; }
+.mp-badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.mp-badge-published  { background: #dcfce7; color: #166534; } .mp-badge-published::before  { background: #16a34a; }
 
-        .breadcrumb a {
-            text-decoration: none;
-            color: #8B4513;
-            font-weight: bold;
-        }
+/* ── Price / change ── */
+.mp-price { font-family: 'Courier New', monospace; font-weight: 700; font-size: .875rem; }
+.mp-change { display: inline-flex; align-items: center; gap: 2px; font-size: .7rem; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
+.mp-change.up   { background: #dcfce7; color: #16a34a; }
+.mp-change.down { background: #fee2e2; color: #dc2626; }
+.mp-change.flat { background: #f3f4f6; color: var(--mp-muted); }
 
-        .breadcrumb-item.active {
-            color: #8B4513;
-            font-weight: bold;
-        }
+/* ── Action btns ── */
+.mp-action-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; border: none; cursor: pointer; transition: all .2s; background: #f3f4f6; color: var(--mp-muted); }
+.mp-action-btn:hover { background: #e0f2fe; color: #0891b2; }
 
-        .breadcrumb-item + .breadcrumb-item::before {
-            content: " > ";
-            color: #6c757d;
-        }
+/* ── Pagination ── */
+.mp-pagination-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--mp-border); background: var(--mp-card); }
+.mp-pagination-info { font-size: .8125rem; color: var(--mp-muted); }
+.mp-pagination-nav  { display: flex; align-items: center; gap: 4px; }
+.mp-pg-btn { min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: .75rem; border: 1px solid var(--mp-border); background: white; color: var(--mp-text); cursor: pointer; transition: all .2s; padding: 0 4px; }
+.mp-pg-btn:hover:not(:disabled):not(.active) { background: #fef3e7; border-color: var(--mp-primary); color: var(--mp-primary); }
+.mp-pg-btn.active { background: var(--mp-primary); border-color: var(--mp-primary); color: white; font-weight: 700; }
+.mp-pg-btn:disabled { opacity: .35; cursor: not-allowed; }
+.mp-page-size select { font-size: .75rem; padding: 3px 8px; border: 1px solid var(--mp-border); border-radius: 6px; background: white; cursor: pointer; }
 
-        .user-display {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-weight: bold;
-            color: #8B4513;
-            position: relative;
-            cursor: pointer;
-            padding: 8px 12px;
-            border-radius: 5px;
-            transition: background-color 0.2s;
-        }
+/* ── Sortable ── */
+.mp-th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+.mp-th-sort:hover { color: var(--mp-primary); }
+.mp-sort-icon { font-size: .65rem; margin-left: 3px; opacity: .5; vertical-align: middle; }
+.mp-th-sort.active-sort { color: var(--mp-primary); }
+.mp-th-sort.active-sort .mp-sort-icon { opacity: 1; }
 
-        .user-display:hover {
-            background-color: #f5f5f5;
-        }
+/* ── Row groups ── */
+.mp-row-first { border-top: 2px solid #e5e7eb !important; }
+.mp-row-first:first-child { border-top: none !important; }
+.mp-group-even { background: #fafafa; }
+.mp-group-even:hover { background: #f5f5f5 !important; }
+.mp-row-cont td.mp-shared-cell { color: transparent !important; user-select: none; pointer-events: none; }
+.mp-row-cont td.mp-shared-cell * { visibility: hidden; }
 
-        .user-menu {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            min-width: 150px;
-            z-index: 1000;
-            display: none;
-        }
+/* ── Material icons ── */
+.ms { font-family: 'Material Symbols Outlined' !important; font-style: normal; font-weight: normal; line-height: 1; letter-spacing: normal; text-transform: none; display: inline-block; white-space: nowrap; direction: ltr; -webkit-font-smoothing: antialiased; vertical-align: middle; }
 
-        .user-menu.show {
-            display: block;
-        }
+/* ── Chart panel ── */
+.mp-chart-panel { background: var(--mp-card); border-radius: var(--mp-radius); box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 20px; margin-bottom: 16px; }
+.mp-chart-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--mp-border); }
+.mp-chart-filter-group { display: flex; flex-direction: column; gap: 4px; min-width: 160px; flex: 1; }
+.mp-chart-filter-group label { font-size: .75rem; font-weight: 600; color: var(--mp-muted); text-transform: uppercase; letter-spacing: .05em; }
+.mp-chart-filter-group select, .mp-chart-filter-group input[type="date"] { padding: 7px 10px; border: 1px solid var(--mp-border); border-radius: 6px; font-size: .8125rem; color: var(--mp-text); background: white; width: 100%; }
+.mp-chart-filter-group select:focus, .mp-chart-filter-group input[type="date"]:focus { outline: none; border-color: var(--mp-primary); }
 
-        .user-menu-item {
-            padding: 10px 15px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            text-decoration: none;
-            color: #333;
-            border-bottom: 1px solid #eee;
-            transition: background-color 0.2s;
-        }
+/* Custom date range row */
+.mp-custom-range { display: none; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--mp-border); }
+.mp-custom-range.visible { display: flex; }
+.mp-custom-range-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
+.mp-custom-range-group label { font-size: .75rem; font-weight: 600; color: var(--mp-muted); text-transform: uppercase; letter-spacing: .05em; }
+.mp-custom-range-group input[type="date"] { padding: 7px 10px; border: 1px solid var(--mp-border); border-radius: 6px; font-size: .8125rem; color: var(--mp-text); background: white; width: 100%; box-sizing: border-box; }
+.mp-custom-range-group input[type="date"]:focus { outline: none; border-color: var(--mp-primary); }
 
-        .user-menu-item:hover {
-            background-color: #f5f5f5;
-        }
+/* ── Chart legend ── */
+.mp-chart-legend { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 12px; }
+.mp-legend-item { display: flex; align-items: center; gap: 8px; font-size: .8125rem; color: var(--mp-text); }
+.mp-legend-dot { width: 12px; height: 3px; border-radius: 2px; }
+.mp-legend-value { font-weight: 700; color: var(--mp-text); margin-left: 4px; }
 
-        .user-menu-item:last-child {
-            border-bottom: none;
-        }
+/* ── Chart stats row ── */
+.mp-chart-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.mp-chart-stat { background: #f8f9fa; border-radius: 8px; padding: 10px 14px; }
+.mp-chart-stat-label { font-size: .7rem; color: var(--mp-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.mp-chart-stat-value { font-size: 1.1rem; font-weight: 700; color: var(--mp-text); }
+.mp-chart-stat-sub { font-size: .7rem; color: var(--mp-muted); margin-top: 2px; }
 
-        /* Main Content */
-        .main-content {
-            margin-left: 250px;
-            padding: 20px;
-            flex-grow: 1;
-            margin-top: 64px;
-        }
+/* ── Cards view ── */
+.mp-cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.mp-commodity-card { background: var(--mp-card); border-radius: var(--mp-radius); box-shadow: 0 1px 3px rgba(0,0,0,.06); border: 1px solid var(--mp-border); overflow: hidden; transition: box-shadow .2s, transform .2s; }
+.mp-commodity-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,.1); transform: translateY(-2px); }
+.mp-card-header { padding: 12px 14px; border-bottom: 1px solid var(--mp-border); display: flex; align-items: center; justify-content: space-between; }
+.mp-card-commodity { font-weight: 700; font-size: .9375rem; color: var(--mp-text); }
+.mp-card-market { font-size: .75rem; color: var(--mp-muted); margin-top: 2px; display: flex; align-items: center; gap: 4px; }
+.mp-card-body { padding: 12px 14px; }
+.mp-card-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.mp-card-price-box { background: #f8f9fa; border-radius: 8px; padding: 10px 12px; }
+.mp-card-price-type { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.mp-card-price-type.ws { color: #6d28d9; }
+.mp-card-price-type.rt { color: #be185d; }
+.mp-card-price-val { font-size: 1.25rem; font-weight: 700; font-family: 'Courier New', monospace; color: var(--mp-text); }
+.mp-card-footer { padding: 8px 14px; border-top: 1px solid #f3f4f6; display: flex; align-items: center; justify-content: space-between; font-size: .75rem; color: var(--mp-muted); }
 
-        /* Container styles */
-        .container {
-            background: #fff;
-            margin-bottom: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-            overflow: hidden;
-        }
+/* ── Cards filter bar ── */
+.mp-cards-filters { background: var(--mp-card); border-radius: var(--mp-radius); padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.mp-filter-group { display: flex; flex-direction: column; gap: 4px; min-width: 160px; flex: 1; }
+.mp-filter-group label { font-size: .75rem; font-weight: 600; color: var(--mp-muted); text-transform: uppercase; letter-spacing: .05em; }
+.mp-filter-group select, .mp-filter-group input { padding: 7px 10px; border: 1px solid var(--mp-border); border-radius: 6px; font-size: .8125rem; color: var(--mp-text); background: white; width: 100%; box-sizing: border-box; }
+.mp-filter-group select:focus, .mp-filter-group input:focus { outline: none; border-color: var(--mp-primary); }
 
-        /* Toolbar styles */
-        .toolbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px;
-            border-bottom: 1px solid #eee;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        .toolbar-left, .toolbar-right {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-        .toolbar button, .toolbar a {
-            padding: 12px 20px;
-            font-size: 14px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            background-color: #eee;
-            text-decoration: none;
-            color: #333;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            transition: background-color 0.2s ease;
-        }
-        .toolbar button:hover, .toolbar a:hover:not(.primary) {
-            background-color: #e0e0e0;
-        }
-        .toolbar .primary {
-            background-color: rgba(180, 80, 50, 1);
-            color: white;
-        }
-        .toolbar .primary:hover {
-            background-color: rgba(160, 70, 40, 1);
-        }
+/* ── Map panel ── */
+.mp-map-container { background: var(--mp-card); border-radius: var(--mp-radius); box-shadow: 0 1px 3px rgba(0,0,0,.06); overflow: hidden; }
+.mp-map-filters { padding: 14px 16px; border-bottom: 1px solid var(--mp-border); display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+#mp-map { width: 100%; height: 520px; }
+.mp-map-legend { padding: 12px 16px; border-top: 1px solid var(--mp-border); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: .8125rem; color: var(--mp-muted); }
+.mp-map-legend-title { font-weight: 600; color: var(--mp-text); }
+.mp-map-legend-gradient { width: 140px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #bee3f8 0%, #2b6cb0 100%); }
+.mp-map-legend-labels { display: flex; justify-content: space-between; width: 140px; font-size: .7rem; }
 
-        /* Improved Table Container */
-        .table-responsive-container {
-            width: 100%;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-            padding: 0 15px;
-            margin-bottom: 20px;
-        }
+/* ── No data state ── */
+.mp-no-data { text-align: center; padding: 50px 20px; color: var(--mp-muted); }
+.mp-no-data .ms { font-size: 3rem; opacity: .3; display: block; margin-bottom: 12px; }
+.mp-no-data p { font-size: .9rem; margin: 0; }
 
-        /* Wider Table with Better Column Sizes */
-        table {
-            width: 100%;
-            min-width: 1500px;
-            border-collapse: separate;
-            border-spacing: 0;
-            font-size: 14px;
-        }
+/* ── Loading spinner ── */
+.mp-loading { text-align: center; padding: 40px; color: var(--mp-muted); }
+@keyframes mpspin { to { transform: rotate(360deg); } }
+.mp-spinner { animation: mpspin 1s linear infinite; display: inline-block; }
 
-        /* Column Width Adjustments */
-        table th:nth-child(1), table td:nth-child(1) { width: 50px; }
-        table th:nth-child(2), table td:nth-child(2) { width: 180px; }
-        table th:nth-child(3), table td:nth-child(3) { width: 150px; }
-        table th:nth-child(4), table td:nth-child(4) { width: 200px; }
-        table th:nth-child(5), table td:nth-child(5) { width: 120px; }
-        table th:nth-child(6), table td:nth-child(6) { width: 120px; }
-        table th:nth-child(7), table td:nth-child(7) { width: 100px; }
-        table th:nth-child(8), table td:nth-child(8) { width: 180px; }
-        table th:nth-child(9), table td:nth-child(9) { width: 180px; }
-        table th:nth-child(10), table td:nth-child(10) { width: 180px; }
-        table th:nth-child(11), table td:nth-child(11) { width: 150px; }
-        table th:nth-child(12), table td:nth-child(12) { width: 150px; }
-        table th:nth-child(13), table td:nth-child(13) { width: 150px; }
-        table th:nth-child(14), table td:nth-child(14) { width: 180px; }
+/* Published badge pill in header */
+.mp-published-pill { display: inline-flex; align-items: center; gap: 5px; background: #dcfce7; color: #166534; font-size: .75rem; font-weight: 600; padding: 3px 10px; border-radius: 99px; border: 1px solid #bbf7d0; }
 
-        /* Table Cell Styling */
-        table th, table td {
-            padding: 14px 16px;
-            border-bottom: 1px solid #eee;
-            text-align: left;
-            vertical-align: middle;
-            white-space: nowrap;
-        }
-
-        /* Alternating row colors */
-        table tbody tr:nth-child(odd) {
-            background-color: #ffffff;
-        }
-
-        table tbody tr:nth-child(even) {
-            background-color: #ffffff;
-        }
-
-        table tbody tr:hover {
-            background-color: #f5f5f5;
-        }
-
-        /* Sticky Header with Shadow */
-        table th {
-            position: sticky;
-            top: 0;
-            background-color: #f1f1f1;
-            z-index: 10;
-            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.1);
-            font-size: 13px;
-        }
-
-        /* Horizontal Scrollbar Styling */
-        .table-responsive-container::-webkit-scrollbar {
-            height: 10px;
-        }
-        .table-responsive-container::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 4px;
-        }
-        .table-responsive-container::-webkit-scrollbar-thumb {
-            background: #c1c1c1;
-            border-radius: 4px;
-        }
-        .table-responsive-container::-webkit-scrollbar-thumb:hover {
-            background: #a8a8a8;
-        }
-
-        /* Price Change Display */
-        .change-positive {
-            color: #059669;
-            font-weight: bold;
-        }
-        .change-negative {
-            color: #dc2626;
-            font-weight: bold;
-        }
-
-        /* Checkbox styling */
-        .checkbox {
-            width: 16px;
-            height: 16px;
-            cursor: pointer;
-        }
-
-        /* Pagination styles */
-        .pagination {
-            display: flex;
-            justify-content: space-between;
-            padding: 20px;
-            font-size: 14px;
-            align-items: center;
-            flex-wrap: wrap;
-            border-top: 1px solid #eee;
-            gap: 10px;
-        }
-        .pagination .pages {
-            display: flex;
-            gap: 5px;
-        }
-        .pagination .page {
-            padding: 8px 12px;
-            border-radius: 6px;
-            background-color: #eee;
-            cursor: pointer;
-            text-decoration: none;
-            color: #333;
-            transition: background-color 0.2s ease;
-        }
-        .pagination .current {
-            background-color: #8B4513;
-            color: white;
-            font-weight: bold;
-        }
-        .pagination .page:hover:not(.current) {
-            background-color: #ddd;
-        }
-        .pagination button {
-            padding: 8px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 500;
-            color: #374151;
-            background-color: white;
-            cursor: pointer;
-            transition: background-color 0.2s ease;
-        }
-        .pagination button:hover:not(:disabled) {
-            background-color: #f5f5f5;
-        }
-        .pagination button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        /* Filter section */
-        .filter-section {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            padding: 24px;
-            margin-bottom: 24px;
-        }
-
-        /* View tabs */
-        .view-tabs {
-            display: flex;
-            border-bottom: 1px solid #eee;
-        }
-        .view-tab {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 16px 24px;
-            border-bottom: 2px solid transparent;
-            font-weight: 500;
-            font-size: 14px;
-            color: #666;
-            background: none;
-            border: none;
-            cursor: pointer;
-        }
-        .view-tab.active {
-            color: #8B4513;
-            border-bottom-color: #8B4513;
-        }
-
-        /* Chart filters */
-        .chart-filters {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
-            margin-bottom: 20px;
-        }
-
-        .map-filters {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 16px;
-            margin-bottom: 20px;
-        }
-
-        .commodity-category-btn.active {
-            background-color: #8B4513;
-            color: white;
-        }
-
-        /* Map container */
-        #map {
-            height: 500px;
-            width: 100%;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-
-        /* Map popup styling */
-        .map-popup {
-            font-family: Arial, sans-serif;
-        }
-        .map-popup h4 {
-            margin: 0 0 8px 0;
-            color: #8B4513;
-        }
-        .map-popup p {
-            margin: 4px 0;
-        }
-
-        /* Map legend styling */
-        .info {
-            padding: 6px 8px;
-            font: 14px/16px Arial, Helvetica, sans-serif;
-            background: white;
-            background: rgba(255,255,255,0.8);
-            box-shadow: 0 0 15px rgba(0,0,0,0.2);
-            border-radius: 5px;
-        }
-
-        .info h6 {
-            margin: 0 0 5px;
-            color: #777;
-        }
-
-        .legend {
-            line-height: 18px;
-            color: #555;
-        }
-
-        @media (max-width: 768px) {
-            .sidebar {
-                width: 100%;
-                position: relative;
-                margin-left: 0;
-            }
-            .header-container, .main-content {
-                margin-left: 0;
-            }
-            .filter-section > div {
-                grid-template-columns: 1fr !important;
-            }
-            .chart-filters, .map-filters {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
+@media (max-width: 768px) {
+    .mp-stats { grid-template-columns: repeat(2, 1fr); }
+    .mp-chart-filters { flex-direction: column; }
+    .mp-cards-grid { grid-template-columns: 1fr; }
+}
+</style>
 </head>
-<body>
-<div class="wrapper">
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <div class="logo">
-            <img class="ratin-logo" src="../base/img/Ratin-logo-1.png" alt="RATIN Logo">
-        </div><br>
-        <br>
-        <h6>Price Parity</h6>
 
-        <div class="submenu" id="dataSubmenu" style="display: block;">
-            <a href="#" class="nav-link active">
-                <i class="fas fa-store-alt"></i> Market Prices
-            </a>
-            <a href="millerprices.php" class="nav-link">
-                <i class="fas fa-industry"></i> Miller Prices
-            </a>
-            <a href="xbtvols.php" class="nav-link">
-                <i class="fas fa-exchange-alt"></i> XBT Volumes
-            </a>
+<div class="mp-wrap" style="max-width:1400px; margin:0 auto; padding:24px 20px;">
+
+    <!-- ── Page Header ── -->
+    <div class="mp-page-header">
+        <div>
+            <h1><span class="ms" style="font-size:1.4rem;margin-right:6px;">monitoring</span>Market Prices Dashboard</h1>
+            <p>Explore and analyse commodity price trends across markets and countries</p>
         </div>
-    </div>
-
-    <!-- Main Content -->
-    <div class="flex-grow-1">
-        <!-- Header -->
-        <div class="header-container">
-            <nav aria-label="breadcrumb">
-                <ol class="breadcrumb">
-                    <li class="breadcrumb-item">
-                        <a href="#"><i class="fa fa-home"></i></a>
-                    </li>
-                    <li class="breadcrumb-item active" aria-current="page">Market Prices</li>
-                </ol>
-            </nav>
-            <div class="user-display" id="user-display">
-                <i class="fa fa-user-circle"></i> 
-                <span><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'User'); ?></span>
-                <div class="user-menu" id="user-menu">
-                    <a href="#" class="user-menu-item">
-                        <i class="fas fa-user"></i> Profile
-                    </a>
-                    <a href="#" class="user-menu-item">
-                        <i class="fas fa-cog"></i> Settings
-                    </a>
-                    <a href="logout.php" class="user-menu-item">
-                        <i class="fas fa-sign-out-alt"></i> Logout
-                    </a>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <span class="mp-published-pill"><span class="ms" style="font-size:.85rem;">verified</span> Published Data Only</span>
+            <div class="mp-dropdown" id="exportDropdown">
+                <button class="mp-btn primary" onclick="mpExportToggle()">
+                    <span class="ms">download</span> Export <span class="ms" style="font-size:.9rem;">expand_more</span>
+                </button>
+                <div class="mp-dropdown-menu" id="exportDropdownMenu" style="position:absolute;right:0;left:auto;margin-top:4px;">
+                    <div class="mp-dropdown-item" onclick="exportAll('excel')"><span class="ms">table_view</span> All → CSV/Excel</div>
+                    <div class="mp-dropdown-item" onclick="exportAll('pdf')"><span class="ms">picture_as_pdf</span> All → PDF</div>
+                    <div class="mp-dropdown-item" onclick="exportSelected('excel')" id="exportSelectedCsv" style="opacity:0.5;pointer-events:none;"><span class="ms">checklist</span> Selected → CSV</div>
+                    <div class="mp-dropdown-item" onclick="exportSelected('pdf')" id="exportSelectedPdf" style="opacity:0.5;pointer-events:none;"><span class="ms">checklist</span> Selected → PDF</div>
                 </div>
             </div>
         </div>
+    </div>
+    <div class="mp-accent-bar"></div>
 
-        <!-- Content -->
-        <div class="main-content">
-            <form id="filter-form" method="GET">
-                <div class="filter-section">
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
-                        <div>
-                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Country/District</label>
-                            <select name="country" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                                <option value="">Select Country</option>
-                                <?php foreach ($countries as $country): ?>
-                                    <option value="<?php echo htmlspecialchars($country); ?>" <?php echo isset($filters['country']) && $filters['country'] == $country ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($country); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Market</label>
-                            <select name="market" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                                <option value="">Select Market</option>
-                                <?php foreach ($markets as $market): ?>
-                                    <option value="<?php echo htmlspecialchars($market); ?>" <?php echo isset($filters['market']) && $filters['market'] == $market ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($market); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Commodity</label>
-                            <select name="commodity" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                                <option value="">Select Commodity</option>
-                                <?php foreach ($commodities as $id => $name): ?>
-                                    <option value="<?php echo $id; ?>" <?php echo isset($filters['commodity']) && $filters['commodity'] == $id ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($name); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Price type</label>
-                            <select name="price_type" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                                <option value="">All Types</option>
-                                <?php foreach ($price_types as $type): ?>
-                                    <option value="<?php echo htmlspecialchars($type); ?>" <?php echo isset($filters['price_type']) && $filters['price_type'] == $type ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($type); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    </div>
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
-                        <div>
-                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Data Source</label>
-                            <select name="data_source" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                                <option value="">All Sources</option>
-                                <?php foreach ($data_sources as $source): ?>
-                                    <option value="<?php echo htmlspecialchars($source); ?>" <?php echo isset($filters['data_source']) && $filters['data_source'] == $source ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($source); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Date Range</label>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <input type="date" name="date_from" value="<?php echo isset($filters['date_from']) ? $filters['date_from'] : ''; ?>" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                                <span style="color: #666;">to</span>
-                                <input type="date" name="date_to" value="<?php echo isset($filters['date_to']) ? $filters['date_to'] : ''; ?>" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                            </div>
-                        </div>
-                        <div>
-                            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 4px;">Market Prices</label>
-                            <input type="text" name="price_range" value="<?php echo isset($filters['price_range']) ? $filters['price_range'] : ''; ?>" placeholder="Enter price range (e.g., 100-200)" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                        </div>
-                        <div style="display: flex; align-items: end; gap: 8px;">
-                            <button type="submit" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; font-weight: 500; color: white; background: #8B4513; cursor: pointer;">
-                                <i class="fa fa-filter"></i>
-                                Apply filters
-                            </button>
-                            <button type="button" id="reset-filters" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; font-weight: 500; color: #374151; background: white; cursor: pointer;">
-                                <i class="fa fa-refresh"></i>
-                                Reset filters
-                            </button>
-                        </div>
-                    </div>
+    <!-- ── Stat Cards ── -->
+    <div class="mp-stats">
+        <div class="mp-stat-card">
+            <div><div class="mp-stat-label">Published Prices</div><div class="mp-stat-value"><?= number_format($total_prices) ?></div></div>
+            <span class="ms mp-stat-icon ic-total" style="font-size:2.2rem;">monitoring</span>
+        </div>
+        <div class="mp-stat-card stat-markets">
+            <div><div class="mp-stat-label">Active Markets</div><div class="mp-stat-value"><?= number_format($markets_count) ?></div></div>
+            <span class="ms mp-stat-icon ic-markets" style="font-size:2.2rem;">storefront</span>
+        </div>
+        <div class="mp-stat-card stat-countries">
+            <div><div class="mp-stat-label">Countries</div><div class="mp-stat-value"><?= number_format($countries_count) ?></div></div>
+            <span class="ms mp-stat-icon ic-countries" style="font-size:2.2rem;">public</span>
+        </div>
+        <div class="mp-stat-card stat-wholesale">
+            <div><div class="mp-stat-label">Wholesale Records</div><div class="mp-stat-value"><?= number_format($wholesale_count) ?></div></div>
+            <span class="ms mp-stat-icon ic-wholesale" style="font-size:2.2rem;">balance</span>
+        </div>
+    </div>
+
+    <!-- ── Tab Navigation ── -->
+    <div class="mp-tabs" role="tablist">
+        <button class="mp-tab <?= $active_tab==='table'  ? 'active' : '' ?>" onclick="switchTab('table')"  role="tab">
+            <span class="ms">table_rows</span> Table View
+        </button>
+        <button class="mp-tab <?= $active_tab==='charts' ? 'active' : '' ?>" onclick="switchTab('charts')" role="tab">
+            <span class="ms">show_chart</span> Price Trends
+        </button>
+        <button class="mp-tab <?= $active_tab==='cards'  ? 'active' : '' ?>" onclick="switchTab('cards')"  role="tab">
+            <span class="ms">grid_view</span> Cards View
+        </button>
+        <button class="mp-tab <?= $active_tab==='map'    ? 'active' : '' ?>" onclick="switchTab('map')"    role="tab">
+            <span class="ms">map</span> Map View
+        </button>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         TAB 1: TABLE VIEW
+    ══════════════════════════════════════ -->
+    <div id="panel-table" class="mp-panel <?= $active_tab==='table' ? 'active' : '' ?>">
+
+        <!-- Toolbar with selection controls (Delete removed) -->
+        <div class="mp-toolbar">
+            <div class="mp-toolbar-left">
+                <button class="mp-btn ghost" onclick="clearAllSelections()">
+                    <span class="ms">clear</span> Clear Selection
+                    <span class="mp-badge-count" id="selectedCount">0</span>
+                </button>
+            </div>
+            <div class="mp-toolbar-right">
+                <button class="mp-btn" onclick="openModal('importModal')">
+                    <span class="ms">upload_file</span> Import CSV
+                </button>
+            </div>
+        </div>
+
+        <!-- Search -->
+        <div class="mp-search-bar">
+            <div class="mp-search-field">
+                <span class="ms mp-search-icon">search</span>
+                <input type="text" id="searchMarket" placeholder="Search market…" value="<?= htmlspecialchars($search_market) ?>">
+            </div>
+            <div class="mp-search-field">
+                <span class="ms mp-search-icon">grain</span>
+                <input type="text" id="searchCommodity" placeholder="Search commodity…" value="<?= htmlspecialchars($search_commodity) ?>">
+            </div>
+            <div class="mp-search-field">
+                <span class="ms mp-search-icon">filter_alt</span>
+                <input type="text" id="searchType" placeholder="Price type…">
+            </div>
+            <button class="mp-btn primary" onclick="applyClientFilter()"><span class="ms">search</span> Filter</button>
+            <button class="mp-btn ghost" onclick="clearFilter()"><span class="ms">close</span></button>
+        </div>
+
+        <!-- Table -->
+        <div class="mp-table-card">
+            <div class="mp-table-wrap">
+                <table class="mp-table" id="pricesTable">
+                    <thead>
+                        <tr>
+                            <th style="width:36px;"><input type="checkbox" class="mp-check" id="selectAll" onchange="mpSelectAll(this)"></th>
+                            <?php
+                            $sort_cols = ['market'=>'Market','commodity'=>'Commodity','date_posted'=>'Date','price_type'=>'Type','Price'=>'Price (USD)'];
+                            foreach ($sort_cols as $ck => $cl):
+                                $ia = ($sort_column===$ck); $nd = ($ia&&$sort_direction==='DESC')?'asc':'desc'; $ic=$ia?($sort_direction==='ASC'?'↑':'↓'):'↕';
+                            ?>
+                            <th class="mp-th-sort <?= $ia?'active-sort':'' ?>" onclick="mpSortTable('<?= $ck ?>','<?= $nd ?>')"><?= $cl ?><span class="mp-sort-icon"><?= $ic ?></span></th>
+                            <?php endforeach; ?>
+                            <th>Day Δ</th>
+                            <th>Month Δ</th>
+                            <th>Source</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pricesTableBody">
+                    <?php
+                    $grouped_data = [];
+                    foreach ($prices_data as $price) {
+                        $gk = date('Y-m-d', strtotime($price['date_posted'])) . '_' . $price['market'] . '_' . $price['commodity'];
+                        $grouped_data[$gk][] = $price;
+                    }
+                    $gi = 0;
+                    foreach ($grouped_data as $gk => $grp):
+                        usort($grp, function($a,$b){ $o=['Wholesale'=>0,'Retail'=>1]; return ($o[$a['price_type']]??9)-($o[$b['price_type']]??9); });
+                        $gids = array_column($grp,'id');
+                        $gids_json = htmlspecialchars(json_encode($gids));
+                        $gb = $gi++ % 2 === 1 ? 'mp-group-even' : '';
+                        foreach ($grp as $ri => $price):
+                            $isf = ($ri===0);
+                            $dc = calculateDoDChange($price['Price'],$price['commodity'],$price['market'],$price['price_type'],$price['date_posted'],$con);
+                            $mc = calculateMoMChange($price['Price'],$price['commodity'],$price['market'],$price['price_type'],$price['date_posted'],$con);
+                            $dcc='flat'; $mcc='flat';
+                            if ($dc!=='N/A') $dcc=floatval($dc)>=0?'up':'down';
+                            if ($mc!=='N/A') $mcc=floatval($mc)>=0?'up':'down';
+                            $di=$dcc==='up'?'▲':($dcc==='down'?'▼':'–');
+                            $mi=$mcc==='up'?'▲':($mcc==='down'?'▼':'–');
+                    ?>
+                    <tr class="price-row <?= $gb ?> <?= $isf?'mp-row-first':'mp-row-cont' ?>"
+                        data-price-id="<?= $price['id'] ?>"
+                        data-group-key="<?= htmlspecialchars($gk) ?>"
+                        data-group-ids="<?= $gids_json ?>"
+                        data-market="<?= htmlspecialchars(strtolower($price['market'])) ?>"
+                        data-commodity="<?= htmlspecialchars(strtolower($price['commodity_display'])) ?>"
+                        data-type="<?= htmlspecialchars(strtolower($price['price_type'])) ?>"
+                        data-status="<?= htmlspecialchars(strtolower($price['status'])) ?>">
+                        <td><?php if($isf): ?><input type="checkbox" class="mp-check row-checkbox" data-group-key="<?= htmlspecialchars($gk) ?>" data-group-ids="<?= $gids_json ?>" onchange="mpCheckboxChange(this)"><?php endif; ?></td>
+                        <td class="mp-shared-cell" style="font-weight:600;"><?= htmlspecialchars($price['market']) ?></td>
+                        <td class="mp-shared-cell"><?= htmlspecialchars($price['commodity_display']) ?></td>
+                        <td class="mp-shared-cell muted"><?= date('M d, Y', strtotime($price['date_posted'])) ?></td>
+                        <td><span style="font-size:.7rem;font-weight:600;padding:2px 8px;border-radius:4px;background:<?= $price['price_type']==='Wholesale'?'#ede9fe':'#fce7f3' ?>;color:<?= $price['price_type']==='Wholesale'?'#6d28d9':'#be185d' ?>;"><?= htmlspecialchars($price['price_type']) ?></span></td>
+                        <td><span class="mp-price">$<?= number_format($price['Price'],4) ?></span></td>
+                        <td><span class="mp-change <?= $dcc ?>"><?= $di ?> <?= $dc ?></span></td>
+                        <td><span class="mp-change <?= $mcc ?>"><?= $mi ?> <?= $mc ?></span></td>
+                        <td class="muted"><?= htmlspecialchars($price['data_source']??'') ?></td>
+                    </tr>
+                    <?php endforeach; endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            <div class="mp-pagination-bar">
+                <div class="mp-pagination-info">
+                    Showing <?= $offset+1 ?> – <?= min($offset+$limit,$total_records) ?> of <?= number_format($total_records) ?> published records
+                    <span id="selectionSummary" style="color:var(--mp-primary);font-weight:600;margin-left:6px;"></span>
                 </div>
-            </form>
-
-            <div class="container">
-                <div style="border-bottom: 1px solid #eee;">
-                    <nav class="view-tabs">
-                        <button class="view-tab active" data-view="table">
-                            <i class="fa fa-table"></i>
-                            Table view
-                        </button>
-                        <button class="view-tab" data-view="chart">
-                            <i class="fa fa-chart-bar"></i>
-                            Chart view
-                        </button>
-                        <button class="view-tab" data-view="map">
-                            <i class="fa fa-map"></i>
-                            Map view
-                        </button>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div class="mp-page-size">
+                        <label style="font-size:.8rem;color:var(--mp-muted);margin-right:5px;">Rows:</label>
+                        <select onchange="changeRowsPerPage(this.value)">
+                            <?php foreach ([10,20,50,100] as $opt): ?><option value="<?= $opt ?>" <?= $limit==$opt?'selected':'' ?>><?= $opt ?></option><?php endforeach; ?>
+                        </select>
+                    </div>
+                    <?php if ($total_pages > 1): ?>
+                    <nav class="mp-pagination-nav">
+                        <button class="mp-pg-btn" onclick="goToPage(1)" <?= $page<=1?'disabled':'' ?>><span class="ms" style="font-size:.9rem;">first_page</span></button>
+                        <button class="mp-pg-btn" onclick="goToPage(<?= $page-1 ?>)" <?= $page<=1?'disabled':'' ?>><span class="ms" style="font-size:.9rem;">chevron_left</span></button>
+                        <?php
+                        $win=2;$sp=max(1,$page-$win);$ep=min($total_pages,$page+$win);
+                        if($sp===1)$ep=min($total_pages,1+$win*2); if($ep===$total_pages)$sp=max(1,$total_pages-$win*2);
+                        if($sp>1):?><button class="mp-pg-btn" onclick="goToPage(1)">1</button><?php if($sp>2):?><span style="color:var(--mp-muted);font-size:.75rem;padding:0 2px">…</span><?php endif;endif;
+                        for($i=$sp;$i<=$ep;$i++):?><button class="mp-pg-btn <?=$i===$page?'active':''?>" <?=$i===$page?'':sprintf('onclick="goToPage(%d)"',$i)?>><?=$i?></button><?php endfor;
+                        if($ep<$total_pages):if($ep<$total_pages-1):?><span style="color:var(--mp-muted);font-size:.75rem;padding:0 2px">…</span><?php endif;?><button class="mp-pg-btn" onclick="goToPage(<?=$total_pages?>)"><?=$total_pages?></button><?php endif;?>
+                        <button class="mp-pg-btn" onclick="goToPage(<?= $page+1 ?>)" <?= $page>=$total_pages?'disabled':'' ?>><span class="ms" style="font-size:.9rem;">chevron_right</span></button>
+                        <button class="mp-pg-btn" onclick="goToPage(<?= $total_pages ?>)" <?= $page>=$total_pages?'disabled':'' ?>><span class="ms" style="font-size:.9rem;">last_page</span></button>
                     </nav>
+                    <?php endif; ?>
                 </div>
+            </div>
+        </div>
+    </div>
 
-                <div style="padding: 16px 24px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between;">
-                    <div style="display: flex; align-items: center; gap: 8px;">
+    <!-- ══════════════════════════════════════
+         TAB 2: CHARTS VIEW
+    ══════════════════════════════════════ -->
+    <div id="panel-charts" class="mp-panel <?= $active_tab==='charts' ? 'active' : '' ?>">
 
-                    </div>
-                    <button id="download-btn" style="padding: 8px 16px; border: 1px solid #d1d5db; color: #374151; font-size: 14px; font-weight: 500; border-radius: 6px; background: white; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                        Download
-                        <i class="fa fa-download"></i>
+        <div class="mp-chart-panel">
+            <!-- Filters -->
+            <div class="mp-chart-filters">
+                <div class="mp-chart-filter-group">
+                    <label>Country</label>
+                    <select id="chart_country" onchange="onChartCountryChange()">
+                        <option value="">All Countries</option>
+                        <?php foreach ($countries_in_db as $c): ?>
+                            <option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="mp-chart-filter-group">
+                    <label>Market</label>
+                    <select id="chart_market" onchange="onChartMarketChange()">
+                        <option value="">All Markets</option>
+                        <?php foreach ($all_markets as $m): ?>
+                            <option value="<?= $m['market_id'] ?>" data-country="<?= htmlspecialchars($m['country_admin_0']) ?>"><?= htmlspecialchars($m['market']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="mp-chart-filter-group">
+                    <label>Commodity</label>
+                    <select id="chart_commodity" onchange="loadChartData()">
+                        <option value="">All Commodities</option>
+                        <?php foreach ($all_commodities as $c): ?>
+                            <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['commodity_display']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="mp-chart-filter-group">
+                    <label>Time Range</label>
+                    <select id="chart_days" onchange="onChartDaysChange()">
+                        <option value="30">Last 30 days</option>
+                        <option value="60">Last 60 days</option>
+                        <option value="90" selected>Last 90 days</option>
+                        <option value="180">Last 6 months</option>
+                        <option value="365">Last year</option>
+                        <option value="custom">Custom range…</option>
+                    </select>
+                </div>
+                <button class="mp-btn primary" style="align-self:flex-end;" onclick="loadChartData()">
+                    <span class="ms">refresh</span> Update
+                </button>
+            </div>
+
+            <!-- Custom date range (shown when "custom" is selected) -->
+            <div class="mp-custom-range" id="chartCustomRange">
+                <div class="mp-custom-range-group">
+                    <label>From Date</label>
+                    <input type="date" id="chart_date_from" onchange="loadChartData()">
+                </div>
+                <div class="mp-custom-range-group">
+                    <label>To Date</label>
+                    <input type="date" id="chart_date_to" onchange="loadChartData()">
+                </div>
+                <div style="align-self:flex-end;padding-bottom:1px;">
+                    <button class="mp-btn ghost" onclick="clearChartCustomRange()">
+                        <span class="ms">close</span> Clear
                     </button>
                 </div>
+            </div>
 
-                <div id="table-view" class="table-responsive-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th><input type="checkbox" id="select-all" class="checkbox"></th>
-                                <th>Markets</th>
-                                <th>Country</th>
-                                <th>Commodity</th>
-                                <th>Date</th>
-                                <th>Type</th>
-                                <th>Unit</th>
-                                <th>Price (Local)</th>
-                                <th>Price (USD)</th>
-                                <th>Exchange Rate</th>
-                                <th>Day Change(%)</th>
-                                <th>Month Change(%)</th>
-                                <th>Year Change(%)</th>
-                                <th>Data Source</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php
-                            if (!empty($grouped_data)) {
-                                foreach ($grouped_data as $group_key => $prices_in_group):
-                                    $first_row = true;
-                                    $group_price_ids = array_column($prices_in_group, 'id');
-                                    $group_price_ids_json = htmlspecialchars(json_encode($group_price_ids));
+            <!-- Chart stat cards -->
+            <div class="mp-chart-stats" id="chartStats" style="margin-top:16px;">
+                <div class="mp-chart-stat"><div class="mp-chart-stat-label">Avg Wholesale</div><div class="mp-chart-stat-value" id="stat-avg-ws">—</div><div class="mp-chart-stat-sub">USD per unit</div></div>
+                <div class="mp-chart-stat"><div class="mp-chart-stat-label">Avg Retail</div><div class="mp-chart-stat-value" id="stat-avg-rt">—</div><div class="mp-chart-stat-sub">USD per unit</div></div>
+                <div class="mp-chart-stat"><div class="mp-chart-stat-label">Price Range</div><div class="mp-chart-stat-value" id="stat-range">—</div><div class="mp-chart-stat-sub">Min – Max</div></div>
+                <div class="mp-chart-stat"><div class="mp-chart-stat-label">Data Points</div><div class="mp-chart-stat-value" id="stat-points">—</div><div class="mp-chart-stat-sub">Records in range</div></div>
+                <div class="mp-chart-stat"><div class="mp-chart-stat-label">Trend (30d)</div><div class="mp-chart-stat-value" id="stat-trend">—</div><div class="mp-chart-stat-sub">Price direction</div></div>
+            </div>
 
-                                    foreach($prices_in_group as $price):
-                                        $dayChange = calculateDoDChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
-                                        $monthChange = calculateDoMChange($price['Price'], $price['commodity'], $price['market'], $price['price_type'], $con);
-                                        $yearChange = 20; // Hardcoded as per original design
-                                        
-                                        $dayChangeClass = $dayChange >= 0 ? 'change-positive' : 'change-negative';
-                                        $monthChangeClass = $monthChange >= 0 ? 'change-positive' : 'change-negative';
-                                        $yearChangeClass = $yearChange >= 0 ? 'change-positive' : 'change-negative';
-                                        
-                                        // CORRECTED: Get currency code and date-matched exchange rate
-                                        $currency = getCurrencyCode($price['country_admin_0']);
-                                        $exchangeRate = getExchangeRate($price['country_admin_0'], $price['date_posted'], $con);
-                                        
-                                        // The price in database is in USD, convert to local currency
-                                        $usdPrice = $price['Price'];
-                                        $localPrice = convertToLocal($usdPrice, $price['country_admin_0'], $price['date_posted'], $con);
-                                        
-                                        // Get commodity display name with variety
-                                        $commodity_display = $price['commodity_name'];
-                                        if (!empty($price['variety'])) {
-                                            $commodity_display .= " ({$price['variety']})";
-                                        }
-                                    ?>
-                                    <tr>
-                                        <?php if ($first_row): ?>
-                                            <td rowspan="<?php echo count($prices_in_group); ?>">
-                                                <input type="checkbox" 
-                                                    data-group-key="<?php echo $group_key; ?>"
-                                                    data-price-ids="<?php echo $group_price_ids_json; ?>"
-                                                    class="checkbox" />
-                                            </td>
-                                            <td rowspan="<?php echo count($prices_in_group); ?>" style="font-weight: 500;"><?php echo htmlspecialchars($price['market']); ?></td>
-                                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['country_admin_0']); ?></td>
-                                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($commodity_display); ?></td>
-                                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo date('d/m/Y', strtotime($price['date_posted'])); ?></td>
-                                        <?php endif; ?>
-                                        <td><?php echo htmlspecialchars($price['price_type']); ?></td>
-                                        <td><?php echo htmlspecialchars($price['unit']); ?></td>
-                                        <td style="font-weight: 600;"><?php echo number_format($localPrice, 2); ?> <?php echo $currency; ?></td>
-                                        <td style="font-weight: 600;">$<?php echo number_format($usdPrice, 2); ?></td>
-                                        <td><?php echo number_format($exchangeRate, 2); ?> <?php echo $currency; ?>/USD</td>
-                                        <td class="<?php echo $dayChangeClass; ?>"><?php echo $dayChange >= 0 ? '+' : ''; ?><?php echo $dayChange; ?>%</td>
-                                        <td class="<?php echo $monthChangeClass; ?>"><?php echo $monthChange >= 0 ? '+' : ''; ?><?php echo $monthChange; ?>%</td>
-                                        <td class="<?php echo $yearChangeClass; ?>"><?php echo $yearChange >= 0 ? '+' : ''; ?><?php echo $yearChange; ?>%</td>
-                                        <?php if ($first_row): ?>
-                                            <td rowspan="<?php echo count($prices_in_group); ?>"><?php echo htmlspecialchars($price['data_source']); ?></td>
-                                        <?php endif; ?>
-                                    </tr>
-                                    <?php
-                                            $first_row = false;
-                                        endforeach;
-                                    endforeach;
-                                } else {
-                                    echo '<tr><td colspan="14" style="text-align: center; padding: 20px;">No market prices data found</td></tr>';
-                                }
-                                ?>
-                            </tbody>
-                    </table>
+            <!-- Custom legend -->
+            <div class="mp-chart-legend" style="margin-top:12px;">
+                <div class="mp-legend-item">
+                    <div class="mp-legend-dot" style="background:#7c3aed;height:3px;"></div>
+                    <span>Wholesale</span>
+                    <span class="mp-legend-value" id="legend-ws-latest">—</span>
                 </div>
-
-                <div id="chart-view" style="display: none; padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-                        <div>
-                            <h4>Market Price Trends</h4>
-                            <p class="text-muted">Visual representation of price movements</p>
-                        </div>
-                        <div>
-                            <select id="chart-type-selector" class="form-select" style="width: 200px; display: inline-block;">
-                                <option value="line">Line Chart</option>
-                                <option value="bar">Bar Chart</option>
-                                <option value="combo">Combined View</option>
-                            </select>
-                            <button id="export-chart-btn" class="btn btn-sm btn-outline-secondary ms-2">
-                                <i class="fas fa-download"></i> Export
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <div class="chart-filters">
-                        <div>
-                            <label for="chart-country-filter" class="form-label">Country</label>
-                            <select id="chart-country-filter" class="form-select">
-                                <option value="all">All Countries</option>
-                                <?php foreach ($countries as $country): ?>
-                                    <option value="<?php echo htmlspecialchars($country); ?>"><?php echo htmlspecialchars($country); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="chart-market-filter" class="form-label">Market</label>
-                            <select id="chart-market-filter" class="form-select">
-                                <option value="all">All Markets</option>
-                                <?php foreach ($markets as $market): ?>
-                                    <option value="<?php echo htmlspecialchars($market); ?>"><?php echo htmlspecialchars($market); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="chart-commodity-filter" class="form-label">Commodity</label>
-                            <select id="chart-commodity-filter" class="form-select">
-                                <option value="all">All Commodities</option>
-                                <?php foreach ($commodities_with_varieties as $commodity_display): ?>
-                                    <option value="<?php echo htmlspecialchars($commodity_display); ?>"><?php echo htmlspecialchars($commodity_display); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-8">
-                            <div class="chart-container" style="position: relative; height:400px;">
-                                <canvas id="price-trend-chart"></canvas>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h5 class="card-title">Price Summary</h5>
-                                </div>
-                                <div class="card-body">
-                                    <div id="price-summary">
-                                        <p>Select a data point to view details</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                <div class="mp-legend-item">
+                    <div class="mp-legend-dot" style="background:#db2777;height:3px;border-top:1px dashed #db2777;height:0;border-top-width:3px;width:18px;"></div>
+                    <span>Retail</span>
+                    <span class="mp-legend-value" id="legend-rt-latest">—</span>
                 </div>
-
-                <div id="map-view" style="display: none; padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-                        <div>
-                            <h4>Market Locations</h4>
-                            <p class="text-muted">Geographic distribution of market prices</p>
-                        </div>
-                        <div>
-                            <button id="export-map-btn" class="btn btn-sm btn-outline-secondary ms-2">
-                                <i class="fas fa-download"></i> Export
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <div class="map-filters">
-                        <div>
-                            <label for="map-commodity-filter" class="form-label">Commodity</label>
-                            <select id="map-commodity-filter" class="form-select">
-                                <option value="all">All Commodities</option>
-                                <?php foreach ($commodities_with_varieties as $commodity_display): ?>
-                                    <option value="<?php echo htmlspecialchars($commodity_display); ?>"><?php echo htmlspecialchars($commodity_display); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="map-country-filter" class="form-label">Country</label>
-                            <select id="map-country-filter" class="form-select">
-                                <option value="all">All Countries</option>
-                                <?php foreach ($countries as $country): ?>
-                                    <option value="<?php echo htmlspecialchars($country); ?>"><?php echo htmlspecialchars($country); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="map-date-from" class="form-label">Date From</label>
-                            <input type="date" id="map-date-from" class="form-control" value="<?php echo isset($filters['date_from']) ? $filters['date_from'] : ''; ?>">
-                        </div>
-                        <div>
-                            <label for="map-date-to" class="form-label">Date To</label>
-                            <input type="date" id="map-date-to" class="form-control" value="<?php echo isset($filters['date_to']) ? $filters['date_to'] : ''; ?>">
-                        </div>
-                    </div>
-                    
-                    <div id="map"></div>
-                    
-                    <div class="row mt-4">
-                        <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h5 class="card-title">Market Statistics</h5>
-                                </div>
-                                <div class="card-body">
-                                    <div id="market-stats">
-                                        <p>Click on a market marker to view statistics</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h5 class="card-title">Price Legend</h5>
-                                </div>
-                                <div class="card-body">
-                                    <div id="price-legend">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <div style="width: 20px; height: 20px; background-color: #ff4444; border-radius: 50%; margin-right: 10px;"></div>
-                                            <span>High Prices</span>
-                                        </div>
-                                        <div class="d-flex align-items-center mb-2">
-                                            <div style="width: 20px; height: 20px; background-color: #ffaa00; border-radius: 50%; margin-right: 10px;"></div>
-                                            <span>Medium Prices</span>
-                                        </div>
-                                        <div class="d-flex align-items-center">
-                                            <div style="width: 20px; height: 20px; background-color: #44ff44; border-radius: 50%; margin-right: 10px;"></div>
-                                            <span>Low Prices</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                <div id="chartLoadingIndicator" style="font-size:.8rem;color:var(--mp-muted);display:none;margin-left:auto;">
+                    <span class="ms mp-spinner">hourglass_empty</span> Loading…
                 </div>
+            </div>
 
-                <?php if ($total_records > 0): ?>
-                <div class="pagination">
-                    <div class="flex items-center gap-4">
-                        <span class="text-sm text-gray-700">
-                            Showing <span class="font-medium"><?php echo $offset + 1; ?></span> to <span class="font-medium"><?php echo min($offset + $limit, $total_records); ?></span> of <span class="font-medium"><?php echo $total_records; ?></span> results
-                        </span>
-                        <div class="flex items-center gap-2">
-                            <span class="text-sm text-gray-700">Rows per page:</span>
-                            <select id="rows-per-page" style="padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px;">
-                                <?php foreach ($limit_options as $option): ?>
-                                    <option value="<?php echo $option; ?>" <?php echo $limit == $option ? 'selected' : ''; ?>>
-                                        <?php echo $option; ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button
-                            onclick="window.location.href='?<?php echo http_build_query(array_merge($filters, ['page' => $page - 1, 'limit' => $limit])); ?>'"
-                            <?php echo $page <= 1 ? 'disabled' : ''; ?>
-                            style="<?php echo $page <= 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''; ?>"
-                        >
-                            Previous
-                        </button>
-                        
-                        <?php
-                        $visiblePages = 5;
-                        $startPage = max(1, $page - floor($visiblePages / 2));
-                        $endPage = min($total_pages, $startPage + $visiblePages - 1);
-                        
-                        if ($startPage > 1) {
-                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => 1, 'limit' => $limit])) . '\'" class="page">1</button>';
-                            if ($startPage > 2) {
-                                echo '<span class="px-3 py-1 text-sm text-gray-700">...</span>';
-                            }
-                        }
-                        
-                        for ($i = $startPage; $i <= $endPage; $i++) {
-                            $activeClass = $i == $page ? 'current' : '';
-                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => $i, 'limit' => $limit])) . '\'" class="page '.$activeClass.'">'.$i.'</button>';
-                        }
-                        
-                        if ($endPage < $total_pages) {
-                            if ($endPage < $total_pages - 1) {
-                                echo '<span class="px-3 py-1 text-sm text-gray-700">...</span>';
-                            }
-                            echo '<button onclick="window.location.href=\'?' . http_build_query(array_merge($filters, ['page' => $total_pages, 'limit' => $limit])) . '\'" class="page">'.$total_pages.'</button>';
-                        }
-                        ?>
-                        
-                        <button
-                            onclick="window.location.href='?<?php echo http_build_query(array_merge($filters, ['page' => $page + 1, 'limit' => $limit])); ?>'"
-                            <?php echo $page >= $total_pages ? 'disabled' : ''; ?>
-                            style="<?php echo $page >= $total_pages ? 'opacity: 0.5; cursor: not-allowed;' : ''; ?>"
-                        >
-                            Next
-                        </button>
-                    </div>
+            <!-- Chart canvas -->
+            <div style="position:relative;width:100%;height:360px;">
+                <canvas id="priceChart" role="img" aria-label="Line chart showing wholesale and retail price trends over time">Price trend data</canvas>
+            </div>
+            <p style="font-size:.75rem;color:var(--mp-muted);margin-top:10px;text-align:right;">
+                <span class="ms" style="font-size:.85rem;">info</span> Hover over data points for exact values. Click legend items to show/hide series.
+            </p>
+        </div>
+
+        <!-- Secondary: spread chart -->
+        <div class="mp-chart-panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                <div>
+                    <h3 style="margin:0;font-size:1rem;font-weight:600;">Retail–Wholesale Spread</h3>
+                    <p style="margin:4px 0 0;font-size:.8rem;color:var(--mp-muted);">Gap between retail and wholesale prices over time</p>
                 </div>
-                <?php endif; ?>
+            </div>
+            <div style="position:relative;width:100%;height:200px;">
+                <canvas id="spreadChart" role="img" aria-label="Area chart showing the spread between retail and wholesale prices">Spread data</canvas>
             </div>
         </div>
     </div>
-</div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    <!-- ══════════════════════════════════════
+         TAB 3: CARDS VIEW
+    ══════════════════════════════════════ -->
+    <div id="panel-cards" class="mp-panel <?= $active_tab==='cards' ? 'active' : '' ?>">
+
+        <!-- Filter bar -->
+        <div class="mp-cards-filters">
+            <div class="mp-filter-group">
+                <label>Country</label>
+                <select id="cards_country" onchange="onCardsCountryChange()">
+                    <option value="">All Countries</option>
+                    <?php foreach ($countries_in_db as $c): ?>
+                        <option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="mp-filter-group">
+                <label>Market</label>
+                <select id="cards_market" onchange="onCardsMarketChange()">
+                    <option value="">All Markets</option>
+                    <?php foreach ($all_markets as $m): ?>
+                        <option value="<?= $m['market_id'] ?>" data-country="<?= htmlspecialchars($m['country_admin_0']) ?>"><?= htmlspecialchars($m['market']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="mp-filter-group">
+                <label>Commodity</label>
+                <select id="cards_commodity" onchange="loadCardsData()">
+                    <option value="">All Commodities</option>
+                    <?php foreach ($all_commodities as $c): ?>
+                        <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['commodity_display']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="mp-filter-group">
+                <label>Search</label>
+                <input type="text" id="cards_search" placeholder="Search commodity or market…" oninput="filterCardsLocal()">
+            </div>
+            <div class="mp-filter-group" style="max-width:120px;">
+                <label>Sort by</label>
+                <select id="cards_sort" onchange="sortCards()">
+                    <option value="market">Market</option>
+                    <option value="price_desc">Price ↓</option>
+                    <option value="price_asc">Price ↑</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Cards grid -->
+        <div id="cardsGrid" class="mp-cards-grid">
+            <div class="mp-loading"><span class="ms mp-spinner" style="font-size:2rem;color:var(--mp-primary);">hourglass_empty</span><p style="margin-top:10px;">Loading cards…</p></div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         TAB 4: MAP VIEW
+    ══════════════════════════════════════ -->
+    <div id="panel-map" class="mp-panel <?= $active_tab==='map' ? 'active' : '' ?>">
+
+        <div class="mp-map-container">
+            <!-- Map filters -->
+            <div class="mp-map-filters">
+                <div class="mp-filter-group">
+                    <label>Commodity</label>
+                    <select id="map_commodity" onchange="loadMapData()">
+                        <option value="">All Commodities</option>
+                        <?php foreach ($all_commodities as $c): ?>
+                            <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['commodity_display']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="mp-filter-group" style="max-width:180px;">
+                    <label>Price Type</label>
+                    <select id="map_price_type" onchange="loadMapData()">
+                        <option value="Wholesale">Wholesale</option>
+                        <option value="Retail">Retail</option>
+                    </select>
+                </div>
+                <div style="display:flex;align-items:flex-end;gap:8px;">
+                    <div style="font-size:.8rem;color:var(--mp-muted);padding-bottom:8px;">
+                        <span class="ms" style="font-size:.9rem;vertical-align:middle;">info</span>
+                        Showing last 90 days. Circle size = relative price.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Map -->
+            <div id="mp-map" style="position:relative;">
+                <div id="mapLoadingOverlay" style="position:absolute;inset:0;background:rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;z-index:10;border-radius:0;">
+                    <div style="text-align:center;"><span class="ms mp-spinner" style="font-size:2.5rem;color:var(--mp-primary);">hourglass_empty</span><p style="color:var(--mp-muted);margin-top:8px;">Loading map…</p></div>
+                </div>
+            </div>
+
+            <!-- Map legend -->
+            <div class="mp-map-legend">
+                <span class="mp-map-legend-title">Price Level:</span>
+                <div>
+                    <div class="mp-map-legend-gradient"></div>
+                    <div class="mp-map-legend-labels"><span>Low</span><span>High</span></div>
+                </div>
+                <span id="mapMarkerCount" style="margin-left:auto;font-size:.8rem;color:var(--mp-muted);"></span>
+            </div>
+        </div>
+    </div>
+
+</div><!-- /mp-wrap -->
+
+<!-- Export form (hidden) -->
+<form id="exportForm" method="POST" action="" target="_blank" style="display:none;">
+    <input type="hidden" name="export_format" id="exportFormat">
+    <input type="hidden" name="export_all" id="exportAll" value="">
+    <input type="hidden" name="selected_ids" id="selectedIds" value="">
+</form>
+
+<!-- Leaflet CSS + JS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<!-- Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 
 <script>
-// Add user menu toggle functionality
-document.addEventListener('DOMContentLoaded', function() {
-    const userDisplay = document.getElementById('user-display');
-    const userMenu = document.getElementById('user-menu');
-    
-    if (userDisplay && userMenu) {
-        userDisplay.addEventListener('click', function(e) {
-            e.stopPropagation();
-            userMenu.classList.toggle('show');
-        });
-        
-        // Close menu when clicking elsewhere
-        document.addEventListener('click', function() {
-            userMenu.classList.remove('show');
-        });
-    }
-    
-    // Your existing JavaScript code remains the same
-    // ... (all the existing JavaScript code) ...
-});
+// ─────────────────────────────────────────────────────────────
+// GLOBAL STATE
+// ─────────────────────────────────────────────────────────────
+let allSelectedIds = new Set();
+let _priceChart = null;
+let _spreadChart = null;
+let _leafletMap = null;
+let _mapMarkers = [];
+let _cardsData = [];
+const PAGE_URL = window.location.href.split('?')[0];
 
-// Initialize charts
-let priceTrendChart;
-let currentChartType = 'line';
-let map;
-window.mapMarkers = [];
-
-// Function to initialize or update charts
-function initCharts(data) {
-    // Process data for charts
-    const processedData = processChartData(data);
-    
-    // Destroy existing chart if it exists
-    if (priceTrendChart) priceTrendChart.destroy();
-    
-    // Create Price Trend Chart
-    const priceTrendCtx = document.getElementById('price-trend-chart').getContext('2d');
-    priceTrendChart = new Chart(priceTrendCtx, {
-        type: currentChartType,
-        data: {
-            labels: processedData.dates,
-            datasets: processedData.trendDatasets
-        },
-        options: getTrendChartOptions()
-    });
+function countryFlag(country) {
+    const flags = {'Kenya':'🇰🇪','Uganda':'🇺🇬','Tanzania':'🇹🇿','Rwanda':'🇷🇼','Burundi':'🇧🇮','Ethiopia':'🇪🇹','South Sudan':'🇸🇸'};
+    return flags[country] || '🌍';
 }
 
-// Process data for charts
-function processChartData(data) {
-    // Convert PHP data to proper format if needed
-    if (typeof data === 'string') {
-        try {
-            data = JSON.parse(data);
-        } catch (e) {
-            console.error('Error parsing chart data:', e);
-            data = [];
-        }
+// ─────────────────────────────────────────────────────────────
+// TAB SWITCHING
+// ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+    document.querySelectorAll('.mp-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.mp-panel').forEach(p => p.classList.remove('active'));
+    const tabs = ['table','charts','cards','map'];
+    document.querySelectorAll('.mp-tab')[tabs.indexOf(tab)]?.classList.add('active');
+    document.getElementById('panel-' + tab)?.classList.add('active');
+    if (tab === 'charts' && !_priceChart) { setTimeout(loadChartData, 100); }
+    if (tab === 'cards')  { loadCardsData(); }
+    if (tab === 'map')    { initMap(); }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MODAL HELPERS
+// ─────────────────────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).style.display = 'flex'; }
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT DROPDOWN
+// ─────────────────────────────────────────────────────────────
+function mpExportToggle() { 
+    const menu = document.getElementById('exportDropdownMenu');
+    menu.classList.toggle('open');
+}
+document.addEventListener('click', e => {
+    const menu = document.getElementById('exportDropdownMenu');
+    if (menu && !e.target.closest('#exportDropdown') && !menu.contains(e.target)) {
+        menu.classList.remove('open');
     }
-    
-    // Filter data based on selected filters
-    const selectedCountry = document.getElementById('chart-country-filter').value;
-    const selectedMarket = document.getElementById('chart-market-filter').value;
-    const selectedCommodity = document.getElementById('chart-commodity-filter').value;
-    
-    let filteredData = data;
-    
-    if (selectedCountry && selectedCountry !== 'all') {
-        filteredData = filteredData.filter(item => item.country_admin_0 === selectedCountry);
-    }
-    
-    if (selectedMarket && selectedMarket !== 'all') {
-        filteredData = filteredData.filter(item => item.market === selectedMarket);
-    }
-    
-    if (selectedCommodity && selectedCommodity !== 'all') {
-        filteredData = filteredData.filter(item => {
-            // Handle both commodity name and variety
-            const fullCommodityName = item.commodity_name + (item.variety ? ` (${item.variety})` : '');
-            return fullCommodityName === selectedCommodity || item.commodity_name === selectedCommodity;
+});
+
+// ─────────────────────────────────────────────────────────────
+// SELECTION (Table)
+// ─────────────────────────────────────────────────────────────
+function mpCheckboxChange(cb) {
+    const gk = cb.getAttribute('data-group-key');
+    let ids = []; 
+    try { 
+        ids = JSON.parse(cb.getAttribute('data-group-ids') || '[]'); 
+    } catch(e) {}
+    ids.forEach(id => cb.checked ? allSelectedIds.add(String(id)) : allSelectedIds.delete(String(id)));
+    document.querySelectorAll('#pricesTableBody tr.price-row').forEach(r => {
+        if (r.getAttribute('data-group-key') === gk) r.classList.toggle('mp-selected', cb.checked);
+    });
+    mpSyncUI();
+}
+
+function mpSelectAll(masterCb) {
+    document.querySelectorAll('#pricesTableBody .row-checkbox').forEach(cb => {
+        if (cb.closest('tr').classList.contains('mp-filtered-out')) return;
+        if (cb.checked === masterCb.checked) return;
+        cb.checked = masterCb.checked;
+        let ids = []; 
+        try { 
+            ids = JSON.parse(cb.getAttribute('data-group-ids') || '[]'); 
+        } catch(e) {}
+        ids.forEach(id => masterCb.checked ? allSelectedIds.add(String(id)) : allSelectedIds.delete(String(id)));
+        const gk = cb.getAttribute('data-group-key');
+        document.querySelectorAll('#pricesTableBody tr.price-row').forEach(r => {
+            if (r.getAttribute('data-group-key') === gk) r.classList.toggle('mp-selected', masterCb.checked);
         });
+    });
+    mpSyncUI();
+}
+
+function clearAllSelections() {
+    allSelectedIds.clear();
+    document.querySelectorAll('#pricesTableBody .row-checkbox').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#pricesTableBody tr.price-row').forEach(r => r.classList.remove('mp-selected'));
+    const sa = document.getElementById('selectAll');
+    if (sa) { sa.checked = false; sa.indeterminate = false; }
+    mpSyncUI();
+}
+
+function mpSyncUI() {
+    const count = allSelectedIds.size;
+    document.getElementById('selectedCount').textContent = count;
+    
+    // Update export selected buttons
+    const exportCsv = document.getElementById('exportSelectedCsv');
+    const exportPdf = document.getElementById('exportSelectedPdf');
+    if (exportCsv) {
+        exportCsv.style.opacity = count === 0 ? '0.5' : '1';
+        exportCsv.style.pointerEvents = count === 0 ? 'none' : 'auto';
+    }
+    if (exportPdf) {
+        exportPdf.style.opacity = count === 0 ? '0.5' : '1';
+        exportPdf.style.pointerEvents = count === 0 ? 'none' : 'auto';
     }
     
-    // Group data by date (without time) for trend chart
-    const dates = [...new Set(filteredData.map(item => {
-        const date = new Date(item.date_posted);
-        return date.toISOString().split('T')[0]; // Get just the date part
-    }))].sort();
+    const sum = document.getElementById('selectionSummary');
+    if (sum) sum.textContent = count > 0 ? `(${count} selected)` : '';
     
-    // Prepare trend datasets
-    const trendDatasets = [];
-    
-    // If a specific commodity is selected, show only that
-    if (selectedCommodity && selectedCommodity !== 'all') {
-        const prices = dates.map(date => {
-            const item = filteredData.find(d => {
-                const fullCommodityName = d.commodity_name + (d.variety ? ` (${d.variety})` : '');
-                return (fullCommodityName === selectedCommodity || d.commodity_name === selectedCommodity) && 
-                       new Date(d.date_posted).toISOString().split('T')[0] === date;
-            });
-            return item ? parseFloat(item.Price) : null;
-        });
-        
-        trendDatasets.push({
-            label: selectedCommodity,
-            data: prices,
-            borderColor: '#8B4513', // Use theme color
-            backgroundColor: 'rgba(139, 69, 19, 0.1)',
-            borderWidth: 2,
-            fill: false,
-            tension: 0.1
-        });
+    const vCbs = [...document.querySelectorAll('#pricesTableBody .row-checkbox')].filter(c => !c.closest('tr').classList.contains('mp-filtered-out'));
+    const chk  = vCbs.filter(c => c.checked);
+    const sa = document.getElementById('selectAll');
+    if (sa) { sa.checked = vCbs.length > 0 && chk.length === vCbs.length; sa.indeterminate = chk.length > 0 && chk.length < vCbs.length; }
+}
+
+function mpGetSelectedIds() { return Array.from(allSelectedIds); }
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT FUNCTIONS
+// ─────────────────────────────────────────────────────────────
+function exportSelected(fmt) { 
+    const ids = mpGetSelectedIds(); 
+    if(!ids.length){ alert('Select items first.'); return; } 
+    mpSubmitExport(fmt, ids, false); 
+}
+
+function exportAll(fmt) { 
+    if(!confirm('Export ALL published prices?')) return; 
+    mpSubmitExport(fmt, [], true); 
+}
+
+function mpSubmitExport(fmt, ids, doAll) {
+    const form = document.getElementById('exportForm');
+    document.getElementById('exportFormat').value = fmt;
+    if (doAll) {
+        document.getElementById('exportAll').value = 'true';
+        document.getElementById('selectedIds').value = '';
     } else {
-        // Group by commodity if no specific one is selected
-        const commodities = [...new Set(filteredData.map(item => {
-            return item.commodity_name + (item.variety ? ` (${item.variety})` : '');
-        }))];
-        
-        commodities.forEach(commodity => {
-            const prices = dates.map(date => {
-                const item = filteredData.find(d => {
-                    const fullCommodityName = d.commodity_name + (d.variety ? ` (${d.variety})` : '');
-                    return fullCommodityName === commodity && 
-                           new Date(d.date_posted).toISOString().split('T')[0] === date;
-                });
-                return item ? parseFloat(item.Price) : null;
-            });
-            
-            trendDatasets.push({
-                label: commodity,
-                data: prices,
-                borderColor: getRandomColor(),
-                backgroundColor: 'rgba(0, 0, 0, 0.1)',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.1
-            });
-        });
+        document.getElementById('exportAll').value = '';
+        document.getElementById('selectedIds').value = ids.join(',');
     }
-    
-    return {
-        dates,
-        trendDatasets
-    };
+    form.submit();
 }
 
-// Chart options
-function getTrendChartOptions() {
-    return {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            title: {
-                display: true,
-                text: 'Price Trends Over Time'
-            },
-            tooltip: {
-                mode: 'index',
-                intersect: false,
-                callbacks: {
-                    label: function(context) {
-                        return `${context.dataset.label}: ${context.parsed.y.toFixed(2)}`;
-                    }
-                }
-            },
-            zoom: {
-                zoom: {
-                    wheel: {
-                        enabled: true
-                    },
-                    pinch: {
-                        enabled: true
-                    },
-                    mode: 'xy'
-                },
-                pan: {
-                    enabled: true,
-                    mode: 'xy'
-                }
-            },
-            legend: {
-                position: 'top',
-                onClick: (e, legendItem, legend) => {
-                    const index = legendItem.datasetIndex;
-                    const ci = legend.chart;
-                    const meta = ci.getDatasetMeta(index);
-                    
-                    meta.hidden = meta.hidden === null ? !ci.data.datasets[index].hidden : null;
-                    ci.update();
-                }
-            }
-        },
-        scales: {
-            x: {
-                title: {
-                    display: true,
-                    text: 'Date'
-                }
-            },
-            y: {
-                title: {
-                    display: true,
-                    text: 'Price (USD)'
-                }
-            }
-        },
-        onClick: (e) => {
-            const points = priceTrendChart.getElementsAtEventForMode(
-                e, 'nearest', { intersect: true }, true
-            );
-            
-            if (points.length) {
-                const firstPoint = points[0];
-                const dataset = priceTrendChart.data.datasets[firstPoint.datasetIndex];
-                const value = dataset.data[firstPoint.index];
-                const date = priceTrendChart.data.labels[firstPoint.index];
-                
-                updatePriceSummary(dataset.label, date, value);
-            }
-        }
-    };
-}
-
-// Initialize map with geocoded coordinates
-function initMap(data) {
-    // Destroy existing map if it exists
-    if (map) {
-        map.remove();
-    }
-    
-    // Create map centered on East Africa
-    map = L.map('map').setView([1.0, 35.0], 6);
-    
-    // Add tile layer
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(map);
-    
-    // Filter data based on selected filters
-    const selectedCommodity = document.getElementById('map-commodity-filter').value;
-    const selectedCountry = document.getElementById('map-country-filter').value;
-    const dateFrom = document.getElementById('map-date-from').value;
-    const dateTo = document.getElementById('map-date-to').value;
-    
-    let filteredData = data;
-    
-    // Apply commodity filter if not "all"
-    if (selectedCommodity && selectedCommodity !== 'all') {
-        filteredData = filteredData.filter(item => {
-            // Handle both commodity name and variety
-            const fullCommodityName = item.commodity_name + (item.variety ? ` (${item.variety})` : '');
-            return fullCommodityName === selectedCommodity || item.commodity_name === selectedCommodity;
-        });
-    }
-    
-    // Apply country filter if not "all"
-    if (selectedCountry && selectedCountry !== 'all') {
-        filteredData = filteredData.filter(item => item.country_admin_0 === selectedCountry);
-    }
-    
-    // Apply date filters
-    if (dateFrom) {
-        filteredData = filteredData.filter(item => new Date(item.date_posted) >= new Date(dateFrom));
-    }
-    
-    if (dateTo) {
-        const toDate = new Date(dateTo);
-        toDate.setHours(23, 59, 59, 999); // End of the day
-        filteredData = filteredData.filter(item => new Date(item.date_posted) <= toDate);
-    }
-    
-    // Group data by market and calculate average price
-    const marketData = {};
-    filteredData.forEach(item => {
-        if (!marketData[item.market]) {
-            marketData[item.market] = {
-                prices: [],
-                commodities: new Set(),
-                country: item.country_admin_0,
-                data_source: item.data_source
-            };
-        }
-        marketData[item.market].prices.push(parseFloat(item.Price));
-        const commodityDisplay = item.commodity_name + (item.variety ? ` (${item.variety})` : '');
-        marketData[item.market].commodities.add(commodityDisplay);
+// ─────────────────────────────────────────────────────────────
+// TABLE FILTER / SORT / PAGINATION
+// ─────────────────────────────────────────────────────────────
+function applyClientFilter() {
+    const fm = (document.getElementById('searchMarket')?.value||'').trim().toLowerCase();
+    const fc = (document.getElementById('searchCommodity')?.value||'').trim().toLowerCase();
+    const ft = (document.getElementById('searchType')?.value||'').trim().toLowerCase();
+    const groups = {};
+    document.querySelectorAll('#pricesTableBody tr.price-row').forEach(r => {
+        const gk = r.getAttribute('data-group-key');
+        if (!groups[gk]) groups[gk] = {mkt:!fm,com:!fc,typ:!ft};
+        const g = groups[gk];
+        if (fm&&!g.mkt) g.mkt=(r.getAttribute('data-market')||'').includes(fm);
+        if (fc&&!g.com) g.com=(r.getAttribute('data-commodity')||'').includes(fc);
+        if (ft&&!g.typ) g.typ=(r.getAttribute('data-type')||'').includes(ft);
     });
-    
-    // Calculate price ranges for color coding
-    const allPrices = filteredData.map(item => parseFloat(item.Price));
-    const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : 0;
-    const maxPrice = allPrices.length > 0 ? Math.max(...allPrices) : 0;
-    const priceRange = maxPrice - minPrice;
-    
-    // Get coordinates from PHP (already geocoded)
-    const marketCoordinates = <?php echo json_encode($marketCoordinates); ?>;
-    
-    // Clear existing markers if any
-    if (window.mapMarkers) {
-        window.mapMarkers.forEach(marker => map.removeLayer(marker));
+    document.querySelectorAll('#pricesTableBody tr.price-row').forEach(r => {
+        const g = groups[r.getAttribute('data-group-key')];
+        const show = g.mkt && g.com && g.typ;
+        r.classList.toggle('mp-filtered-out', !show);
+        r.style.display = show ? '' : 'none';
+    });
+    mpSyncUI();
+}
+
+function clearFilter() {
+    ['searchMarket','searchCommodity','searchType'].forEach(id => { const e=document.getElementById(id); if(e) e.value=''; });
+    document.querySelectorAll('#pricesTableBody tr.price-row').forEach(r => { r.classList.remove('mp-filtered-out'); r.style.display=''; });
+    mpSyncUI();
+}
+
+function mpSortTable(col, dir) {
+    const url = new URL(window.location); url.searchParams.set('sort',col); url.searchParams.set('dir',dir); url.searchParams.set('page',1); url.searchParams.set('tab','table'); window.location.href=url.toString();
+}
+
+function goToPage(pg) {
+    const url = new URL(window.location); url.searchParams.set('page',pg); url.searchParams.set('tab','table'); window.location.href=url.toString();
+}
+
+function changeRowsPerPage(val) {
+    const url = new URL(window.location); url.searchParams.set('limit',val); url.searchParams.set('page',1); url.searchParams.set('tab','table'); window.location.href=url.toString();
+}
+
+// ─────────────────────────────────────────────────────────────
+// CHARTS — custom date range
+// ─────────────────────────────────────────────────────────────
+function onChartDaysChange() {
+    const val = document.getElementById('chart_days').value;
+    const customRow = document.getElementById('chartCustomRange');
+    if (val === 'custom') {
+        customRow.classList.add('visible');
+        const today = new Date();
+        const from  = new Date(); from.setDate(today.getDate() - 30);
+        document.getElementById('chart_date_to').value   = today.toISOString().split('T')[0];
+        document.getElementById('chart_date_from').value = from.toISOString().split('T')[0];
+        loadChartData();
+    } else {
+        customRow.classList.remove('visible');
+        loadChartData();
     }
-    window.mapMarkers = [];
-    
-    // Add markers for each market
-    Object.keys(marketData).forEach(market => {
-        const data = marketData[market];
-        const avgPrice = data.prices.length > 0 ? data.prices.reduce((a, b) => a + b, 0) / data.prices.length : 0;
-        
-        // Determine marker color based on price
-        let markerColor;
-        const priceRatio = priceRange > 0 ? (avgPrice - minPrice) / priceRange : 0.5;
-        if (priceRatio > 0.7) {
-            markerColor = '#ff4444'; // High price
-        } else if (priceRatio > 0.3) {
-            markerColor = '#ffaa00'; // Medium price
-        } else {
-            markerColor = '#44ff44'; // Low price
-        }
-        
-        // Get coordinates for this market
-        let lat, lng;
-        if (marketCoordinates[market] && marketCoordinates[market].latitude && marketCoordinates[market].longitude) {
-            lat = marketCoordinates[market].latitude;
-            lng = marketCoordinates[market].longitude;
-        } else {
-            // Fallback to enhanced country coordinates
-            const fallbackCoords = getEnhancedDefaultLatLng(data.country, market);
-            lat = fallbackCoords[0];
-            lng = fallbackCoords[1];
-        }
-        
-        // Create custom marker icon with better styling
-        const markerIcon = L.divIcon({
-            className: 'custom-marker',
-            html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
-            iconSize: [26, 26],
-            iconAnchor: [13, 13]
-        });
-        
-        // Create marker
-        const marker = L.marker([lat, lng], {icon: markerIcon}).addTo(map);
-        window.mapMarkers.push(marker);
-        
-        // Create popup content with coordinate information
-        const popupContent = `
-            <div class="map-popup">
-                <h4>${market}</h4>
-                <p><strong>Country:</strong> ${data.country}</p>
-                <p><strong>Average Price:</strong> $${avgPrice.toFixed(2)}</p>
-                <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
-                <p><strong>Data Source:</strong> ${data.data_source}</p>
-                <p><strong>Coordinates:</strong> ${lat.toFixed(4)}, ${lng.toFixed(4)}</p>
-                <p style="font-size: 11px; color: #666; margin-top: 8px;">
-                    <i class="fas fa-info-circle"></i> Coordinates from OpenStreetMap
-                </p>
-            </div>
-        `;
-        
-        marker.bindPopup(popupContent);
-        
-        // Add click event to update market stats
-        marker.on('click', function() {
-            updateMarketStats(market, data, lat, lng);
+}
+
+function clearChartCustomRange() {
+    document.getElementById('chart_days').value = '90';
+    document.getElementById('chartCustomRange').classList.remove('visible');
+    loadChartData();
+}
+
+function onChartCountryChange() {
+    const country = document.getElementById('chart_country').value;
+    const marketSel = document.getElementById('chart_market');
+    Array.from(marketSel.options).forEach(opt => {
+        if (!opt.value) { opt.hidden = false; return; }
+        opt.hidden = country ? opt.getAttribute('data-country') !== country : false;
+    });
+    if (marketSel.selectedOptions[0]?.hidden) marketSel.value = '';
+    loadFilteredCommodities('chart_country','chart_market','chart_commodity');
+    loadChartData();
+}
+
+function onChartMarketChange() {
+    loadFilteredCommodities('chart_country','chart_market','chart_commodity');
+    loadChartData();
+}
+
+function loadFilteredCommodities(countryId, marketId, commodityId) {
+    const country   = document.getElementById(countryId)?.value || '';
+    const market_id = document.getElementById(marketId)?.value  || '';
+    const comSel    = document.getElementById(commodityId);
+    const curVal    = comSel.value;
+    fetch(`?get_commodities=1&country=${encodeURIComponent(country)}&market_id=${encodeURIComponent(market_id)}`)
+    .then(r=>r.json()).then(data=>{
+        comSel.innerHTML='<option value="">All Commodities</option>';
+        data.forEach(c=>{
+            const o=document.createElement('option');
+            o.value=c.id;
+            o.textContent=c.commodity_display;
+            if(String(c.id)===String(curVal))o.selected=true;
+            comSel.appendChild(o);
         });
     });
-    
-    // Add a legend for the price colors
-    addPriceLegend(minPrice, maxPrice);
-    
-    // Update market stats with initial message if no data
-    if (Object.keys(marketData).length === 0) {
-        document.getElementById('market-stats').innerHTML = '<p>No data available for selected filters</p>';
-    }
 }
 
-// Enhanced helper function with better city coordinates
-function getEnhancedDefaultLatLng(country, market = '') {
-    const enhancedCountryCoords = {
-        'Kenya': {
-            'Nairobi': [-1.286389, 36.817223],
-            'Mombasa': [-4.0435, 39.6682],
-            'Kisumu': [-0.1022, 34.7617],
-            'Nakuru': [-0.3031, 36.0800],
-            'Eldoret': [0.5143, 35.2698],
-            'Thika': [-1.0333, 37.0833],
-            'default': [-1.286389, 36.817223]
+function loadChartData() {
+    const country      = document.getElementById('chart_country')?.value    || '';
+    const market_id    = document.getElementById('chart_market')?.value     || '';
+    const commodity_id = document.getElementById('chart_commodity')?.value  || '';
+    const daysVal      = document.getElementById('chart_days')?.value       || '90';
+    const date_from    = document.getElementById('chart_date_from')?.value  || '';
+    const date_to      = document.getElementById('chart_date_to')?.value    || '';
+    const loader       = document.getElementById('chartLoadingIndicator');
+    if (loader) loader.style.display = 'flex';
+
+    let url = '?chart_data=1';
+    if (daysVal === 'custom' && date_from && date_to) {
+        url += `&date_from=${encodeURIComponent(date_from)}&date_to=${encodeURIComponent(date_to)}`;
+    } else {
+        url += `&days=${daysVal !== 'custom' ? daysVal : '90'}`;
+    }
+    if (country)      url += `&country=${encodeURIComponent(country)}`;
+    if (market_id)    url += `&market_id=${market_id}`;
+    if (commodity_id) url += `&commodity_id=${commodity_id}`;
+
+    fetch(url).then(r=>r.json()).then(resp=>{
+        if (loader) loader.style.display = 'none';
+        if (!resp.success) return;
+        renderPriceChart(resp.data);
+    }).catch(()=>{ if(loader)loader.style.display='none'; });
+}
+
+function renderPriceChart(rawData) {
+    const wsMap = {}, rtMap = {};
+    rawData.forEach(r => {
+        if (r.price_type === 'Wholesale') wsMap[r.date_label] = parseFloat(r.avg_price);
+        if (r.price_type === 'Retail')    rtMap[r.date_label] = parseFloat(r.avg_price);
+    });
+    const allDates = [...new Set(rawData.map(r=>r.date_label))].sort();
+    const wsValues = allDates.map(d => wsMap[d] ?? null);
+    const rtValues = allDates.map(d => rtMap[d] ?? null);
+    const spread   = allDates.map(d => (rtMap[d]!=null && wsMap[d]!=null) ? parseFloat((rtMap[d]-wsMap[d]).toFixed(4)) : null);
+    const labels = allDates.map(d => { const dt = new Date(d); return dt.toLocaleDateString('en-GB', {day:'2-digit',month:'short'}); });
+
+    const wsFiltered = wsValues.filter(v=>v!==null);
+    const rtFiltered = rtValues.filter(v=>v!==null);
+    const allPrices  = [...wsFiltered, ...rtFiltered];
+    document.getElementById('stat-avg-ws').textContent   = wsFiltered.length ? '$'+( wsFiltered.reduce((a,b)=>a+b,0)/wsFiltered.length ).toFixed(4) : '—';
+    document.getElementById('stat-avg-rt').textContent   = rtFiltered.length ? '$'+( rtFiltered.reduce((a,b)=>a+b,0)/rtFiltered.length ).toFixed(4) : '—';
+    document.getElementById('stat-range').textContent    = allPrices.length  ? '$'+Math.min(...allPrices).toFixed(4)+' – $'+Math.max(...allPrices).toFixed(4) : '—';
+    document.getElementById('stat-points').textContent   = rawData.reduce((a,r)=>a+parseInt(r.record_count),0).toLocaleString();
+    const wsV30 = wsFiltered.slice(-10); const wsV0 = wsFiltered.slice(0,10);
+    const trendVal = wsV30.length && wsV0.length ? ((wsV30[wsV30.length-1]-wsV0[0])/wsV0[0]*100) : null;
+    const trendEl = document.getElementById('stat-trend');
+    if (trendVal !== null) { trendEl.textContent = (trendVal>=0?'▲ +':'▼ ')+trendVal.toFixed(1)+'%'; trendEl.style.color = trendVal >= 0 ? '#16a34a' : '#dc2626'; }
+    else { trendEl.textContent = '—'; trendEl.style.color=''; }
+    const wsLast = wsFiltered[wsFiltered.length-1]; const rtLast = rtFiltered[rtFiltered.length-1];
+    document.getElementById('legend-ws-latest').textContent = wsLast ? '$'+wsLast.toFixed(4) : '—';
+    document.getElementById('legend-rt-latest').textContent = rtLast ? '$'+rtLast.toFixed(4) : '—';
+
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    if (_priceChart) _priceChart.destroy();
+    _priceChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label:'Wholesale', data:wsValues, borderColor:'#7c3aed', backgroundColor:'rgba(124,58,237,0.06)', borderWidth:2.5, pointRadius:3, pointHoverRadius:7, pointBackgroundColor:'#7c3aed', pointBorderColor:'#fff', pointBorderWidth:2, fill:false, tension:0.35, spanGaps:true },
+                { label:'Retail',    data:rtValues, borderColor:'#db2777', backgroundColor:'rgba(219,39,119,0.06)', borderWidth:2.5, borderDash:[6,3], pointRadius:3, pointHoverRadius:7, pointBackgroundColor:'#db2777', pointBorderColor:'#fff', pointBorderWidth:2, fill:false, tension:0.35, spanGaps:true }
+            ]
         },
-        'Tanzania': {
-            'Dar es Salaam': [-6.8235, 39.2695],
-            'Mwanza': [-2.5164, 32.9176],
-            'Arusha': [-3.3869, 36.6820],
-            'Dodoma': [-6.1630, 35.7516],
-            'Mbeya': [-8.9000, 33.4500],
-            'default': [-6.3690, 34.8888]
-        },
-        'Uganda': {
-            'Kampala': [0.3476, 32.5825],
-            'Jinja': [0.4244, 33.2041],
-            'Mbale': [1.0644, 34.1794],
-            'Gulu': [2.7746, 32.2980],
-            'Lira': [2.2350, 32.9097],
-            'default': [1.3733, 32.2903]
-        },
-        'Rwanda': {
-            'Kigali': [-1.9441, 30.0619],
-            'Butare': [-2.5967, 29.7439],
-            'Gisenyi': [-1.7028, 29.2569],
-            'default': [-1.9403, 29.8739]
-        },
-        'Ethiopia': {
-            'Addis Ababa': [9.0227, 38.7468],
-            'Dire Dawa': [9.5892, 41.8662],
-            'Mekele': [13.4963, 39.4752],
-            'Bahir Dar': [11.5742, 37.3614],
-            'Awasa': [7.0500, 38.4667],
-            'default': [9.1450, 40.4897]
-        }
-    };
-    
-    // If we have specific city coordinates, use them
-    const countryData = enhancedCountryCoords[country];
-    if (countryData) {
-        // Try to match market name with known cities
-        if (market && countryData[market]) {
-            return countryData[market];
-        }
-        
-        // Try partial matching for market names containing city names
-        if (market) {
-            for (const [city, coords] of Object.entries(countryData)) {
-                if (city !== 'default' && market.toLowerCase().includes(city.toLowerCase())) {
-                    return coords;
-                }
+        options: {
+            responsive:true, maintainAspectRatio:false,
+            interaction:{mode:'index',intersect:false},
+            plugins:{
+                legend:{display:false},
+                tooltip:{backgroundColor:'rgba(255,255,255,0.97)',titleColor:'#1f2937',bodyColor:'#374151',borderColor:'#e5e7eb',borderWidth:1,padding:12,
+                    callbacks:{title:items=>items[0].label,label:item=>` ${item.dataset.label}: $${Number(item.raw).toFixed(4)}`,afterBody:items=>{const ws=items.find(i=>i.dataset.label==='Wholesale');const rt=items.find(i=>i.dataset.label==='Retail');if(ws&&rt&&ws.raw&&rt.raw)return['',` Spread: $${(rt.raw-ws.raw).toFixed(4)}`];return[];}}}
+            },
+            scales:{
+                x:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{color:'#6b7280',font:{size:11},maxRotation:45,autoSkip:true,maxTicksLimit:12},border:{color:'rgba(0,0,0,0.08)'}},
+                y:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{color:'#6b7280',font:{size:11},callback:v=>'$'+Number(v).toFixed(4)},border:{color:'rgba(0,0,0,0.08)',dash:[4,4]}}
             }
         }
-        
-        return countryData['default'];
-    }
-    
-    return [0, 35]; // Default fallback
+    });
+
+    const ctx2 = document.getElementById('spreadChart').getContext('2d');
+    if (_spreadChart) _spreadChart.destroy();
+    _spreadChart = new Chart(ctx2, {
+        type:'line', data:{labels,datasets:[{label:'Spread (Retail − Wholesale)',data:spread,borderColor:'#0891b2',backgroundColor:'rgba(8,145,178,0.08)',borderWidth:2,pointRadius:2,pointHoverRadius:5,fill:true,tension:0.4,spanGaps:true}]},
+        options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(255,255,255,0.97)',titleColor:'#1f2937',bodyColor:'#374151',borderColor:'#e5e7eb',borderWidth:1,padding:10,callbacks:{label:item=>` Spread: $${Number(item.raw).toFixed(4)}`}}},
+            scales:{x:{grid:{color:'rgba(0,0,0,0.03)'},ticks:{color:'#6b7280',font:{size:10},maxTicksLimit:10,autoSkip:true},border:{color:'rgba(0,0,0,0.08)'}},y:{grid:{color:'rgba(0,0,0,0.03)'},ticks:{color:'#6b7280',font:{size:10},callback:v=>'$'+Number(v).toFixed(4)},border:{color:'rgba(0,0,0,0.08)',dash:[4,4]}}}}
+    });
 }
 
-// Add price legend to the map
-function addPriceLegend(minPrice, maxPrice) {
-    const legend = L.control({ position: 'bottomright' });
-    
-    legend.onAdd = function(map) {
-        const div = L.DomUtil.create('div', 'info legend');
-        div.style.backgroundColor = 'white';
-        div.style.padding = '10px';
-        div.style.borderRadius = '5px';
-        div.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
-        
-        const priceRange = maxPrice - minPrice;
-        const grades = [
-            { color: '#44ff44', range: 'Low' },
-            { color: '#ffaa00', range: 'Medium' },
-            { color: '#ff4444', range: 'High' }
-        ];
-        
-        let legendHTML = '<h6 style="margin: 0 0 8px 0;">Price Levels</h6>';
-        grades.forEach(grade => {
-            legendHTML += `
-                <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                    <div style="width: 15px; height: 15px; background-color: ${grade.color}; border-radius: 50%; border: 2px solid white; margin-right: 8px;"></div>
-                    <span>${grade.range} Prices</span>
+// ─────────────────────────────────────────────────────────────
+// CARDS VIEW
+// ─────────────────────────────────────────────────────────────
+function onCardsCountryChange() {
+    const country = document.getElementById('cards_country').value;
+    const marketSel = document.getElementById('cards_market');
+    Array.from(marketSel.options).forEach(opt => {
+        if (!opt.value) { opt.hidden = false; return; }
+        opt.hidden = country ? opt.getAttribute('data-country') !== country : false;
+    });
+    if (marketSel.selectedOptions[0]?.hidden) marketSel.value = '';
+    loadFilteredCommodities('cards_country','cards_market','cards_commodity');
+    loadCardsData();
+}
+
+function onCardsMarketChange() {
+    loadFilteredCommodities('cards_country','cards_market','cards_commodity');
+    loadCardsData();
+}
+
+function loadCardsData() {
+    const country      = document.getElementById('cards_country')?.value    || '';
+    const market_id    = document.getElementById('cards_market')?.value     || '';
+    const commodity_id = document.getElementById('cards_commodity')?.value  || '';
+    const grid         = document.getElementById('cardsGrid');
+    grid.innerHTML     = '<div class="mp-loading"><span class="ms mp-spinner" style="font-size:2rem;color:var(--mp-primary);">hourglass_empty</span><p style="margin-top:10px;color:var(--mp-muted);">Loading…</p></div>';
+
+    let wsUrl = `?map_data=1&price_type=Wholesale`;
+    if (commodity_id) wsUrl += `&commodity_id=${commodity_id}`;
+    let rtUrl = `?map_data=1&price_type=Retail`;
+    if (commodity_id) rtUrl += `&commodity_id=${commodity_id}`;
+
+    Promise.all([fetch(wsUrl).then(r=>r.json()), fetch(rtUrl).then(r=>r.json())])
+    .then(([wsResp, rtResp]) => {
+        const wsMap = {}; if (wsResp.success) wsResp.data.forEach(r => wsMap[r.market_id] = r);
+        const rtMap = {}; if (rtResp.success) rtResp.data.forEach(r => rtMap[r.market_id] = r);
+        const allMarketIds = [...new Set([...Object.keys(wsMap), ...Object.keys(rtMap)])];
+        _cardsData = allMarketIds.map(mid => ({
+            market_id: mid,
+            market:    wsMap[mid]?.market    || rtMap[mid]?.market    || '',
+            country:   wsMap[mid]?.country_admin_0 || rtMap[mid]?.country_admin_0 || '',
+            ws_price:  wsMap[mid]?.avg_price  || null,
+            rt_price:  rtMap[mid]?.avg_price  || null,
+            latest:    wsMap[mid]?.latest_date || rtMap[mid]?.latest_date || '',
+        })).filter(c => {
+            if (country   && c.country   !== country)              return false;
+            if (market_id && String(c.market_id) !== market_id)    return false;
+            return true;
+        });
+        if (!_cardsData.length) { grid.innerHTML='<div class="mp-no-data"><span class="ms">inbox</span><p>No published price records found for these filters.</p></div>'; return; }
+        sortCards();
+    });
+}
+
+function sortCards() {
+    const sortBy = document.getElementById('cards_sort')?.value || 'market';
+    _cardsData.sort((a,b) => {
+        if (sortBy==='price_desc') return (parseFloat(b.ws_price)||0) - (parseFloat(a.ws_price)||0);
+        if (sortBy==='price_asc')  return (parseFloat(a.ws_price)||0) - (parseFloat(b.ws_price)||0);
+        return a.market.localeCompare(b.market);
+    });
+    filterCardsLocal();
+}
+
+function filterCardsLocal() {
+    const q    = (document.getElementById('cards_search')?.value||'').trim().toLowerCase();
+    const grid = document.getElementById('cardsGrid');
+    const data = q ? _cardsData.filter(c => c.market.toLowerCase().includes(q)) : _cardsData;
+    if (!data.length) { grid.innerHTML='<div class="mp-no-data"><span class="ms">search_off</span><p>No results for "'+q+'".</p></div>'; return; }
+    grid.innerHTML = data.map(c => {
+        const ws    = c.ws_price ? '$'+parseFloat(c.ws_price).toFixed(4) : '—';
+        const rt    = c.rt_price ? '$'+parseFloat(c.rt_price).toFixed(4) : '—';
+        const flag  = countryFlag(c.country);
+        const spread= (c.ws_price && c.rt_price) ? '$'+(parseFloat(c.rt_price)-parseFloat(c.ws_price)).toFixed(4) : '—';
+        const date  = c.latest ? new Date(c.latest).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+        return `
+        <div class="mp-commodity-card">
+            <div class="mp-card-header">
+                <div>
+                    <div class="mp-card-commodity"><span class="ms" style="font-size:.9rem;vertical-align:middle;margin-right:4px;">storefront</span>${escHtml(c.market)}</div>
+                    <div class="mp-card-market"><span>${flag}</span>${escHtml(c.country)}</div>
                 </div>
-            `;
-        });
-        
-        legendHTML += `<div style="margin-top: 8px; font-size: 11px; color: #666;">
-            Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)}
+                <span style="font-size:.7rem;background:#f3f4f6;color:#6b7280;padding:3px 8px;border-radius:99px;">Last 90d</span>
+            </div>
+            <div class="mp-card-body">
+                <div class="mp-card-prices">
+                    <div class="mp-card-price-box">
+                        <div class="mp-card-price-type ws">Wholesale</div>
+                        <div class="mp-card-price-val">${ws}</div>
+                        <div style="font-size:.7rem;color:#6b7280;margin-top:2px;">avg USD/unit</div>
+                    </div>
+                    <div class="mp-card-price-box">
+                        <div class="mp-card-price-type rt">Retail</div>
+                        <div class="mp-card-price-val">${rt}</div>
+                        <div style="font-size:.7rem;color:#6b7280;margin-top:2px;">avg USD/unit</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0 0;border-top:1px solid #f3f4f6;font-size:.75rem;color:#6b7280;">
+                    <span><span class="ms" style="font-size:.85rem;vertical-align:middle;">trending_up</span> Spread: <strong style="color:#1f2937;">${spread}</strong></span>
+                </div>
+            </div>
+            <div class="mp-card-footer">
+                <span><span class="ms" style="font-size:.85rem;vertical-align:middle;">calendar_today</span> ${date}</span>
+                <button class="mp-btn" style="padding:3px 10px;font-size:.75rem;" onclick="openChartForMarket(${c.market_id})">
+                    <span class="ms" style="font-size:.85rem;">show_chart</span> Trend
+                </button>
+            </div>
         </div>`;
-        
-        div.innerHTML = legendHTML;
-        return div;
-    };
-    
-    legend.addTo(map);
+    }).join('');
 }
 
-// Update market statistics to include coordinates
-function updateMarketStats(market, data, lat, lng) {
-    const statsDiv = document.getElementById('market-stats');
-    const avgPrice = data.prices.reduce((a, b) => a + b, 0) / data.prices.length;
-    const minPrice = Math.min(...data.prices);
-    const maxPrice = Math.max(...data.prices);
-    
-    statsDiv.innerHTML = `
-        <h6>${market}</h6>
-        <p><strong>Country:</strong> ${data.country}</p>
-        <p><strong>Coordinates:</strong> ${lat.toFixed(4)}, ${lng.toFixed(4)}</p>
-        <p><strong>Average Price:</strong> $${avgPrice.toFixed(2)}</p>
-        <p><strong>Price Range:</strong> $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)}</p>
-        <p><strong>Commodities:</strong> ${Array.from(data.commodities).join(', ')}</p>
-        <p><strong>Data Points:</strong> ${data.prices.length}</p>
-        <p><strong>Data Source:</strong> ${data.data_source}</p>
-    `;
+function openChartForMarket(marketId) {
+    const mSel = document.getElementById('chart_market');
+    if (mSel) mSel.value = marketId;
+    switchTab('charts');
+    loadChartData();
 }
 
-// Helper function to generate random colors
-function getRandomColor() {
-    const letters = '0123456789ABCDEF';
-    let color = '#';
-    for (let i = 0; i < 6; i++) {
-        color += letters[Math.floor(Math.random() * 16)];
-    }
-    return color;
+function escHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// Update price summary
-function updatePriceSummary(commodity, date, price) {
-    const summaryDiv = document.getElementById('price-summary');
-    const selectedMarket = document.getElementById('chart-market-filter').value;
-    const selectedCountry = document.getElementById('chart-country-filter').value;
-    
-    summaryDiv.innerHTML = `
-        <h6>${commodity}</h6>
-        <p><strong>Date:</strong> ${new Date(date).toLocaleDateString()}</p>
-        <p><strong>Price:</strong> $${price.toFixed(2)}</p>
-        <p><strong>Market:</strong> ${selectedMarket !== 'all' ? selectedMarket : 'All Markets'}</p>
-        <p><strong>Country:</strong> ${selectedCountry !== 'all' ? selectedCountry : 'All Countries'}</p>
-    `;
+// ─────────────────────────────────────────────────────────────
+// MAP VIEW (Leaflet)
+// ─────────────────────────────────────────────────────────────
+function initMap() {
+    const mapEl = document.getElementById('mp-map');
+    if (!mapEl || _leafletMap) { if (_leafletMap) loadMapData(); return; }
+    if (typeof L === 'undefined') { setTimeout(initMap, 300); return; }
+    _leafletMap = L.map('mp-map', { zoomControl: true, scrollWheelZoom: true }).setView([1.5, 32], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 18 }).addTo(_leafletMap);
+    loadMapData();
 }
 
-// Tab switching functionality
-document.addEventListener('DOMContentLoaded', function() {
-    // Set up tab switching
-    const tabs = document.querySelectorAll('.view-tab');
-    const views = {
-        'table': document.getElementById('table-view'),
-        'chart': document.getElementById('chart-view'),
-        'map': document.getElementById('map-view')
-    };
-    
-    tabs.forEach(tab => {
-        tab.addEventListener('click', function() {
-            const view = this.getAttribute('data-view');
-            
-            // Remove active class from all tabs
-            tabs.forEach(t => t.classList.remove('active'));
-            
-            // Add active class to clicked tab
-            this.classList.add('active');
-            
-            // Hide all views
-            Object.values(views).forEach(v => v.style.display = 'none');
-            
-            // Show selected view
-            if (views[view]) {
-                views[view].style.display = 'block';
-                
-                // Initialize charts if chart view is selected
-                if (view === 'chart') {
-                    const chartData = <?php echo json_encode($chart_data); ?>;
-                    initCharts(chartData);
-                }
-                
-                // Initialize map if map view is selected
-                if (view === 'map') {
-                    const mapData = <?php echo json_encode($chart_data); ?>;
-                    initMap(mapData);
-                }
-            }
+function loadMapData() {
+    if (!_leafletMap) { initMap(); return; }
+    const commodity_id = document.getElementById('map_commodity')?.value || '';
+    const price_type   = document.getElementById('map_price_type')?.value || 'Wholesale';
+    const overlay      = document.getElementById('mapLoadingOverlay');
+    if (overlay) overlay.style.display = 'flex';
+    let url = `?map_data=1&price_type=${price_type}`;
+    if (commodity_id) url += `&commodity_id=${commodity_id}`;
+    fetch(url).then(r=>r.json()).then(resp=>{
+        if (overlay) overlay.style.display = 'none';
+        _mapMarkers.forEach(m => m.remove()); _mapMarkers = [];
+        if (!resp.success || !resp.data.length) { document.getElementById('mapMarkerCount').textContent = 'No data found'; return; }
+        const prices = resp.data.map(r => parseFloat(r.avg_price));
+        const minP = Math.min(...prices), maxP = Math.max(...prices);
+        document.getElementById('mapMarkerCount').textContent = `${resp.data.length} market${resp.data.length!==1?'s':''} found`;
+        function priceColor(p) { const t=maxP>minP?(p-minP)/(maxP-minP):0.5; if(t<0.2)return'#bee3f8';if(t<0.4)return'#63b3ed';if(t<0.6)return'#3182ce';if(t<0.8)return'#9c2424';return'#800000'; }
+        function priceRadius(p) { const t=maxP>minP?(p-minP)/(maxP-minP):0.5; return 8+t*18; }
+        resp.data.forEach(mkt => {
+            const lat=parseFloat(mkt.latitude), lng=parseFloat(mkt.longitude);
+            if(isNaN(lat)||isNaN(lng))return;
+            const price=parseFloat(mkt.avg_price);
+            const date=mkt.latest_date?new Date(mkt.latest_date).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}):'—';
+            const circle = L.circleMarker([lat,lng],{radius:priceRadius(price),fillColor:priceColor(price),color:'#fff',weight:2,opacity:0.9,fillOpacity:0.78}).addTo(_leafletMap);
+            circle.bindPopup(`<div style="min-width:170px;font-family:'Segoe UI',sans-serif;"><div style="font-weight:700;font-size:.95rem;color:#1f2937;margin-bottom:4px;">${mkt.market}</div><div style="font-size:.8rem;color:#6b7280;margin-bottom:8px;">${countryFlag(mkt.country_admin_0)} ${mkt.country_admin_0}</div><div style="display:flex;justify-content:space-between;align-items:center;background:#fef9f9;border-radius:6px;padding:8px 10px;"><span style="font-size:.75rem;color:#6b7280;">${price_type} avg</span><span style="font-size:1.1rem;font-weight:700;font-family:monospace;color:#800000;">$${price.toFixed(4)}</span></div><div style="font-size:.75rem;color:#9ca3af;margin-top:6px;">Latest: ${date}</div></div>`);
+            _mapMarkers.push(circle);
         });
+        if (_mapMarkers.length) { const group=L.featureGroup(_mapMarkers); _leafletMap.fitBounds(group.getBounds().pad(0.15)); }
+    }).catch(()=>{ if(overlay)overlay.style.display='none'; });
+}
+
+// ─────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────
+(function mpInit() {
+    ['searchMarket','searchCommodity','searchType'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.addEventListener('keydown', e => { if(e.key==='Enter')applyClientFilter(); if(e.key==='Escape')clearFilter(); }); }
     });
+    if (typeof updateBreadcrumb==='function') updateBreadcrumb('Base','Market Prices');
+    const activeTab = '<?= $active_tab ?>';
+    if (activeTab==='charts') setTimeout(loadChartData, 200);
+    if (activeTab==='cards')  setTimeout(loadCardsData, 200);
+    if (activeTab==='map')    setTimeout(initMap, 300);
+})();
 
-    // Chart type selector
-    document.getElementById('chart-type-selector')?.addEventListener('change', function() {
-        currentChartType = this.value;
-        if (priceTrendChart) {
-            priceTrendChart.config.type = currentChartType;
-            priceTrendChart.update();
-        }
-    });
-
-    // Export chart button
-    document.getElementById('export-chart-btn')?.addEventListener('click', function() {
-        if (priceTrendChart) {
-            const link = document.createElement('a');
-            link.download = 'market-prices-chart.png';
-            link.href = priceTrendChart.toBase64Image();
-            link.click();
-        }
-    });
-
-    // Export map button
-    document.getElementById('export-map-btn')?.addEventListener('click', function() {
-        if (map) {
-            html2canvas(document.querySelector('#map')).then(canvas => {
-                const link = document.createElement('a');
-                link.download = 'market-map.png';
-                link.href = canvas.toDataURL();
-                link.click();
-            });
-        }
-    });
-
-    // Filter change event listeners for charts
-    document.getElementById('chart-country-filter')?.addEventListener('change', updateCharts);
-    document.getElementById('chart-market-filter')?.addEventListener('change', updateCharts);
-    document.getElementById('chart-commodity-filter')?.addEventListener('change', updateCharts);
-
-    // Filter change event listeners for map
-    document.getElementById('map-commodity-filter')?.addEventListener('change', updateMap);
-    document.getElementById('map-country-filter')?.addEventListener('change', updateMap);
-    document.getElementById('map-date-from')?.addEventListener('change', updateMap);
-    document.getElementById('map-date-to')?.addEventListener('change', updateMap);
-
-    function updateCharts() {
-        const chartData = <?php echo json_encode($chart_data); ?>;
-        initCharts(chartData);
-    }
-
-    function updateMap() {
-        const mapData = <?php echo json_encode($chart_data); ?>;
-        initMap(mapData);
-    }
-
-    // Reset filters button
-    document.getElementById('reset-filters')?.addEventListener('click', function() {
-        // Clear all form inputs
-        const form = document.getElementById('filter-form');
-        const inputs = form.querySelectorAll('select, input');
-        inputs.forEach(input => {
-            if (input.type !== 'submit' && input.type !== 'button') {
-                input.value = '';
-            }
-        });
-        
-        // Submit the form
-        form.submit();
-    });
-
-
-  // Rows per page selector
-    document.getElementById('rows-per-page')?.addEventListener('change', function() {
-        const limit = this.value;
-        const currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('limit', limit);
-        currentUrl.searchParams.set('page', 1); // Reset to first page when changing limit
-        window.location.href = currentUrl.toString();
-    });  
-    
-    // Download button functionality
-    document.getElementById('download-btn')?.addEventListener('click', function() {
-        // Create a form to submit download request
-        const downloadForm = document.createElement('form');
-        downloadForm.method = 'POST';
-        downloadForm.action = 'download_market_prices.php';
-        downloadForm.target = '_blank';
-        
-        // Add all current filters as hidden inputs
-        const filterForm = document.getElementById('filter-form');
-        const inputs = filterForm.querySelectorAll('select, input');
-        inputs.forEach(input => {
-            if (input.name && input.value) {
-                const hiddenInput = document.createElement('input');
-                hiddenInput.type = 'hidden';
-                hiddenInput.name = input.name;
-                hiddenInput.value = input.value;
-                downloadForm.appendChild(hiddenInput);
-            }
-        });
-        
-        // Add page information
-        const pageInput = document.createElement('input');
-        pageInput.type = 'hidden';
-        pageInput.name = 'page';
-        pageInput.value = '<?php echo $page; ?>';
-        downloadForm.appendChild(pageInput);
-        
-        // Add to document and submit
-        document.body.appendChild(downloadForm);
-        downloadForm.submit();
-        document.body.removeChild(downloadForm);
-    });
-});
+const _s=document.createElement('style'); _s.textContent='@keyframes mpspin{to{transform:rotate(360deg)}}'; document.head.appendChild(_s);
 </script>
-</body>
-</html>
+
+<?php include 'user_footer.php'; ?>
