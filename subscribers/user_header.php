@@ -13,7 +13,6 @@ if (!isset($_SESSION['user_logged_in'])) {
 // Get user info
 $user_name = $_SESSION['user_name'] ?? 'User Profile';
 $subscription_type = $_SESSION['subscription_type'] ?? 'Free';
-// Format subscription type for display
 $subscription_display = ucfirst(str_replace('_', ' ', $subscription_type));
 $current_page = basename($_SERVER['PHP_SELF']);
 ?>
@@ -147,27 +146,17 @@ body { font-family:'Inter',sans-serif; }
 }
 
 /* ── Settings button ──────────────────────── */
-.settings-btn {
-    transition:all .2s ease;
-}
-.settings-btn:hover {
-    background-color:rgba(255,255,255,.1);
-}
-.settings-btn:hover .material-symbols-outlined {
-    transform:rotate(15deg);
-}
+.settings-btn { transition:all .2s ease; }
+.settings-btn:hover { background-color:rgba(255,255,255,.1); }
+.settings-btn:hover .material-symbols-outlined { transform:rotate(15deg); }
 
 /* ── Home button ──────────────────────────── */
-.home-btn {
-    transition:all .2s ease;
-}
+.home-btn { transition:all .2s ease; }
 .home-btn:hover {
     background-color:rgba(128,0,0,0.1);
     transform:translateY(-1px);
 }
-.home-btn:active {
-    transform:translateY(0);
-}
+.home-btn:active { transform:translateY(0); }
 
 /* ── Mobile sidebar overlay ───────────────── */
 #sidebar-overlay {
@@ -211,7 +200,7 @@ body { font-family:'Inter',sans-serif; }
 }
 @media (max-width:768px) { .hamburger-btn { display:flex; } }
 
-/* Subscription badge styles */
+/* ── Subscription badge ───────────────────── */
 .subscription-badge {
     font-size: 10px;
     padding: 2px 8px;
@@ -219,22 +208,80 @@ body { font-family:'Inter',sans-serif; }
     font-weight: 600;
     display: inline-block;
 }
-.subscription-premium {
-    background: linear-gradient(135deg, #ffd700, #ffb347);
-    color: #5d3a00;
+.subscription-premium      { background: linear-gradient(135deg, #ffd700, #ffb347); color: #5d3a00; }
+.subscription-professional { background: linear-gradient(135deg, #4a90e2, #357abd); color: white; }
+.subscription-basic        { background: linear-gradient(135deg, #5cb85c, #449d44); color: white; }
+.subscription-free         { background: #e0e0e0; color: #666; }
+
+/* ── Language switcher ────────────────────── */
+#ratin-lang-wrap { position: relative; }
+
+#ratin-lang-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 0.5px solid rgba(65,73,62,0.35);
+    background: transparent;
+    color: #41493e;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+    transition: background .15s, border-color .15s;
 }
-.subscription-professional {
-    background: linear-gradient(135deg, #4a90e2, #357abd);
-    color: white;
+#ratin-lang-btn:hover {
+    background: rgba(128,0,0,0.06);
+    border-color: rgba(128,0,0,0.3);
+    color: #800000;
 }
-.subscription-basic {
-    background: linear-gradient(135deg, #5cb85c, #449d44);
-    color: white;
+
+#ratin-lang-chevron {
+    font-size: 16px;
+    transition: transform .2s ease;
+    color: #717a6d;
 }
-.subscription-free {
-    background: #e0e0e0;
-    color: #666;
+
+#ratin-lang-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: #ffffff;
+    border-radius: 10px;
+    border: 0.5px solid #d0d0d0;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.10);
+    min-width: 180px;
+    overflow: hidden;
+    z-index: 999;
 }
+#ratin-lang-dropdown.ratin-lang-open { display: block; }
+
+.ratin-lang-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    color: #1a1c1c;
+    transition: background .1s;
+}
+.ratin-lang-option:hover { background: #f3f3f3; }
+.ratin-lang-option.ratin-lang-active {
+    background: #e8f0e8;
+    color: #00450d;
+    font-weight: 500;
+}
+
+.ratin-lang-native {
+    font-size: 11px;
+    color: #717a6d;
+    margin-left: auto;
+}
+.ratin-lang-option.ratin-lang-active .ratin-lang-native { color: #2a6b2c; }
 </style>
 </head>
 
@@ -254,8 +301,8 @@ body { font-family:'Inter',sans-serif; }
     </div>
 
     <div class="px-6 mb-4">
-        <h1 class="text-headline-md font-headline-md font-bold text-on-primary text-center">RATIN Analytics</h1>
-        <p class="font-body-md text-body-md text-primary-fixed opacity-80 text-center">Agricultural Data Platform</p>
+        <h1 class="text-headline-md font-headline-md font-bold text-on-primary text-center" data-i18n="header.title">RATIN Analytics</h1>
+        <p class="font-body-md text-body-md text-primary-fixed opacity-80 text-center" data-i18n="header.platform">Agricultural Data Platform</p>
     </div>
 
     <div class="flex-grow sidebar-scroll">
@@ -265,68 +312,75 @@ body { font-family:'Inter',sans-serif; }
                 <li>
                     <a href="http://ratin.net/" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">language</span>
-                        <span class="font-body-md text-body-md">Website</span>
+                        <span class="font-body-md text-body-md" data-i18n="nav.website">Website</span>
                     </a>
                 </li>
                 <!-- Articles -->
                 <li>
                     <a href="articles.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">article</span>
-                        <span class="font-body-md text-body-md">Articles</span>
+                        <span class="font-body-md text-body-md" data-i18n="nav.articles">Articles</span>
                     </a>
                 </li>
                 <!-- Insights -->
                 <li>
                     <a href="insights.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">insights</span>
-                        <span class="font-body-md text-body-md">Insights</span>
+                        <span class="font-body-md text-body-md" data-i18n="nav.insights">Insights</span>
                     </a>
                 </li>
                 <!-- GrainWatch -->
                 <li>
                     <a href="grainwatch.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">monitoring</span>
-                        <span class="font-body-md text-body-md">GrainWatch</span>
+                        <span class="font-body-md text-body-md" data-i18n="nav.grainwatch">GrainWatch</span>
                     </a>
                 </li>
                 <!-- Market Prices -->
                 <li>
                     <a href="marketprices.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">trending_up</span>
-                        <span class="font-body-md text-body-md">Market Prices</span>
+                        <span class="font-body-md text-body-md" data-i18n="nav.marketprices">Market Prices</span>
                     </a>
                 </li>
                 <!-- XBT Volume -->
                 <li>
                     <a href="xbt_volume.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">swap_horiz</span>
-                        <span class="font-body-md text-body-md">XBT Volume</span>
+                        <span class="font-body-md text-body-md" data-i18n="nav.xbtvolume">XBT Volume</span>
                     </a>
                 </li>
                 <!-- Miller Prices -->
                 <li>
                     <a href="miller_prices.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">factory</span>
-                        <span class="font-body-md text-body-md">Miller Prices</span>
+                        <span class="font-body-md text-body-md" data-i18n="nav.millerprices">Miller Prices</span>
+                    </a>
+                </li>
+                <!-- Predictive Analysis -->
+                <li>
+                    <a href="predictive_analysis.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg <?= ($current_page == 'predictive_analysis.php') ? 'bg-white/20' : '' ?>">
+                        <span class="material-symbols-outlined">analytics</span>
+                        <span class="font-body-md text-body-md" data-i18n="nav.predictive">Predictive Analysis</span>
                     </a>
                 </li>
             </ul>
         </nav>
     </div>
 
-    <!-- SETTINGS MENU - Just above logout button -->
+    <!-- Settings -->
     <div class="px-4 mb-2">
         <a href="user_settings.php" class="settings-btn flex items-center gap-3 px-4 py-2.5 rounded-lg text-primary-fixed hover:text-white transition-all">
             <span class="material-symbols-outlined text-lg">settings</span>
-            <span class="font-body-md text-body-md">Settings</span>
+            <span class="font-body-md text-body-md" data-i18n="nav.settings">Settings</span>
         </a>
     </div>
 
-    <!-- LOGOUT -->
+    <!-- Logout -->
     <div class="px-4 mb-2">
         <a href="logout.php" class="logout-btn flex items-center justify-center gap-2 w-full py-2.5 rounded-lg text-white font-medium transition-all">
             <span class="material-symbols-outlined text-lg">logout</span>
-            <span>Logout</span>
+            <span data-i18n="nav.logout">Logout</span>
         </a>
     </div>
 </aside>
@@ -339,16 +393,42 @@ body { font-family:'Inter',sans-serif; }
         <button class="hamburger-btn" onclick="openSidebar()" aria-label="Open menu">
             <span class="material-symbols-outlined">menu</span>
         </button>
-        
-        <!-- HOME BUTTON -->
+
+        <!-- Home button -->
         <a href="landing_page.php" class="home-btn flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-on-surface-variant hover:text-maroon transition-all group" title="Go to Dashboard">
             <span class="material-symbols-outlined text-xl group-hover:scale-110 transition-transform">home</span>
-            <span class="text-sm font-medium hidden sm:inline-block group-hover:text-maroon">Dashboard</span>
+            <span class="text-sm font-medium hidden sm:inline-block group-hover:text-maroon" data-i18n="header.dashboard">Dashboard</span>
         </a>
     </div>
 
     <div class="flex items-center gap-3">
+
+        <!-- ── Language Switcher ── -->
+        <div id="ratin-lang-wrap">
+            <button id="ratin-lang-btn" onclick="ratinToggleLangDropdown()" aria-label="Switch language">
+                <span id="lang-active-flag">🇬🇧</span>
+                <span id="lang-active-label">EN</span>
+                <span class="material-symbols-outlined" id="ratin-lang-chevron">expand_more</span>
+            </button>
+            <div id="ratin-lang-dropdown">
+                <div class="ratin-lang-option ratin-lang-active" data-lang="en" onclick="ratinApplyLang('en')">
+                    <span>🇬🇧</span><span>English</span><span class="ratin-lang-native">English</span>
+                </div>
+                <div class="ratin-lang-option" data-lang="sw" onclick="ratinApplyLang('sw')">
+                    <span>🇰🇪</span><span>Swahili</span><span class="ratin-lang-native">Kiswahili</span>
+                </div>
+                <div class="ratin-lang-option" data-lang="fr" onclick="ratinApplyLang('fr')">
+                    <span>🇫🇷</span><span>French</span><span class="ratin-lang-native">Français</span>
+                </div>
+                <div class="ratin-lang-option" data-lang="am" onclick="ratinApplyLang('am')">
+                    <span>🇪🇹</span><span>Amharic</span><span class="ratin-lang-native">አማርኛ</span>
+                </div>
+            </div>
+        </div>
+
         <div class="h-8 w-px bg-outline-variant mx-1 hidden sm:block"></div>
+
+        <!-- User info -->
         <div class="flex items-center gap-2 pl-2 cursor-pointer group">
             <div class="text-right hidden sm:block">
                 <p class="font-label-md text-label-md text-on-surface group-hover:text-maroon transition-colors"><?= htmlspecialchars($user_name) ?></p>
@@ -372,6 +452,7 @@ body { font-family:'Inter',sans-serif; }
 <main id="main-content" class="ml-[260px] pt-20 px-4 md:px-6 pb-8">
 
 <script>
+/* ── Sidebar controls ─────────────────────── */
 function openSidebar() {
     document.getElementById('main-sidebar').classList.add('open');
     document.getElementById('sidebar-overlay').classList.add('active');
@@ -397,4 +478,116 @@ function toggleNestedDropdown(el) {
     if (arrow) arrow.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
 }
 window.addEventListener('resize', () => { if (window.innerWidth > 768) closeSidebar(); });
+
+/* ── Language switcher ────────────────────── */
+const RATIN_TRANSLATIONS = {
+    en: {
+        "header.title":     "RATIN Analytics",
+        "header.platform":  "Agricultural Data Platform",
+        "header.dashboard": "Dashboard",
+        "nav.website":      "Website",
+        "nav.articles":     "Articles",
+        "nav.insights":     "Insights",
+        "nav.grainwatch":   "GrainWatch",
+        "nav.marketprices": "Market Prices",
+        "nav.xbtvolume":    "XBT Volume",
+        "nav.millerprices": "Miller Prices",
+        "nav.predictive":   "Predictive Analysis",
+        "nav.settings":     "Settings",
+        "nav.logout":       "Logout",
+    },
+    sw: {
+        "header.title":     "RATIN Analytics",
+        "header.platform":  "Jukwaa la Data ya Kilimo",
+        "header.dashboard": "Dashibodi",
+        "nav.website":      "Tovuti",
+        "nav.articles":     "Makala",
+        "nav.insights":     "Maarifa",
+        "nav.grainwatch":   "GrainWatch",
+        "nav.marketprices": "Bei za Soko",
+        "nav.xbtvolume":    "Kiasi cha XBT",
+        "nav.millerprices": "Bei za Msagaji",
+        "nav.predictive":   "Uchambuzi wa Utabiri",
+        "nav.settings":     "Mipangilio",
+        "nav.logout":       "Ondoka",
+    },
+    fr: {
+        "header.title":     "RATIN Analytics",
+        "header.platform":  "Plateforme de Données Agricoles",
+        "header.dashboard": "Tableau de Bord",
+        "nav.website":      "Site Web",
+        "nav.articles":     "Articles",
+        "nav.insights":     "Perspectives",
+        "nav.grainwatch":   "GrainWatch",
+        "nav.marketprices": "Prix du Marché",
+        "nav.xbtvolume":    "Volume XBT",
+        "nav.millerprices": "Prix des Meuniers",
+        "nav.predictive":   "Analyse Prédictive",
+        "nav.settings":     "Paramètres",
+        "nav.logout":       "Déconnexion",
+    },
+    am: {
+        "header.title":     "RATIN Analytics",
+        "header.platform":  "የግብርና ዳታ መድረክ",
+        "header.dashboard": "ዳሽቦርድ",
+        "nav.website":      "ድህረ ገጽ",
+        "nav.articles":     "ጽሑፎች",
+        "nav.insights":     "ግንዛቤዎች",
+        "nav.grainwatch":   "GrainWatch",
+        "nav.marketprices": "የገበያ ዋጋዎች",
+        "nav.xbtvolume":    "XBT መጠን",
+        "nav.millerprices": "የወፍጮ ዋጋዎች",
+        "nav.predictive":   "ትንበያ ትንተና",
+        "nav.settings":     "ቅንብሮች",
+        "nav.logout":       "ውጣ",
+    }
+};
+
+const LANG_META = {
+    en: { flag: "🇬🇧", label: "EN" },
+    sw: { flag: "🇰🇪", label: "SW" },
+    fr: { flag: "🇫🇷", label: "FR" },
+    am: { flag: "🇪🇹", label: "AM" },
+};
+
+function ratinApplyLang(lang) {
+    const t = RATIN_TRANSLATIONS[lang] || RATIN_TRANSLATIONS.en;
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (t[key]) el.textContent = t[key];
+    });
+    localStorage.setItem('ratin_lang', lang);
+    const meta = LANG_META[lang];
+    document.getElementById('lang-active-flag').textContent  = meta.flag;
+    document.getElementById('lang-active-label').textContent = meta.label;
+    document.querySelectorAll('.ratin-lang-option').forEach(o => {
+        o.classList.toggle('ratin-lang-active', o.dataset.lang === lang);
+    });
+    // Close dropdown
+    document.getElementById('ratin-lang-dropdown').classList.remove('ratin-lang-open');
+    document.getElementById('ratin-lang-chevron').style.transform = '';
+}
+
+function ratinToggleLangDropdown() {
+    const d = document.getElementById('ratin-lang-dropdown');
+    const c = document.getElementById('ratin-lang-chevron');
+    const open = d.classList.contains('ratin-lang-open');
+    d.classList.toggle('ratin-lang-open', !open);
+    c.style.transform = open ? '' : 'rotate(180deg)';
+}
+
+// Close on outside click
+document.addEventListener('click', e => {
+    const wrap = document.getElementById('ratin-lang-wrap');
+    if (wrap && !wrap.contains(e.target)) {
+        document.getElementById('ratin-lang-dropdown').classList.remove('ratin-lang-open');
+        document.getElementById('ratin-lang-chevron').style.transform = '';
+    }
+});
+
+// Restore saved language on every page load
+(function() {
+    const saved = localStorage.getItem('ratin_lang') || 'en';
+    ratinApplyLang(saved);
+})();
 </script>
