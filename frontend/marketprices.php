@@ -1,6 +1,6 @@
 <?php
 // marketprices_dashboard.php — Extended Market Prices Dashboard (Public Reporting View)
-// Tabs: Table | Charts | Cards | Map
+// Tabs: Table | Charts | Cards | Map | Compare
 // READ-ONLY: published records only, no data manipulation
 
 // ── JSON ENDPOINT: chart data ─────────────────────────────────
@@ -127,6 +127,151 @@ if (isset($_GET['map_data'])) {
     while ($row = $r->fetch_assoc()) $data[] = $row;
     $stmt->close();
     echo json_encode(['success' => true, 'data' => $data]); exit;
+}
+
+// ── JSON ENDPOINT: comparison data ────────────────────────────
+if (isset($_GET['compare_data'])) {
+    if (session_status() == PHP_SESSION_NONE) session_start();
+    include '../admin/includes/config.php';
+    header('Content-Type: application/json');
+
+    $mode         = $_GET['mode'] ?? 'commodity'; // commodity | market | country
+    $price_type   = in_array($_GET['price_type'] ?? '', ['Wholesale','Retail','Both']) ? $_GET['price_type'] : 'Wholesale';
+    $days         = isset($_GET['days']) ? min((int)$_GET['days'], 730) : 90;
+    $date_from    = trim($_GET['date_from'] ?? '');
+    $date_to      = trim($_GET['date_to']   ?? '');
+
+    $date_cond = '';
+    $date_params = []; $date_types = '';
+    if ($date_from && $date_to) {
+        $date_cond = "AND mp.date_posted BETWEEN ? AND ?";
+        $date_params[] = $date_from . ' 00:00:00'; $date_types .= 's';
+        $date_params[] = $date_to   . ' 23:59:59'; $date_types .= 's';
+    } else {
+        $date_cond = "AND mp.date_posted >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+        $date_params[] = $days; $date_types .= 'i';
+    }
+
+    // Fixed: Properly handle price_type condition
+    $pt_cond = '';
+    $pt_params = [];
+    if ($price_type !== 'Both') {
+        $pt_cond = "AND mp.price_type = ?";
+        $pt_params[] = $price_type;
+    }
+
+    if ($mode === 'commodity') {
+        // Compare up to 4 commodities, optionally filtered by country/market
+        $ids_raw  = array_filter(array_map('intval', explode(',', $_GET['commodity_ids'] ?? '')));
+        $country  = trim($_GET['country']   ?? '');
+        $market_id = (int)($_GET['market_id'] ?? 0);
+        if (empty($ids_raw)) { echo json_encode(['success'=>false,'msg'=>'No commodities selected']); exit; }
+        $placeholders = implode(',', array_fill(0, count($ids_raw), '?'));
+        $country_cond = $country   ? "AND mp.country_admin_0 = ?" : '';
+        $market_cond  = $market_id ? "AND mp.market_id = ?"       : '';
+        
+        // Fixed: Use CONCAT with proper label, and include all non-aggregated columns in GROUP BY
+        $sql = "SELECT DATE(mp.date_posted) as d,
+                       mp.price_type,
+                       mp.commodity as commodity_id,
+                       CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS label,
+                       AVG(mp.Price) as avg_price,
+                       MIN(mp.Price) as min_price,
+                       MAX(mp.Price) as max_price,
+                       COUNT(*) as cnt
+                FROM market_prices mp
+                LEFT JOIN commodities c ON mp.commodity = c.id
+                WHERE mp.status = 'published'
+                  AND mp.commodity IN ($placeholders)
+                  $date_cond $pt_cond $country_cond $market_cond
+                GROUP BY DATE(mp.date_posted), mp.price_type, mp.commodity, label
+                ORDER BY d ASC, label ASC";
+        
+        $stmt = $con->prepare($sql);
+        // Build params: ids first, then date params, then pt params, then country/market
+        $all_params = array_merge($ids_raw, $date_params, $pt_params);
+        $all_types  = str_repeat('i', count($ids_raw)) . $date_types . str_repeat('s', count($pt_params));
+        if ($country)   { $all_params[] = $country;   $all_types .= 's'; }
+        if ($market_id) { $all_params[] = $market_id; $all_types .= 'i'; }
+        $stmt->bind_param($all_types, ...$all_params);
+        $stmt->execute(); $r = $stmt->get_result();
+        $rows = []; while ($row = $r->fetch_assoc()) $rows[] = $row;
+        $stmt->close();
+        echo json_encode(['success'=>true,'mode'=>'commodity','data'=>$rows]); exit;
+    }
+
+    if ($mode === 'market') {
+        // Compare up to 4 markets for a given commodity
+        $market_ids_raw = array_filter(array_map('intval', explode(',', $_GET['market_ids'] ?? '')));
+        $commodity_id   = (int)($_GET['commodity_id'] ?? 0);
+        if (empty($market_ids_raw)) { echo json_encode(['success'=>false,'msg'=>'No markets selected']); exit; }
+        $placeholders = implode(',', array_fill(0, count($market_ids_raw), '?'));
+        $com_cond = $commodity_id ? "AND mp.commodity = ?" : '';
+        $com_params = $commodity_id ? [$commodity_id] : [];
+        
+        // Fixed: Include market_id and label in GROUP BY
+        $sql = "SELECT DATE(mp.date_posted) as d,
+                       mp.price_type,
+                       mp.market_id,
+                       mp.market as label,
+                       AVG(mp.Price) as avg_price,
+                       MIN(mp.Price) as min_price,
+                       MAX(mp.Price) as max_price,
+                       COUNT(*) as cnt
+                FROM market_prices mp
+                WHERE mp.status = 'published'
+                  AND mp.market_id IN ($placeholders)
+                  $date_cond $pt_cond $com_cond
+                GROUP BY DATE(mp.date_posted), mp.price_type, mp.market_id, mp.market
+                ORDER BY d ASC, label ASC";
+        
+        $stmt = $con->prepare($sql);
+        $all_params = array_merge($market_ids_raw, $date_params, $pt_params, $com_params);
+        $all_types  = str_repeat('i', count($market_ids_raw)) . $date_types . str_repeat('s', count($pt_params));
+        if ($commodity_id) { $all_types .= 'i'; }
+        $stmt->bind_param($all_types, ...$all_params);
+        $stmt->execute(); $r = $stmt->get_result();
+        $rows = []; while ($row = $r->fetch_assoc()) $rows[] = $row;
+        $stmt->close();
+        echo json_encode(['success'=>true,'mode'=>'market','data'=>$rows]); exit;
+    }
+
+    if ($mode === 'country') {
+        // Compare countries for a given commodity
+        $countries_raw = array_filter(array_map('trim', explode(',', $_GET['countries'] ?? '')));
+        $commodity_id  = (int)($_GET['commodity_id'] ?? 0);
+        if (empty($countries_raw)) { echo json_encode(['success'=>false,'msg'=>'No countries selected']); exit; }
+        $placeholders = implode(',', array_fill(0, count($countries_raw), '?'));
+        $com_cond = $commodity_id ? "AND mp.commodity = ?" : '';
+        $com_params = $commodity_id ? [$commodity_id] : [];
+        
+        // Fixed: Include country_admin_0 in GROUP BY
+        $sql = "SELECT DATE(mp.date_posted) as d,
+                       mp.price_type,
+                       mp.country_admin_0 as label,
+                       AVG(mp.Price) as avg_price,
+                       MIN(mp.Price) as min_price,
+                       MAX(mp.Price) as max_price,
+                       COUNT(*) as cnt
+                FROM market_prices mp
+                WHERE mp.status = 'published'
+                  AND mp.country_admin_0 IN ($placeholders)
+                  $date_cond $pt_cond $com_cond
+                GROUP BY DATE(mp.date_posted), mp.price_type, mp.country_admin_0
+                ORDER BY d ASC, label ASC";
+        
+        $stmt = $con->prepare($sql);
+        $all_params = array_merge($countries_raw, $date_params, $pt_params, $com_params);
+        $all_types  = str_repeat('s', count($countries_raw)) . $date_types . str_repeat('s', count($pt_params));
+        if ($commodity_id) { $all_types .= 'i'; }
+        $stmt->bind_param($all_types, ...$all_params);
+        $stmt->execute(); $r = $stmt->get_result();
+        $rows = []; while ($row = $r->fetch_assoc()) $rows[] = $row;
+        $stmt->close();
+        echo json_encode(['success'=>true,'mode'=>'country','data'=>$rows]); exit;
+    }
+
+    echo json_encode(['success'=>false,'msg'=>'Invalid mode']); exit;
 }
 
 // ── POST: Export functionality ─────────────────────────────────
@@ -483,6 +628,40 @@ $active_tab = $_GET['tab'] ?? 'table';
 /* Published badge pill in header */
 .mp-published-pill { display: inline-flex; align-items: center; gap: 5px; background: #dcfce7; color: #166534; font-size: .75rem; font-weight: 600; padding: 3px 10px; border-radius: 99px; border: 1px solid #bbf7d0; }
 
+/* ── Compare panel styles ── */
+.cmp-panel-card  { background:var(--mp-card);border-radius:var(--mp-radius);box-shadow:0 1px 3px rgba(0,0,0,.06);padding:20px;margin-bottom:16px; }
+.cmp-mode-pills  { display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap; }
+.cmp-mode-pill   { display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:99px;font-size:.8125rem;font-weight:500;border:1.5px solid var(--mp-border);background:white;color:var(--mp-muted);cursor:pointer;transition:all .2s; }
+.cmp-mode-pill:hover { border-color:var(--mp-primary);color:var(--mp-primary); }
+.cmp-mode-pill.active { background:var(--mp-primary);color:#fff;border-color:var(--mp-primary);font-weight:600; }
+.cmp-mode-pill .ms { font-size:1rem; }
+.cmp-config      { display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;padding:16px 0 20px;border-bottom:1px solid var(--mp-border);margin-bottom:20px; }
+.cmp-fg          { display:flex;flex-direction:column;gap:4px;flex:1;min-width:160px; }
+.cmp-fg label    { font-size:.75rem;font-weight:600;color:var(--mp-muted);text-transform:uppercase;letter-spacing:.05em; }
+.cmp-fg select, .cmp-fg input { padding:7px 10px;border:1px solid var(--mp-border);border-radius:6px;font-size:.8125rem;color:var(--mp-text);background:white;width:100%;box-sizing:border-box; }
+.cmp-fg select:focus,.cmp-fg input:focus { outline:none;border-color:var(--mp-primary);box-shadow:0 0 0 3px rgba(128,0,0,.1); }
+.cmp-chips       { display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:34px;padding:5px 8px;border:1px solid var(--mp-border);border-radius:6px;background:white;cursor:text;transition:border-color .2s; }
+.cmp-chips:focus-within { border-color:var(--mp-primary);box-shadow:0 0 0 3px rgba(128,0,0,.1); }
+.cmp-chip        { display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:99px;font-size:.75rem;font-weight:600;white-space:nowrap; }
+.cmp-chip-rm     { background:none;border:none;cursor:pointer;font-size:.9rem;line-height:1;color:inherit;opacity:.7;padding:0;display:flex;align-items:center; }
+.cmp-chip-rm:hover { opacity:1; }
+.cmp-chip-hint   { font-size:.75rem;color:var(--mp-muted);padding:2px 4px; }
+.cmp-chip-limit  { font-size:.7rem;color:var(--mp-muted);margin-top:4px; }
+.cmp-summary     { overflow-x:auto;margin-top:20px; }
+.cmp-summary table { width:100%;border-collapse:collapse;font-size:.8rem; }
+.cmp-summary th  { padding:8px 12px;text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mp-muted);border-bottom:2px solid var(--mp-border);white-space:nowrap; }
+.cmp-summary td  { padding:8px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle; }
+.cmp-summary tr:hover td { background:#fefaf5; }
+.cmp-swatch      { display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;vertical-align:middle; }
+.cmp-delta       { display:inline-flex;align-items:center;gap:2px;font-size:.72rem;font-weight:600;padding:1px 7px;border-radius:4px; }
+.cmp-delta.up    { background:#dcfce7;color:#16a34a; }
+.cmp-delta.dn    { background:#fee2e2;color:#dc2626; }
+.cmp-delta.flat  { background:#f3f4f6;color:#6b7280; }
+.cmp-chart-wrap  { position:relative;width:100%;height:360px; }
+.cmp-chart-wrap2 { position:relative;width:100%;height:200px;margin-top:20px; }
+.cmp-empty       { text-align:center;padding:60px 20px;color:var(--mp-muted); }
+.cmp-empty .ms   { font-size:3rem;opacity:.25;display:block;margin-bottom:12px; }
+
 @media (max-width: 768px) {
     .mp-stats { grid-template-columns: repeat(2, 1fr); }
     .mp-chart-filters { flex-direction: column; }
@@ -549,6 +728,9 @@ $active_tab = $_GET['tab'] ?? 'table';
         </button>
         <button class="mp-tab <?= $active_tab==='map'    ? 'active' : '' ?>" onclick="switchTab('map')"    role="tab">
             <span class="ms">map</span> Map View
+        </button>
+        <button class="mp-tab <?= $active_tab==='compare' ? 'active' : '' ?>" onclick="switchTab('compare')" role="tab">
+            <span class="ms">compare_arrows</span> Compare
         </button>
     </div>
 
@@ -909,6 +1091,242 @@ $active_tab = $_GET['tab'] ?? 'table';
         </div>
     </div>
 
+    <!-- ══════════════════════════════════════
+         TAB 5: COMPARE VIEW
+    ══════════════════════════════════════ -->
+    <div id="panel-compare" class="mp-panel <?= $active_tab==='compare' ? 'active' : '' ?>">
+
+        <!-- Mode switcher -->
+        <div class="cmp-panel-card">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+                <div>
+                    <h2 style="margin:0;font-size:1rem;font-weight:600;">Price Comparison</h2>
+                    <p style="margin:4px 0 0;font-size:.8rem;color:var(--mp-muted);">Compare commodities, markets, or countries side-by-side</p>
+                </div>
+                <div id="cmpRunBtn" style="display:none;">
+                    <button class="mp-btn primary" onclick="runComparison()">
+                        <span class="ms">compare_arrows</span> Compare
+                    </button>
+                </div>
+            </div>
+
+            <!-- Mode pills -->
+            <div class="cmp-mode-pills">
+                <button class="cmp-mode-pill active" id="pill-commodity" onclick="setCmpMode('commodity')">
+                    <span class="ms">grain</span> Commodity vs Commodity
+                </button>
+                <button class="cmp-mode-pill" id="pill-market" onclick="setCmpMode('market')">
+                    <span class="ms">storefront</span> Market vs Market
+                </button>
+                <button class="cmp-mode-pill" id="pill-country" onclick="setCmpMode('country')">
+                    <span class="ms">public</span> Country vs Country
+                </button>
+            </div>
+
+            <!-- ── MODE: COMMODITY ── -->
+            <div id="cmp-cfg-commodity" class="cmp-config">
+                <div class="cmp-fg" style="max-width:200px;">
+                    <label>Country (optional)</label>
+                    <select id="cmp_com_country" onchange="onCmpComCountryChange()">
+                        <option value="">All Countries</option>
+                        <?php foreach ($countries_in_db as $c): ?>
+                            <option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="cmp-fg" style="max-width:200px;">
+                    <label>Market (optional)</label>
+                    <select id="cmp_com_market">
+                        <option value="">All Markets</option>
+                        <?php foreach ($all_markets as $m): ?>
+                            <option value="<?= $m['market_id'] ?>" data-country="<?= htmlspecialchars($m['country_admin_0']) ?>"><?= htmlspecialchars($m['market']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="cmp-fg">
+                    <label>Commodities to compare <span class="cmp-chip-limit">(up to 4)</span></label>
+                    <div class="cmp-chips" id="cmp_com_chips" onclick="document.getElementById('cmp_com_picker').focus()">
+                        <span class="cmp-chip-hint" id="cmp_com_hint">Pick from list below…</span>
+                    </div>
+                    <select id="cmp_com_picker" onchange="addCmpChip('commodity',this)" style="margin-top:6px;">
+                        <option value="">+ Add commodity…</option>
+                        <?php foreach ($all_commodities as $c): ?>
+                            <option value="<?= $c['id'] ?>" data-label="<?= htmlspecialchars($c['commodity_display']) ?>"><?= htmlspecialchars($c['commodity_display']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="cmp-fg" style="max-width:160px;">
+                    <label>Price Type</label>
+                    <select id="cmp_com_ptype">
+                        <option value="Wholesale">Wholesale</option>
+                        <option value="Retail">Retail</option>
+                        <option value="Both">Both</option>
+                    </select>
+                </div>
+                <?php $this_days_opts = [30=>'Last 30 days',60=>'Last 60 days',90=>'Last 90 days',180=>'Last 6 months',365=>'Last year']; ?>
+                <div class="cmp-fg" style="max-width:160px;">
+                    <label>Time Range</label>
+                    <select id="cmp_com_days">
+                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==90?'selected':''?>><?=$l?></option><?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+
+            <!-- ── MODE: MARKET ── -->
+            <div id="cmp-cfg-market" class="cmp-config" style="display:none;">
+                <div class="cmp-fg">
+                    <label>Commodity</label>
+                    <select id="cmp_mkt_commodity">
+                        <option value="">Any commodity</option>
+                        <?php foreach ($all_commodities as $c): ?>
+                            <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['commodity_display']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="cmp-fg">
+                    <label>Markets to compare <span class="cmp-chip-limit">(up to 4)</span></label>
+                    <div class="cmp-chips" id="cmp_mkt_chips">
+                        <span class="cmp-chip-hint" id="cmp_mkt_hint">Pick from list below…</span>
+                    </div>
+                    <select id="cmp_mkt_picker" onchange="addCmpChip('market',this)" style="margin-top:6px;">
+                        <option value="">+ Add market…</option>
+                        <?php foreach ($all_markets as $m): ?>
+                            <option value="<?= $m['market_id'] ?>" data-label="<?= htmlspecialchars($m['market']) ?> (<?= htmlspecialchars($m['country_admin_0']) ?>)"><?= htmlspecialchars($m['market']) ?> — <?= htmlspecialchars($m['country_admin_0']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="cmp-fg" style="max-width:160px;">
+                    <label>Price Type</label>
+                    <select id="cmp_mkt_ptype">
+                        <option value="Wholesale">Wholesale</option>
+                        <option value="Retail">Retail</option>
+                        <option value="Both">Both</option>
+                    </select>
+                </div>
+                <div class="cmp-fg" style="max-width:160px;">
+                    <label>Time Range</label>
+                    <select id="cmp_mkt_days">
+                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==90?'selected':''?>><?=$l?></option><?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+
+            <!-- ── MODE: COUNTRY ── -->
+            <div id="cmp-cfg-country" class="cmp-config" style="display:none;">
+                <div class="cmp-fg">
+                    <label>Commodity (optional)</label>
+                    <select id="cmp_cty_commodity">
+                        <option value="">All commodities</option>
+                        <?php foreach ($all_commodities as $c): ?>
+                            <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['commodity_display']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="cmp-fg">
+                    <label>Countries to compare <span class="cmp-chip-limit">(up to 4)</span></label>
+                    <div class="cmp-chips" id="cmp_cty_chips">
+                        <span class="cmp-chip-hint" id="cmp_cty_hint">Pick from list below…</span>
+                    </div>
+                    <select id="cmp_cty_picker" onchange="addCmpChip('country',this)" style="margin-top:6px;">
+                        <option value="">+ Add country…</option>
+                        <?php foreach ($countries_in_db as $c): ?>
+                            <option value="<?= htmlspecialchars($c) ?>" data-label="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="cmp-fg" style="max-width:160px;">
+                    <label>Price Type</label>
+                    <select id="cmp_cty_ptype">
+                        <option value="Wholesale">Wholesale</option>
+                        <option value="Retail">Retail</option>
+                        <option value="Both">Both</option>
+                    </select>
+                </div>
+                <div class="cmp-fg" style="max-width:160px;">
+                    <label>Time Range</label>
+                    <select id="cmp_cty_days">
+                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==90?'selected':''?>><?=$l?></option><?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Action row -->
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <button class="mp-btn primary" onclick="runComparison()">
+                    <span class="ms">compare_arrows</span> Run Comparison
+                </button>
+                <button class="mp-btn ghost" onclick="clearComparison()">
+                    <span class="ms">restart_alt</span> Reset
+                </button>
+                <span id="cmpStatus" style="font-size:.8rem;color:var(--mp-muted);"></span>
+            </div>
+        </div>
+
+        <!-- Results area -->
+        <div id="cmpResults" style="display:none;">
+
+            <!-- Line trend chart -->
+            <div class="cmp-panel-card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+                    <div>
+                        <h3 style="margin:0;font-size:1rem;font-weight:600;" id="cmpChartTitle">Price Trends</h3>
+                        <p style="margin:4px 0 0;font-size:.8rem;color:var(--mp-muted);" id="cmpChartSub">Average price over time</p>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="mp-btn ghost" id="cmpChartTypeBtn" onclick="toggleCmpChartType()" style="font-size:.75rem;padding:4px 12px;">
+                            <span class="ms" style="font-size:.9rem;">bar_chart</span> Switch to Bar
+                        </button>
+                    </div>
+                </div>
+                <div id="cmpLegendRow" style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:14px;"></div>
+                <div class="cmp-chart-wrap">
+                    <canvas id="cmpLineChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Summary stats table -->
+            <div class="cmp-panel-card">
+                <h3 style="margin:0 0 14px;font-size:1rem;font-weight:600;">Summary Statistics</h3>
+                <div class="cmp-summary">
+                    <table id="cmpSummaryTable">
+                        <thead>
+                            <tr>
+                                <th>Series</th>
+                                <th>Price Type</th>
+                                <th>Avg Price</th>
+                                <th>Min</th>
+                                <th>Max</th>
+                                <th>Data Points</th>
+                                <th>Trend (period)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cmpSummaryBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Spread / difference chart (shown when exactly 2 series selected) -->
+            <div class="cmp-panel-card" id="cmpSpreadCard" style="display:none;">
+                <h3 style="margin:0 0 6px;font-size:1rem;font-weight:600;">Price Difference Over Time</h3>
+                <p style="margin:0 0 14px;font-size:.8rem;color:var(--mp-muted);" id="cmpSpreadLabel">Series A − Series B</p>
+                <div class="cmp-chart-wrap2">
+                    <canvas id="cmpSpreadChart"></canvas>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Empty state -->
+        <div id="cmpEmpty" class="cmp-panel-card">
+            <div class="cmp-empty">
+                <span class="ms">compare_arrows</span>
+                <p style="font-weight:600;color:var(--mp-text);margin-bottom:6px;">Select items to compare</p>
+                <p>Choose a comparison mode above, pick 2–4 items, then click <strong>Run Comparison</strong>.</p>
+                <p style="margin-top:8px;font-size:.8rem;">Examples: Maize vs Beans in Kenya · Nairobi vs Mombasa market prices · Kenya vs Uganda for rice</p>
+            </div>
+        </div>
+    </div>
+
 </div><!-- /mp-wrap -->
 
 <!-- Export form (hidden) -->
@@ -934,6 +1352,11 @@ let _spreadChart = null;
 let _leafletMap = null;
 let _mapMarkers = [];
 let _cardsData = [];
+let _cmpChart = null;
+let _cmpSpread = null;
+let _cmpChartType = 'line';
+let _cmpSelections = { commodity: [], market: [], country: [] };
+let _cmpLastData = null;
 const PAGE_URL = window.location.href.split('?')[0];
 
 function countryFlag(country) {
@@ -947,12 +1370,13 @@ function countryFlag(country) {
 function switchTab(tab) {
     document.querySelectorAll('.mp-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.mp-panel').forEach(p => p.classList.remove('active'));
-    const tabs = ['table','charts','cards','map'];
+    const tabs = ['table','charts','cards','map','compare'];
     document.querySelectorAll('.mp-tab')[tabs.indexOf(tab)]?.classList.add('active');
     document.getElementById('panel-' + tab)?.classList.add('active');
     if (tab === 'charts' && !_priceChart) { setTimeout(loadChartData, 100); }
     if (tab === 'cards')  { loadCardsData(); }
     if (tab === 'map')    { initMap(); }
+    if (tab === 'compare' && !_cmpLastData) { /* show empty state, nothing to load */ }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1427,6 +1851,286 @@ function loadMapData() {
         });
         if (_mapMarkers.length) { const group=L.featureGroup(_mapMarkers); _leafletMap.fitBounds(group.getBounds().pad(0.15)); }
     }).catch(()=>{ if(overlay)overlay.style.display='none'; });
+}
+
+// ─────────────────────────────────────────────────────────────
+// COMPARE TAB
+// ─────────────────────────────────────────────────────────────
+const CMP_COLORS = ['#7c3aed','#db2777','#0891b2','#d97706'];
+const CMP_COLORS_LIGHT = ['rgba(124,58,237,0.08)','rgba(219,39,119,0.08)','rgba(8,145,178,0.08)','rgba(217,119,6,0.08)'];
+let _cmpMode = 'commodity';
+
+function setCmpMode(mode) {
+    _cmpMode = mode;
+    ['commodity','market','country'].forEach(m => {
+        document.getElementById('pill-'+m).classList.toggle('active', m === mode);
+        document.getElementById('cmp-cfg-'+m).style.display = m === mode ? 'flex' : 'none';
+    });
+}
+
+function addCmpChip(type, sel) {
+    if (!sel.value) return;
+    const arr = _cmpSelections[type];
+    if (arr.length >= 4) { alert('Maximum 4 items can be compared at once.'); sel.value=''; return; }
+    if (arr.find(x => String(x.value) === String(sel.value))) { sel.value=''; return; }
+    const label = sel.options[sel.selectedIndex]?.getAttribute('data-label') || sel.options[sel.selectedIndex]?.text || sel.value;
+    arr.push({ value: sel.value, label });
+    sel.value = '';
+    renderCmpChips(type);
+}
+
+function removeCmpChip(type, val) {
+    _cmpSelections[type] = _cmpSelections[type].filter(x => String(x.value) !== String(val));
+    renderCmpChips(type);
+}
+
+function renderCmpChips(type) {
+    const prefixMap = { commodity:'cmp_com', market:'cmp_mkt', country:'cmp_cty' };
+    const pfx  = prefixMap[type];
+    const arr  = _cmpSelections[type];
+    const cont = document.getElementById(pfx + '_chips');
+    const hint = document.getElementById(pfx + '_hint');
+    if (!cont) return;
+    cont.querySelectorAll('.cmp-chip').forEach(c => c.remove());
+    arr.forEach((item, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'cmp-chip';
+        chip.style.cssText = `background:${CMP_COLORS_LIGHT[i]};color:${CMP_COLORS[i]};border:1px solid ${CMP_COLORS[i]}40`;
+        chip.innerHTML = `<span style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(item.label)}</span><button class="cmp-chip-rm" onclick="removeCmpChip('${type}','${item.value}')" title="Remove">✕</button>`;
+        cont.insertBefore(chip, hint);
+    });
+    if (hint) hint.style.display = arr.length > 0 ? 'none' : 'inline';
+}
+
+function onCmpComCountryChange() {
+    const country = document.getElementById('cmp_com_country').value;
+    const mSel    = document.getElementById('cmp_com_market');
+    Array.from(mSel.options).forEach(opt => {
+        if (!opt.value) { opt.hidden = false; return; }
+        opt.hidden = country ? opt.getAttribute('data-country') !== country : false;
+    });
+    if (mSel.selectedOptions[0]?.hidden) mSel.value = '';
+}
+
+function runComparison() {
+    const status = document.getElementById('cmpStatus');
+    const results = document.getElementById('cmpResults');
+    const empty   = document.getElementById('cmpEmpty');
+    status.textContent = '';
+
+    let url = `?compare_data=1&mode=${_cmpMode}`;
+
+    if (_cmpMode === 'commodity') {
+        const ids = _cmpSelections.commodity.map(x => x.value);
+        if (ids.length < 2) { status.textContent = '⚠ Select at least 2 commodities.'; return; }
+        url += `&commodity_ids=${ids.join(',')}&price_type=${document.getElementById('cmp_com_ptype').value}&days=${document.getElementById('cmp_com_days').value}`;
+        const country = document.getElementById('cmp_com_country').value;
+        const market  = document.getElementById('cmp_com_market').value;
+        if (country) url += `&country=${encodeURIComponent(country)}`;
+        if (market)  url += `&market_id=${market}`;
+    } else if (_cmpMode === 'market') {
+        const ids = _cmpSelections.market.map(x => x.value);
+        if (ids.length < 2) { status.textContent = '⚠ Select at least 2 markets.'; return; }
+        url += `&market_ids=${ids.join(',')}&price_type=${document.getElementById('cmp_mkt_ptype').value}&days=${document.getElementById('cmp_mkt_days').value}`;
+        const com = document.getElementById('cmp_mkt_commodity').value;
+        if (com) url += `&commodity_id=${com}`;
+    } else {
+        const countries = _cmpSelections.country.map(x => x.value);
+        if (countries.length < 2) { status.textContent = '⚠ Select at least 2 countries.'; return; }
+        url += `&countries=${encodeURIComponent(countries.join(','))}&price_type=${document.getElementById('cmp_cty_ptype').value}&days=${document.getElementById('cmp_cty_days').value}`;
+        const com = document.getElementById('cmp_cty_commodity').value;
+        if (com) url += `&commodity_id=${com}`;
+    }
+
+    status.innerHTML = '<span class="ms mp-spinner" style="font-size:.9rem;vertical-align:middle;">hourglass_empty</span> Loading…';
+
+    fetch(url).then(r => r.json()).then(resp => {
+        status.textContent = '';
+        if (!resp.success || !resp.data?.length) {
+            status.textContent = '⚠ No data found for the selected combination.';
+            results.style.display = 'none';
+            empty.style.display   = 'block';
+            return;
+        }
+        _cmpLastData = resp;
+        empty.style.display   = 'none';
+        results.style.display = 'block';
+        _cmpChartType = 'line';
+        document.getElementById('cmpChartTypeBtn').innerHTML = '<span class="ms" style="font-size:.9rem;">bar_chart</span> Switch to Bar';
+        renderCmpCharts(resp);
+    }).catch(() => { status.textContent = '⚠ Request failed. Please try again.'; });
+}
+
+function renderCmpCharts(resp) {
+    const data = resp.data;
+    const mode = resp.mode;
+
+    const seriesMap = {};
+    const ptypes    = [...new Set(data.map(r => r.price_type))];
+    const useType   = ptypes.length > 1;
+
+    data.forEach(row => {
+        const key = useType ? `${row.label} [${row.price_type}]` : row.label;
+        if (!seriesMap[key]) seriesMap[key] = { label: key, rawLabel: row.label, priceType: row.price_type, dates: {}, prices: [], minP: Infinity, maxP: -Infinity, cnt: 0 };
+        const s = seriesMap[key];
+        s.dates[row.d] = parseFloat(row.avg_price);
+        s.prices.push(parseFloat(row.avg_price));
+        s.minP = Math.min(s.minP, parseFloat(row.min_price));
+        s.maxP = Math.max(s.maxP, parseFloat(row.max_price));
+        s.cnt += parseInt(row.cnt);
+    });
+
+    const allDates  = [...new Set(data.map(r => r.d))].sort();
+    const seriesList = Object.values(seriesMap);
+
+    const datasets = seriesList.map((s, i) => ({
+        label: s.label,
+        data:  allDates.map(d => s.dates[d] ?? null),
+        borderColor: CMP_COLORS[i % CMP_COLORS.length],
+        backgroundColor: _cmpChartType === 'bar' ? CMP_COLORS[i % CMP_COLORS.length] + 'cc' : CMP_COLORS_LIGHT[i % CMP_COLORS.length],
+        borderWidth: _cmpChartType === 'bar' ? 0 : 2.5,
+        pointRadius: _cmpChartType === 'bar' ? 0 : 3,
+        pointHoverRadius: 7,
+        pointBackgroundColor: CMP_COLORS[i % CMP_COLORS.length],
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        fill: false,
+        tension: 0.35,
+        spanGaps: true,
+        borderDash: i % 2 === 1 && ptypes.length > 1 ? [6,3] : [],
+    }));
+
+    const labels = allDates.map(d => {
+        const dt = new Date(d); return dt.toLocaleDateString('en-GB', {day:'2-digit', month:'short'});
+    });
+
+    const modeLabel = { commodity:'Commodity Comparison', market:'Market Comparison', country:'Country Comparison' };
+    document.getElementById('cmpChartTitle').textContent  = modeLabel[mode] || 'Price Comparison';
+    document.getElementById('cmpChartSub').textContent    = `Average price (USD) · ${allDates[0]} → ${allDates[allDates.length-1]}`;
+
+    const legendRow = document.getElementById('cmpLegendRow');
+    legendRow.innerHTML = '';
+    seriesList.forEach((s, i) => {
+        const last = s.prices[s.prices.length - 1];
+        legendRow.innerHTML += `
+        <div style="display:flex;align-items:center;gap:8px;font-size:.8125rem;">
+            <span class="cmp-swatch" style="background:${CMP_COLORS[i % CMP_COLORS.length]};width:14px;height:14px;border-radius:3px;"></span>
+            <span>${escHtml(s.label)}</span>
+            <strong style="color:${CMP_COLORS[i % CMP_COLORS.length]};">${last ? '$'+last.toFixed(4) : '—'}</strong>
+        </div>`;
+    });
+
+    const ctx = document.getElementById('cmpLineChart').getContext('2d');
+    if (_cmpChart) _cmpChart.destroy();
+    _cmpChart = new Chart(ctx, {
+        type: _cmpChartType,
+        data: { labels, datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: 'rgba(255,255,255,0.97)', titleColor:'#1f2937', bodyColor:'#374151',
+                    borderColor:'#e5e7eb', borderWidth:1, padding:12,
+                    callbacks: {
+                        label: item => ` ${item.dataset.label}: $${Number(item.raw).toFixed(4)}`
+                    }
+                }
+            },
+            scales: {
+                x: { grid:{color:'rgba(0,0,0,0.04)'}, ticks:{color:'#6b7280',font:{size:11},maxRotation:45,autoSkip:true,maxTicksLimit:14} },
+                y: { grid:{color:'rgba(0,0,0,0.04)'}, ticks:{color:'#6b7280',font:{size:11},callback:v=>'$'+Number(v).toFixed(4)} }
+            }
+        }
+    });
+
+    const tbody = document.getElementById('cmpSummaryBody');
+    tbody.innerHTML = '';
+    seriesList.forEach((s, i) => {
+        const avg  = s.prices.length ? s.prices.reduce((a,b)=>a+b,0)/s.prices.length : 0;
+        const first = s.prices[0], last = s.prices[s.prices.length-1];
+        let trend = '—', trendCls = 'flat';
+        if (first && last && first !== last) {
+            const pct = ((last - first) / first * 100).toFixed(1);
+            trendCls  = pct >= 0 ? 'up' : 'dn';
+            trend = `${pct >= 0 ? '▲' : '▼'} ${pct}%`;
+        }
+        tbody.innerHTML += `<tr>
+            <td><span class="cmp-swatch" style="background:${CMP_COLORS[i % CMP_COLORS.length]};"></span>${escHtml(s.label)}</td>
+            <td style="font-size:.75rem;color:var(--mp-muted);">${escHtml(s.priceType || '—')}</td>
+            <td style="font-family:monospace;font-weight:700;">$${avg.toFixed(4)}</td>
+            <td style="font-family:monospace;">$${s.minP === Infinity ? '—' : s.minP.toFixed(4)}</td>
+            <td style="font-family:monospace;">$${s.maxP === -Infinity ? '—' : s.maxP.toFixed(4)}</td>
+            <td>${s.cnt.toLocaleString()}</td>
+            <td><span class="cmp-delta ${trendCls}">${trend}</span></td>
+        </tr>`;
+    });
+
+    const spreadCard = document.getElementById('cmpSpreadCard');
+    if (seriesList.length === 2) {
+        spreadCard.style.display = 'block';
+        const s0 = seriesList[0], s1 = seriesList[1];
+        const spreadData = allDates.map(d => {
+            const v0 = s0.dates[d], v1 = s1.dates[d];
+            return (v0 != null && v1 != null) ? parseFloat((v0 - v1).toFixed(4)) : null;
+        });
+        document.getElementById('cmpSpreadLabel').textContent = `${s0.label} − ${s1.label}`;
+        const ctx2 = document.getElementById('cmpSpreadChart').getContext('2d');
+        if (_cmpSpread) _cmpSpread.destroy();
+        _cmpSpread = new Chart(ctx2, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Difference',
+                    data:  spreadData,
+                    borderColor: '#0891b2',
+                    backgroundColor: 'rgba(8,145,178,0.07)',
+                    borderWidth: 2,
+                    pointRadius: 2,
+                    fill: true,
+                    tension: 0.4,
+                    spanGaps: true,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend:{display:false}, tooltip:{ backgroundColor:'rgba(255,255,255,.97)', titleColor:'#1f2937', bodyColor:'#374151', borderColor:'#e5e7eb', borderWidth:1, padding:10, callbacks:{label:item=>` Diff: $${Number(item.raw).toFixed(4)}`}} },
+                scales: {
+                    x: { grid:{color:'rgba(0,0,0,.03)'}, ticks:{color:'#6b7280',font:{size:10},maxTicksLimit:12,autoSkip:true} },
+                    y: { grid:{color:'rgba(0,0,0,.03)'}, ticks:{color:'#6b7280',font:{size:10},callback:v=>'$'+Number(v).toFixed(4)} }
+                }
+            }
+        });
+    } else {
+        spreadCard.style.display = 'none';
+    }
+}
+
+function toggleCmpChartType() {
+    _cmpChartType = _cmpChartType === 'line' ? 'bar' : 'line';
+    const btn = document.getElementById('cmpChartTypeBtn');
+    btn.innerHTML = _cmpChartType === 'line'
+        ? '<span class="ms" style="font-size:.9rem;">bar_chart</span> Switch to Bar'
+        : '<span class="ms" style="font-size:.9rem;">show_chart</span> Switch to Line';
+    if (_cmpLastData) renderCmpCharts(_cmpLastData);
+}
+
+function clearComparison() {
+    _cmpSelections = { commodity:[], market:[], country:[] };
+    ['cmp_com_chips','cmp_mkt_chips','cmp_cty_chips'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.querySelectorAll('.cmp-chip').forEach(c=>c.remove()); }
+    });
+    ['cmp_com_hint','cmp_mkt_hint','cmp_cty_hint'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.style.display = 'inline';
+    });
+    document.getElementById('cmpResults').style.display = 'none';
+    document.getElementById('cmpEmpty').style.display   = 'block';
+    document.getElementById('cmpStatus').textContent    = '';
+    _cmpLastData = null;
 }
 
 // ─────────────────────────────────────────────────────────────
