@@ -1,5 +1,8 @@
 <?php
 // user_header.php - Reusable header and sidebar for user pages
+// IMPORTANT: this must be the very first line, before any other output or session logic.
+require_once __DIR__ . '/includes/auto_translate.php';
+
 if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
@@ -10,6 +13,22 @@ if (!isset($_SESSION['user_logged_in'])) {
     exit;
 }
 
+// Include database config if $con doesn't exist
+if (!isset($con)) {
+    $configPath = __DIR__ . '/../admin/includes/config.php';
+    if (file_exists($configPath)) {
+        require_once $configPath;
+    }
+}
+
+// Translation manager (for language metadata used in the switcher UI only —
+// the actual page translation happens automatically via auto_translate.php)
+require_once __DIR__ . '/includes/TranslationManager.php';
+$translator       = TranslationManager::getInstance($con ?? null);
+$current_lang     = $translator->getCurrentLanguage();
+$lang_meta        = $translator->getLanguageMetadata();
+$available_langs  = $translator->getAvailableLanguages();
+
 // Get user info
 $user_name = $_SESSION['user_name'] ?? 'User Profile';
 $subscription_type = $_SESSION['subscription_type'] ?? 'Free';
@@ -17,7 +36,7 @@ $subscription_display = ucfirst(str_replace('_', ' ', $subscription_type));
 $current_page = basename($_SERVER['PHP_SELF']);
 ?>
 <!DOCTYPE html>
-<html class="light" lang="en">
+<html class="light" lang="<?= htmlspecialchars($current_lang) ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -282,10 +301,38 @@ body { font-family:'Inter',sans-serif; }
     margin-left: auto;
 }
 .ratin-lang-option.ratin-lang-active .ratin-lang-native { color: #2a6b2c; }
+
+/* ── Translation loading indicator (shown briefly during page reload) ── */
+#ratin-lang-loading {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(249,249,249,0.85);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+}
+#ratin-lang-loading.active { display: flex; }
+.ratin-lang-spinner {
+    width: 36px; height: 36px;
+    border: 3px solid #e2e2e2;
+    border-top-color: #800000;
+    border-radius: 50%;
+    animation: ratinSpin 0.8s linear infinite;
+}
+@keyframes ratinSpin { to { transform: rotate(360deg); } }
 </style>
 </head>
 
 <body class="bg-background text-on-background min-h-screen">
+
+<!-- Language switch loading overlay -->
+<div id="ratin-lang-loading">
+    <div class="ratin-lang-spinner"></div>
+    <span style="font-size:13px;color:#41493e;font-family:'Inter',sans-serif;">Switching language…</span>
+</div>
 
 <!-- Mobile overlay -->
 <div id="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -301,8 +348,8 @@ body { font-family:'Inter',sans-serif; }
     </div>
 
     <div class="px-6 mb-4">
-        <h1 class="text-headline-md font-headline-md font-bold text-on-primary text-center" data-i18n="header.title">RATIN Analytics</h1>
-        <p class="font-body-md text-body-md text-primary-fixed opacity-80 text-center" data-i18n="header.platform">Agricultural Data Platform</p>
+        <h1 class="text-headline-md font-headline-md font-bold text-on-primary text-center">RATIN Analytics</h1>
+        <p class="font-body-md text-body-md text-primary-fixed opacity-80 text-center">Agricultural Data Platform</p>
     </div>
 
     <div class="flex-grow sidebar-scroll">
@@ -312,56 +359,56 @@ body { font-family:'Inter',sans-serif; }
                 <li>
                     <a href="http://ratin.net/" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">language</span>
-                        <span class="font-body-md text-body-md" data-i18n="nav.website">Website</span>
+                        <span class="font-body-md text-body-md">Website</span>
                     </a>
                 </li>
                 <!-- Articles -->
                 <li>
                     <a href="articles.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">article</span>
-                        <span class="font-body-md text-body-md" data-i18n="nav.articles">Articles</span>
+                        <span class="font-body-md text-body-md">Articles</span>
                     </a>
                 </li>
                 <!-- Insights -->
                 <li>
                     <a href="insights.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">insights</span>
-                        <span class="font-body-md text-body-md" data-i18n="nav.insights">Insights</span>
+                        <span class="font-body-md text-body-md">Insights</span>
                     </a>
                 </li>
                 <!-- GrainWatch -->
                 <li>
                     <a href="grainwatch.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">monitoring</span>
-                        <span class="font-body-md text-body-md" data-i18n="nav.grainwatch">GrainWatch</span>
+                        <span class="font-body-md text-body-md">GrainWatch</span>
                     </a>
                 </li>
                 <!-- Market Prices -->
                 <li>
-                    <a href="marketprices.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
+                    <a href="marketprices.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg <?= ($current_page == 'marketprices.php') ? 'bg-white/20' : '' ?>">
                         <span class="material-symbols-outlined">trending_up</span>
-                        <span class="font-body-md text-body-md" data-i18n="nav.marketprices">Market Prices</span>
+                        <span class="font-body-md text-body-md">Market Prices</span>
                     </a>
                 </li>
                 <!-- XBT Volume -->
                 <li>
                     <a href="xbt_volume.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">swap_horiz</span>
-                        <span class="font-body-md text-body-md" data-i18n="nav.xbtvolume">XBT Volume</span>
+                        <span class="font-body-md text-body-md">XBT Volume</span>
                     </a>
                 </li>
                 <!-- Miller Prices -->
                 <li>
                     <a href="miller_prices.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg">
                         <span class="material-symbols-outlined">factory</span>
-                        <span class="font-body-md text-body-md" data-i18n="nav.millerprices">Miller Prices</span>
+                        <span class="font-body-md text-body-md">Miller Prices</span>
                     </a>
                 </li>
                 <!-- Predictive Analysis -->
                 <li>
                     <a href="predictive_analysis.php" class="flex items-center gap-3 px-4 py-3 text-on-primary hover:bg-white/10 transition-all rounded-lg <?= ($current_page == 'predictive_analysis.php') ? 'bg-white/20' : '' ?>">
                         <span class="material-symbols-outlined">analytics</span>
-                        <span class="font-body-md text-body-md" data-i18n="nav.predictive">Predictive Analysis</span>
+                        <span class="font-body-md text-body-md">Predictive Analysis</span>
                     </a>
                 </li>
             </ul>
@@ -372,7 +419,7 @@ body { font-family:'Inter',sans-serif; }
     <div class="px-4 mb-2">
         <a href="user_settings.php" class="settings-btn flex items-center gap-3 px-4 py-2.5 rounded-lg text-primary-fixed hover:text-white transition-all">
             <span class="material-symbols-outlined text-lg">settings</span>
-            <span class="font-body-md text-body-md" data-i18n="nav.settings">Settings</span>
+            <span class="font-body-md text-body-md">Settings</span>
         </a>
     </div>
 
@@ -380,7 +427,7 @@ body { font-family:'Inter',sans-serif; }
     <div class="px-4 mb-2">
         <a href="logout.php" class="logout-btn flex items-center justify-center gap-2 w-full py-2.5 rounded-lg text-white font-medium transition-all">
             <span class="material-symbols-outlined text-lg">logout</span>
-            <span data-i18n="nav.logout">Logout</span>
+            <span>Logout</span>
         </a>
     </div>
 </aside>
@@ -397,7 +444,7 @@ body { font-family:'Inter',sans-serif; }
         <!-- Home button -->
         <a href="landing_page.php" class="home-btn flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-on-surface-variant hover:text-maroon transition-all group" title="Go to Dashboard">
             <span class="material-symbols-outlined text-xl group-hover:scale-110 transition-transform">home</span>
-            <span class="text-sm font-medium hidden sm:inline-block group-hover:text-maroon" data-i18n="header.dashboard">Dashboard</span>
+            <span class="text-sm font-medium hidden sm:inline-block group-hover:text-maroon">Dashboard</span>
         </a>
     </div>
 
@@ -406,23 +453,20 @@ body { font-family:'Inter',sans-serif; }
         <!-- ── Language Switcher ── -->
         <div id="ratin-lang-wrap">
             <button id="ratin-lang-btn" onclick="ratinToggleLangDropdown()" aria-label="Switch language">
-                <span id="lang-active-flag">🇬🇧</span>
-                <span id="lang-active-label">EN</span>
+                <span id="lang-active-flag"><?= htmlspecialchars($lang_meta['flag'] ?? '🇬🇧') ?></span>
+                <span id="lang-active-label"><?= htmlspecialchars(strtoupper($current_lang)) ?></span>
                 <span class="material-symbols-outlined" id="ratin-lang-chevron">expand_more</span>
             </button>
             <div id="ratin-lang-dropdown">
-                <div class="ratin-lang-option ratin-lang-active" data-lang="en" onclick="ratinApplyLang('en')">
-                    <span>🇬🇧</span><span>English</span><span class="ratin-lang-native">English</span>
-                </div>
-                <div class="ratin-lang-option" data-lang="sw" onclick="ratinApplyLang('sw')">
-                    <span>🇰🇪</span><span>Swahili</span><span class="ratin-lang-native">Kiswahili</span>
-                </div>
-                <div class="ratin-lang-option" data-lang="fr" onclick="ratinApplyLang('fr')">
-                    <span>🇫🇷</span><span>French</span><span class="ratin-lang-native">Français</span>
-                </div>
-                <div class="ratin-lang-option" data-lang="am" onclick="ratinApplyLang('am')">
-                    <span>🇪🇹</span><span>Amharic</span><span class="ratin-lang-native">አማርኛ</span>
-                </div>
+                <?php foreach ($available_langs as $code => $lang): ?>
+                    <div class="ratin-lang-option <?= $code === $current_lang ? 'ratin-lang-active' : '' ?>"
+                         data-lang="<?= htmlspecialchars($code) ?>"
+                         onclick="ratinApplyLang('<?= htmlspecialchars($code) ?>')">
+                        <span><?= htmlspecialchars($lang['flag']) ?></span>
+                        <span><?= htmlspecialchars($lang['name']) ?></span>
+                        <span class="ratin-lang-native"><?= htmlspecialchars($lang['native_name']) ?></span>
+                    </div>
+                <?php endforeach; ?>
             </div>
         </div>
 
@@ -479,93 +523,30 @@ function toggleNestedDropdown(el) {
 }
 window.addEventListener('resize', () => { if (window.innerWidth > 768) closeSidebar(); });
 
-/* ── Language switcher ────────────────────── */
-const RATIN_TRANSLATIONS = {
-    en: {
-        "header.title":     "RATIN Analytics",
-        "header.platform":  "Agricultural Data Platform",
-        "header.dashboard": "Dashboard",
-        "nav.website":      "Website",
-        "nav.articles":     "Articles",
-        "nav.insights":     "Insights",
-        "nav.grainwatch":   "GrainWatch",
-        "nav.marketprices": "Market Prices",
-        "nav.xbtvolume":    "XBT Volume",
-        "nav.millerprices": "Miller Prices",
-        "nav.predictive":   "Predictive Analysis",
-        "nav.settings":     "Settings",
-        "nav.logout":       "Logout",
-    },
-    sw: {
-        "header.title":     "RATIN Analytics",
-        "header.platform":  "Jukwaa la Data ya Kilimo",
-        "header.dashboard": "Dashibodi",
-        "nav.website":      "Tovuti",
-        "nav.articles":     "Makala",
-        "nav.insights":     "Maarifa",
-        "nav.grainwatch":   "GrainWatch",
-        "nav.marketprices": "Bei za Soko",
-        "nav.xbtvolume":    "Kiasi cha XBT",
-        "nav.millerprices": "Bei za Msagaji",
-        "nav.predictive":   "Uchambuzi wa Utabiri",
-        "nav.settings":     "Mipangilio",
-        "nav.logout":       "Ondoka",
-    },
-    fr: {
-        "header.title":     "RATIN Analytics",
-        "header.platform":  "Plateforme de Données Agricoles",
-        "header.dashboard": "Tableau de Bord",
-        "nav.website":      "Site Web",
-        "nav.articles":     "Articles",
-        "nav.insights":     "Perspectives",
-        "nav.grainwatch":   "GrainWatch",
-        "nav.marketprices": "Prix du Marché",
-        "nav.xbtvolume":    "Volume XBT",
-        "nav.millerprices": "Prix des Meuniers",
-        "nav.predictive":   "Analyse Prédictive",
-        "nav.settings":     "Paramètres",
-        "nav.logout":       "Déconnexion",
-    },
-    am: {
-        "header.title":     "RATIN Analytics",
-        "header.platform":  "የግብርና ዳታ መድረክ",
-        "header.dashboard": "ዳሽቦርድ",
-        "nav.website":      "ድህረ ገጽ",
-        "nav.articles":     "ጽሑፎች",
-        "nav.insights":     "ግንዛቤዎች",
-        "nav.grainwatch":   "GrainWatch",
-        "nav.marketprices": "የገበያ ዋጋዎች",
-        "nav.xbtvolume":    "XBT መጠን",
-        "nav.millerprices": "የወፍጮ ዋጋዎች",
-        "nav.predictive":   "ትንበያ ትንተና",
-        "nav.settings":     "ቅንብሮች",
-        "nav.logout":       "ውጣ",
-    }
-};
-
-const LANG_META = {
-    en: { flag: "🇬🇧", label: "EN" },
-    sw: { flag: "🇰🇪", label: "SW" },
-    fr: { flag: "🇫🇷", label: "FR" },
-    am: { flag: "🇪🇹", label: "AM" },
-};
-
+/* ── Language switcher ──────────────────────
+   Translation of the actual page content happens server-side
+   (via includes/auto_translate.php on every request). This just
+   tells the server which language to use, then reloads. ── */
 function ratinApplyLang(lang) {
-    const t = RATIN_TRANSLATIONS[lang] || RATIN_TRANSLATIONS.en;
-    document.querySelectorAll('[data-i18n]').forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
+    document.getElementById('ratin-lang-loading').classList.add('active');
+    fetch('switch_language.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'lang=' + encodeURIComponent(lang)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            document.getElementById('ratin-lang-loading').classList.remove('active');
+            alert('Could not switch language. Please try again.');
+        }
+    })
+    .catch(() => {
+        document.getElementById('ratin-lang-loading').classList.remove('active');
+        alert('Network error while switching language.');
     });
-    localStorage.setItem('ratin_lang', lang);
-    const meta = LANG_META[lang];
-    document.getElementById('lang-active-flag').textContent  = meta.flag;
-    document.getElementById('lang-active-label').textContent = meta.label;
-    document.querySelectorAll('.ratin-lang-option').forEach(o => {
-        o.classList.toggle('ratin-lang-active', o.dataset.lang === lang);
-    });
-    // Close dropdown
-    document.getElementById('ratin-lang-dropdown').classList.remove('ratin-lang-open');
-    document.getElementById('ratin-lang-chevron').style.transform = '';
 }
 
 function ratinToggleLangDropdown() {
@@ -576,7 +557,7 @@ function ratinToggleLangDropdown() {
     c.style.transform = open ? '' : 'rotate(180deg)';
 }
 
-// Close on outside click
+// Close dropdown on outside click
 document.addEventListener('click', e => {
     const wrap = document.getElementById('ratin-lang-wrap');
     if (wrap && !wrap.contains(e.target)) {
@@ -584,10 +565,4 @@ document.addEventListener('click', e => {
         document.getElementById('ratin-lang-chevron').style.transform = '';
     }
 });
-
-// Restore saved language on every page load
-(function() {
-    const saved = localStorage.getItem('ratin_lang') || 'en';
-    ratinApplyLang(saved);
-})();
 </script>
