@@ -1,5 +1,8 @@
 <?php
 // user_header_no_sidebar.php - Reusable header for user pages (no sidebar)
+// IMPORTANT: must be the very first line before any output
+require_once __DIR__ . '/includes/auto_translate.php';
+
 if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
@@ -10,6 +13,21 @@ if (!isset($_SESSION['user_logged_in'])) {
     exit;
 }
 
+// Include database config if $con doesn't exist
+if (!isset($con)) {
+    $configPath = __DIR__ . '/../admin/includes/config.php';
+    if (file_exists($configPath)) {
+        require_once $configPath;
+    }
+}
+
+// Translation manager
+require_once __DIR__ . '/includes/TranslationManager.php';
+$translator = TranslationManager::getInstance($con ?? null);
+$current_lang = $translator->getCurrentLanguage();
+$lang_meta = $translator->getLanguageMetadata();
+$available_langs = $translator->getAvailableLanguages();
+
 // Get user info
 $user_name = $_SESSION['user_name'] ?? 'User Profile';
 $subscription_type = $_SESSION['subscription_type'] ?? 'Free';
@@ -17,7 +35,7 @@ $subscription_display = ucfirst(str_replace('_', ' ', $subscription_type));
 $current_page = basename($_SERVER['PHP_SELF']);
 ?>
 <!DOCTYPE html>
-<html class="light" lang="en">
+<html class="light" lang="<?= htmlspecialchars($current_lang) ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -121,11 +139,8 @@ tailwind.config = {
 }
 body { font-family:'Inter',sans-serif; }
 
-/* User dropdown styles */
-.user-dropdown {
-    position: relative;
-    display: inline-block;
-}
+/* ── User dropdown ───────────────────────── */
+.user-dropdown { position: relative; display: inline-block; }
 .dropdown-menu {
     position: absolute;
     top: calc(100% + 8px);
@@ -156,25 +171,17 @@ body { font-family:'Inter',sans-serif; }
     transition: background 0.2s ease;
     font-size: 14px;
 }
-.dropdown-item:hover {
-    background: #f3f3f3;
-}
-.dropdown-item:first-child {
-    border-radius: 12px 12px 0 0;
-}
+.dropdown-item:hover { background: #f3f3f3; }
+.dropdown-item:first-child { border-radius: 12px 12px 0 0; }
 .dropdown-item:last-child {
     border-radius: 0 0 12px 12px;
     border-top: 1px solid #e2e2e2;
     color: #800000;
 }
-.dropdown-item:last-child:hover {
-    background: #ffdad6;
-}
-.dropdown-divider {
-    height: 1px;
-    background: #e2e2e2;
-    margin: 4px 0;
-}
+.dropdown-item:last-child:hover { background: #ffdad6; }
+.dropdown-divider { height: 1px; background: #e2e2e2; margin: 4px 0; }
+
+/* ── Subscription badge ───────────────────── */
 .subscription-badge {
     font-size: 10px;
     padding: 2px 8px;
@@ -182,42 +189,152 @@ body { font-family:'Inter',sans-serif; }
     font-weight: 600;
     display: inline-block;
 }
-.subscription-premium {
-    background: linear-gradient(135deg, #ffd700, #ffb347);
-    color: #5d3a00;
+.subscription-premium      { background: linear-gradient(135deg, #ffd700, #ffb347); color: #5d3a00; }
+.subscription-professional { background: linear-gradient(135deg, #4a90e2, #357abd); color: white; }
+.subscription-basic        { background: linear-gradient(135deg, #5cb85c, #449d44); color: white; }
+.subscription-free         { background: #e0e0e0; color: #666; }
+
+/* ── Language switcher ────────────────────── */
+#ratin-lang-wrap { position: relative; }
+
+#ratin-lang-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 0.5px solid rgba(65,73,62,0.35);
+    background: transparent;
+    color: #41493e;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+    transition: background .15s, border-color .15s;
 }
-.subscription-professional {
-    background: linear-gradient(135deg, #4a90e2, #357abd);
-    color: white;
+#ratin-lang-btn:hover {
+    background: rgba(128,0,0,0.06);
+    border-color: rgba(128,0,0,0.3);
+    color: #800000;
 }
-.subscription-basic {
-    background: linear-gradient(135deg, #5cb85c, #449d44);
-    color: white;
+
+#ratin-lang-chevron {
+    font-size: 16px;
+    transition: transform .2s ease;
+    color: #717a6d;
+    font-family: 'Material Symbols Outlined';
+    font-style: normal;
 }
-.subscription-free {
-    background: #e0e0e0;
-    color: #666;
+
+#ratin-lang-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: #ffffff;
+    border-radius: 10px;
+    border: 0.5px solid #d0d0d0;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.10);
+    min-width: 180px;
+    overflow: hidden;
+    z-index: 999;
 }
+#ratin-lang-dropdown.ratin-lang-open { display: block; }
+
+.ratin-lang-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    color: #1a1c1c;
+    transition: background .1s;
+}
+.ratin-lang-option:hover { background: #f3f3f3; }
+.ratin-lang-option.ratin-lang-active {
+    background: #e8f0e8;
+    color: #00450d;
+    font-weight: 500;
+}
+
+.ratin-lang-native {
+    font-size: 11px;
+    color: #717a6d;
+    margin-left: auto;
+}
+.ratin-lang-option.ratin-lang-active .ratin-lang-native { color: #2a6b2c; }
+
+/* ── Language switch loading overlay ─────── */
+#ratin-lang-loading {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(249,249,249,0.85);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+}
+#ratin-lang-loading.active { display: flex; }
+.ratin-lang-spinner {
+    width: 36px; height: 36px;
+    border: 3px solid #e2e2e2;
+    border-top-color: #800000;
+    border-radius: 50%;
+    animation: ratinSpin 0.8s linear infinite;
+}
+@keyframes ratinSpin { to { transform: rotate(360deg); } }
 </style>
 </head>
 
 <body class="bg-background text-on-background min-h-screen">
 
+<!-- Language switch loading overlay -->
+<div id="ratin-lang-loading">
+    <div class="ratin-lang-spinner"></div>
+    <span style="font-size:13px;color:#41493e;font-family:'Inter',sans-serif;">Switching language…</span>
+</div>
+
 <!-- Top Navigation Bar -->
 <header class="fixed top-0 left-0 right-0 h-16 flex justify-between items-center px-4 md:px-8 bg-surface shadow-sm z-50 border-b border-maroon/20">
+
+    <!-- Left: Logo -->
     <div class="flex items-center gap-3">
-        <a href="dashboard.php" class="flex items-center gap-2">
+        <a href="landing_page.php" class="flex items-center gap-2">
             <img src="../base/img/Ratin-logo-1.png" alt="RATIN Logo" class="h-10 w-auto object-contain">
             <span class="font-headline-md text-headline-md text-primary hidden sm:inline-block">RATIN Analytics</span>
         </a>
     </div>
 
-    <div class="flex items-center gap-4">
+    <!-- Right: Language switcher + user dropdown -->
+    <div class="flex items-center gap-3">
 
-        
+        <!-- ── Language Switcher ── -->
+        <div id="ratin-lang-wrap">
+            <button id="ratin-lang-btn" onclick="ratinToggleLangDropdown()" aria-label="Switch language">
+                <span id="lang-active-flag"><?= htmlspecialchars($lang_meta['flag'] ?? '🇬🇧') ?></span>
+                <span id="lang-active-label"><?= htmlspecialchars(strtoupper($current_lang)) ?></span>
+                <span class="material-symbols-outlined" id="ratin-lang-chevron">expand_more</span>
+            </button>
+            <div id="ratin-lang-dropdown">
+                <?php foreach ($available_langs as $code => $lang): ?>
+                    <div class="ratin-lang-option <?= $code === $current_lang ? 'ratin-lang-active' : '' ?>"
+                         data-lang="<?= htmlspecialchars($code) ?>"
+                         onclick="ratinApplyLang('<?= htmlspecialchars($code) ?>')">
+                        <span><?= htmlspecialchars($lang['flag']) ?></span>
+                        <span><?= htmlspecialchars($lang['name']) ?></span>
+                        <span class="ratin-lang-native"><?= htmlspecialchars($lang['native_name']) ?></span>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+
         <div class="h-8 w-px bg-outline-variant hidden md:block"></div>
-        
-        <!-- User Dropdown -->
+
+        <!-- ── User Dropdown ── -->
         <div class="user-dropdown" id="userDropdown">
             <div class="flex items-center gap-3 cursor-pointer" onclick="toggleUserDropdown()">
                 <div class="text-right hidden sm:block">
@@ -234,7 +351,7 @@ body { font-family:'Inter',sans-serif; }
                 </div>
                 <span class="material-symbols-outlined text-on-surface-variant hidden sm:inline-block">expand_more</span>
             </div>
-            
+
             <div class="dropdown-menu">
                 <a href="user_settings.php" class="dropdown-item">
                     <span class="material-symbols-outlined">settings</span>
@@ -253,24 +370,55 @@ body { font-family:'Inter',sans-serif; }
 <main class="pt-20 px-4 md:px-8 pb-8 max-w-7xl mx-auto">
 
 <script>
+/* ── User dropdown ────────────────────────── */
 function toggleUserDropdown() {
-    const dropdown = document.getElementById('userDropdown');
-    dropdown.classList.toggle('active');
+    document.getElementById('userDropdown').classList.toggle('active');
 }
-
-// Close dropdown when clicking outside
-document.addEventListener('click', function(event) {
-    const dropdown = document.getElementById('userDropdown');
-    if (!dropdown.contains(event.target)) {
-        dropdown.classList.remove('active');
-    }
+document.addEventListener('click', function(e) {
+    const d = document.getElementById('userDropdown');
+    if (!d.contains(e.target)) d.classList.remove('active');
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') document.getElementById('userDropdown').classList.remove('active');
 });
 
-// Close dropdown on escape key
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        const dropdown = document.getElementById('userDropdown');
-        dropdown.classList.remove('active');
+/* ── Language switcher ────────────────────── */
+function ratinApplyLang(lang) {
+    document.getElementById('ratin-lang-loading').classList.add('active');
+    fetch('switch_language.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'lang=' + encodeURIComponent(lang)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            document.getElementById('ratin-lang-loading').classList.remove('active');
+            alert('Could not switch language. Please try again.');
+        }
+    })
+    .catch(() => {
+        document.getElementById('ratin-lang-loading').classList.remove('active');
+        alert('Network error while switching language.');
+    });
+}
+
+function ratinToggleLangDropdown() {
+    const d = document.getElementById('ratin-lang-dropdown');
+    const c = document.getElementById('ratin-lang-chevron');
+    const open = d.classList.contains('ratin-lang-open');
+    d.classList.toggle('ratin-lang-open', !open);
+    c.style.transform = open ? '' : 'rotate(180deg)';
+}
+
+// Close dropdown on outside click
+document.addEventListener('click', function(e) {
+    const wrap = document.getElementById('ratin-lang-wrap');
+    if (wrap && !wrap.contains(e.target)) {
+        document.getElementById('ratin-lang-dropdown').classList.remove('ratin-lang-open');
+        document.getElementById('ratin-lang-chevron').style.transform = '';
     }
 });
 </script>
