@@ -296,6 +296,9 @@ body { font-family:'Inter',sans-serif; }
                         <li><a href="https://ratin.net/home/" target="_blank"  class="submenu-item flex items-center gap-3 px-4 py-2 text-primary-fixed hover:text-white transition-all rounded-lg text-sm"><span class="material-symbols-outlined text-sm">language</span>WebSite</a></li>
                         <li><a href="../frontend/marketprices.php"             class="submenu-item flex items-center gap-3 px-4 py-2 text-primary-fixed hover:text-white transition-all rounded-lg text-sm"><span class="material-symbols-outlined text-sm">show_chart</span>Data display</a></li>
                         <li><a href="../news-system/index.php"                 class="submenu-item flex items-center gap-3 px-4 py-2 text-primary-fixed hover:text-white transition-all rounded-lg text-sm"><span class="material-symbols-outlined text-sm">news</span>Website manager</a></li>
+                        <!-- NEW: User Feedback Dashboard -->
+                        <li><a href="../admin/user_feedback_dashboard.php"     class="submenu-item flex items-center gap-3 px-4 py-2 text-primary-fixed hover:text-white transition-all rounded-lg text-sm"><span class="material-symbols-outlined text-sm">feedback</span>User Feedback</a></li>
+                        <li><a href="../frontend/predictive_analysis.php"     class="submenu-item flex items-center gap-3 px-4 py-2 text-primary-fixed hover:text-white transition-all rounded-lg text-sm"><span class="material-symbols-outlined text-sm">monitoring </span>Predictive Analysis</a></li>
                     </ul>
                 </li>
 
