@@ -370,6 +370,120 @@ while ($row = $countries_result->fetch_assoc()) {
 }
 
 // ============================================================
+// ENUMERATOR SUMMARY (Excel-style: Market Days / Submissions /
+// Commodities, broken out by calendar week Mon–Sun)
+//
+// Definitions (matched against the enumerator's own Excel workbook):
+//   Market Days  = distinct days the enumerator had ANY submission
+//                  in that week
+//   Submissions  = total number of price rows (Wholesale + Retail
+//                  entries) submitted in that week
+//   Commodities  = sum, across each day the enumerator submitted,
+//                  of the distinct commodities recorded that day
+//                  (mirrors how the workbook's Raw Data tab is
+//                  rolled up day-by-day, not a week-wide distinct
+//                  count)
+// ============================================================
+$summary_where = "WHERE 1=1";
+$summary_params = [];
+$summary_types = "";
+
+if (!empty($start_date) && !empty($end_date)) {
+    $summary_where .= " AND DATE(date_posted) BETWEEN ? AND ?";
+    $summary_params[] = $start_date;
+    $summary_params[] = $end_date;
+    $summary_types  .= "ss";
+}
+if ($filter_country !== '') {
+    $summary_where .= " AND country_admin_0 = ?";
+    $summary_params[] = $filter_country;
+    $summary_types  .= "s";
+}
+
+$summary_sql = "SELECT postedby, DATE(date_posted) as sub_date, commodity
+    FROM market_prices
+    $summary_where
+    ORDER BY postedby, sub_date";
+$summary_stmt = $con->prepare($summary_sql);
+if (!empty($summary_params)) $summary_stmt->bind_param($summary_types, ...$summary_params);
+$summary_stmt->execute();
+$summary_rows = $summary_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$summary_stmt->close();
+
+// Step 1: roll every row up to enumerator + day
+$day_agg = []; // [enumerator][date] => ['rows' => n, 'commodities' => [id => true]]
+foreach ($summary_rows as $r) {
+    $enum = trim((string)$r['postedby']) !== '' ? $r['postedby'] : 'Unknown';
+    $date = $r['sub_date'];
+    if (!isset($day_agg[$enum][$date])) {
+        $day_agg[$enum][$date] = ['rows' => 0, 'commodities' => []];
+    }
+    $day_agg[$enum][$date]['rows']++;
+    if ($r['commodity'] !== null && $r['commodity'] !== '') {
+        $day_agg[$enum][$date]['commodities'][$r['commodity']] = true;
+    }
+}
+
+// Step 2: figure out which Monday-start weeks fall within the selected range
+function mp_monday_of($dateStr) {
+    $d = new DateTime($dateStr);
+    $d->modify('monday this week');
+    return $d->format('Y-m-d');
+}
+
+$week_buckets = []; // 'Y-m-d' (Monday) => display label
+if (!empty($start_date) && !empty($end_date)) {
+    $cursor = new DateTime(mp_monday_of($start_date));
+    $range_end = new DateTime($end_date);
+    while ($cursor <= $range_end) {
+        $wk_start_str = $cursor->format('Y-m-d');
+        $wk_end = (clone $cursor)->modify('+6 days');
+        $week_buckets[$wk_start_str] = date('M j', strtotime($wk_start_str)) . '–' . $wk_end->format('M j');
+        $cursor->modify('+7 days');
+    }
+}
+$week_keys = array_keys($week_buckets);
+
+// Step 3: pivot enumerator x week
+$pivot_final = [];
+$grand_by_week = [];
+$grand_total = ['days' => 0, 'subs' => 0, 'commodities' => 0];
+foreach ($week_keys as $wk) $grand_by_week[$wk] = ['days' => 0, 'subs' => 0, 'commodities' => 0];
+
+foreach ($day_agg as $enum => $dates) {
+    $row = ['name' => $enum, 'weeks' => [], 'total' => ['days' => 0, 'subs' => 0, 'commodities' => 0]];
+    foreach ($week_keys as $wk) $row['weeks'][$wk] = ['days' => 0, 'subs' => 0, 'commodities' => 0];
+
+    foreach ($dates as $date => $info) {
+        $wk = mp_monday_of($date);
+        if (!isset($row['weeks'][$wk])) continue; // outside the selected range
+        $row['weeks'][$wk]['days'] += 1;
+        $row['weeks'][$wk]['subs'] += $info['rows'];
+        $row['weeks'][$wk]['commodities'] += count($info['commodities']);
+    }
+
+    foreach ($week_keys as $wk) {
+        $row['total']['days'] += $row['weeks'][$wk]['days'];
+        $row['total']['subs'] += $row['weeks'][$wk]['subs'];
+        $row['total']['commodities'] += $row['weeks'][$wk]['commodities'];
+        $grand_by_week[$wk]['days'] += $row['weeks'][$wk]['days'];
+        $grand_by_week[$wk]['subs'] += $row['weeks'][$wk]['subs'];
+        $grand_by_week[$wk]['commodities'] += $row['weeks'][$wk]['commodities'];
+    }
+
+    // Skip enumerators with zero activity in range entirely (keeps table tight)
+    if ($row['total']['subs'] > 0 || $row['total']['days'] > 0) {
+        $grand_total['days'] += $row['total']['days'];
+        $grand_total['subs'] += $row['total']['subs'];
+        $grand_total['commodities'] += $row['total']['commodities'];
+        $pivot_final[] = $row;
+    }
+}
+
+// Most active enumerator first, same feel as the workbook
+usort($pivot_final, function ($a, $b) { return $b['total']['subs'] <=> $a['total']['subs']; });
+
+// ============================================================
 // FETCH AND GROUP DATA BY MARKET + COMMODITY + DATE
 // ============================================================
 $data_params = array_merge($params, [$limit, $offset]);
@@ -460,7 +574,18 @@ if ($date_preset == 'today') {
 
 .price-value{font-family:monospace;font-weight:700;font-size:.85rem}
 .commodity-name{font-weight:500;color:#1f2937}
+
+/* Tabs */
+.mp-tab-btn{color:#6b7280;border-color:transparent}
+.mp-tab-btn:hover{color:#800000}
+.mp-tab-btn.active{color:#800000;border-color:#800000}
+.tab-panel.hidden{display:none}
+
+/* Enumerator summary table */
+#summaryTable th, #summaryTable td{white-space:nowrap}
+#summaryTable td.sticky, #summaryTable th.sticky{z-index:5}
 </style>
+
 
 <div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
 <div class="max-w-7xl mx-auto">
@@ -481,7 +606,20 @@ if ($date_preset == 'today') {
         <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
     </div>
 
+    <!-- View Tabs -->
+    <div class="flex gap-2 mb-5 border-b border-gray-200">
+        <button id="tabBtnRecords" onclick="switchTab('records')"
+            class="mp-tab-btn active px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-all">
+            <span class="material-symbols-outlined text-base align-middle mr-1">receipt_long</span>Submissions
+        </button>
+        <button id="tabBtnSummary" onclick="switchTab('summary')"
+            class="mp-tab-btn px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-all">
+            <span class="material-symbols-outlined text-base align-middle mr-1">groups</span>Enumerator Summary
+        </button>
+    </div>
+
     <!-- Date Range Filter Bar -->
+
     <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
         <div class="flex flex-wrap gap-3 items-center">
             <span class="text-sm font-medium text-gray-700">Range:</span>
@@ -558,6 +696,9 @@ if ($date_preset == 'today') {
             </div>
         </div>
     </div>
+
+    <!-- ═══════════ RECORDS TAB PANEL ═══════════ -->
+    <div id="panelRecords" class="tab-panel">
 
     <!-- Search & Filters -->
     <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
@@ -724,6 +865,107 @@ if ($date_preset == 'today') {
         </div>
     </div>
 
+    </div><!-- /panelRecords -->
+
+    <!-- ═══════════ ENUMERATOR SUMMARY TAB PANEL ═══════════ -->
+    <div id="panelSummary" class="tab-panel hidden">
+        <div class="bg-white rounded-lg shadow-sm p-4 mb-3">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                    <h2 class="text-base font-semibold text-gray-800">Enumerator Submission Summary</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">
+                        Market Days, Submissions and Commodities per enumerator, broken down by week (Mon–Sun) ·
+                        <?= htmlspecialchars($date_range_display) ?>
+                    </p>
+                </div>
+                <button onclick="exportSummaryCsv()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 transition-all">
+                    <span class="material-symbols-outlined text-sm">download</span>Export Summary CSV
+                </button>
+            </div>
+        </div>
+
+        <?php if (empty($week_keys)): ?>
+            <div class="bg-white rounded-lg shadow-sm p-8 text-center text-gray-400">
+                <span class="material-symbols-outlined text-5xl text-gray-300 block">date_range</span>
+                <p class="text-sm mt-1">Select a valid date range above to see the weekly breakdown.</p>
+            </div>
+        <?php elseif (empty($pivot_final)): ?>
+            <div class="bg-white rounded-lg shadow-sm p-8 text-center text-gray-400">
+                <span class="material-symbols-outlined text-5xl text-gray-300 block">groups</span>
+                <p class="text-sm mt-1">No enumerator activity found for the selected date range.</p>
+            </div>
+        <?php else: ?>
+        <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs border-collapse" id="summaryTable">
+                    <thead>
+                        <tr class="bg-gray-50">
+                            <th rowspan="2" class="sticky left-0 bg-gray-50 px-3 py-2 text-left font-semibold text-gray-600 uppercase border-b border-r border-gray-200 align-bottom" style="min-width:170px;">Enumerator</th>
+                            <th colspan="<?= count($week_keys) + 1 ?>" class="px-2 py-1.5 text-center font-semibold text-purple-700 uppercase border-b border-l border-gray-200 bg-purple-50">Market Days</th>
+                            <th colspan="<?= count($week_keys) + 1 ?>" class="px-2 py-1.5 text-center font-semibold text-blue-700 uppercase border-b border-l border-gray-200 bg-blue-50">Submissions</th>
+                            <th colspan="<?= count($week_keys) + 1 ?>" class="px-2 py-1.5 text-center font-semibold text-green-700 uppercase border-b border-l border-gray-200 bg-green-50">Commodities</th>
+                        </tr>
+                        <tr class="bg-gray-50">
+                            <?php
+                            // Full, literal Tailwind class strings (dynamically concatenated
+                            // class names don't get picked up by Tailwind's JIT scanner).
+                            $mp_grp_week_bg  = ['purple' => 'bg-purple-50/40', 'blue' => 'bg-blue-50/40',  'green' => 'bg-green-50/40'];
+                            $mp_grp_total_bg = ['purple' => 'bg-purple-100',   'blue' => 'bg-blue-100',    'green' => 'bg-green-100'];
+                            foreach (['purple', 'blue', 'green'] as $grp): ?>
+                                <?php foreach ($week_buckets as $wk => $label): ?>
+                                    <th class="px-2 py-1.5 text-center font-medium text-gray-500 border-b border-l border-gray-200 whitespace-nowrap <?= $mp_grp_week_bg[$grp] ?>" title="<?= $wk ?>"><?= $label ?></th>
+                                <?php endforeach; ?>
+                                <th class="px-2 py-1.5 text-center font-bold text-gray-700 border-b border-l-2 border-gray-300 <?= $mp_grp_total_bg[$grp] ?>">Total</th>
+                            <?php endforeach; ?>
+                        </tr>
+                    </thead>
+
+                    <tbody class="divide-y divide-gray-100">
+                        <?php foreach ($pivot_final as $row): ?>
+                        <tr class="table-row-hover">
+                            <td class="sticky left-0 bg-white px-3 py-2 font-medium text-gray-800 border-r border-gray-200 whitespace-nowrap"><?= htmlspecialchars($row['name']) ?></td>
+                            <?php foreach ($week_keys as $wk): ?>
+                                <td class="px-2 py-2 text-center border-l border-gray-100 <?= $row['weeks'][$wk]['days'] === 0 ? 'text-gray-300' : 'text-gray-700' ?>"><?= $row['weeks'][$wk]['days'] ?></td>
+                            <?php endforeach; ?>
+                            <td class="px-2 py-2 text-center font-bold text-purple-700 border-l-2 border-gray-300 bg-purple-50/50"><?= $row['total']['days'] ?></td>
+                            <?php foreach ($week_keys as $wk): ?>
+                                <td class="px-2 py-2 text-center border-l border-gray-100 <?= $row['weeks'][$wk]['subs'] === 0 ? 'text-gray-300' : 'text-gray-700' ?>"><?= $row['weeks'][$wk]['subs'] ?></td>
+                            <?php endforeach; ?>
+                            <td class="px-2 py-2 text-center font-bold text-blue-700 border-l-2 border-gray-300 bg-blue-50/50"><?= $row['total']['subs'] ?></td>
+                            <?php foreach ($week_keys as $wk): ?>
+                                <td class="px-2 py-2 text-center border-l border-gray-100 <?= $row['weeks'][$wk]['commodities'] === 0 ? 'text-gray-300' : 'text-gray-700' ?>"><?= $row['weeks'][$wk]['commodities'] ?></td>
+                            <?php endforeach; ?>
+                            <td class="px-2 py-2 text-center font-bold text-green-700 border-l-2 border-gray-300 bg-green-50/50"><?= $row['total']['commodities'] ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                    <tfoot>
+                        <tr class="bg-gray-100 font-bold">
+                            <td class="sticky left-0 bg-gray-100 px-3 py-2 text-gray-800 border-r border-t-2 border-gray-300">TOTAL</td>
+                            <?php foreach ($week_keys as $wk): ?>
+                                <td class="px-2 py-2 text-center text-gray-800 border-l border-t-2 border-gray-300"><?= $grand_by_week[$wk]['days'] ?></td>
+                            <?php endforeach; ?>
+                            <td class="px-2 py-2 text-center text-purple-800 border-l-2 border-t-2 border-gray-300 bg-purple-100"><?= $grand_total['days'] ?></td>
+                            <?php foreach ($week_keys as $wk): ?>
+                                <td class="px-2 py-2 text-center text-gray-800 border-l border-t-2 border-gray-300"><?= $grand_by_week[$wk]['subs'] ?></td>
+                            <?php endforeach; ?>
+                            <td class="px-2 py-2 text-center text-blue-800 border-l-2 border-t-2 border-gray-300 bg-blue-100"><?= $grand_total['subs'] ?></td>
+                            <?php foreach ($week_keys as $wk): ?>
+                                <td class="px-2 py-2 text-center text-gray-800 border-l border-t-2 border-gray-300"><?= $grand_by_week[$wk]['commodities'] ?></td>
+                            <?php endforeach; ?>
+                            <td class="px-2 py-2 text-center text-green-800 border-l-2 border-t-2 border-gray-300 bg-green-100"><?= $grand_total['commodities'] ?></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+        <p class="text-[11px] text-gray-400 mt-2">
+            Market Days = distinct days with a submission that week · Submissions = total price rows submitted ·
+            Commodities = sum of distinct commodities recorded on each submission day.
+        </p>
+        <?php endif; ?>
+    </div><!-- /panelSummary -->
+
 </div>
 </div>
 
@@ -815,6 +1057,39 @@ const PHP = {
 
 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+// ── Tab switching ────────────────────────────────────────────
+function switchTab(tab) {
+    const isRecords = tab === 'records';
+    document.getElementById('panelRecords').classList.toggle('hidden', !isRecords);
+    document.getElementById('panelSummary').classList.toggle('hidden', isRecords);
+    document.getElementById('tabBtnRecords').classList.toggle('active', isRecords);
+    document.getElementById('tabBtnSummary').classList.toggle('active', !isRecords);
+    try { sessionStorage.setItem('mpActiveTab', tab); } catch (e) {}
+}
+
+// ── Export the on-screen Enumerator Summary table as CSV ───────
+function exportSummaryCsv() {
+    const table = document.getElementById('summaryTable');
+    if (!table) { alert('No summary data to export.'); return; }
+    const rows = [];
+    table.querySelectorAll('tr').forEach(tr => {
+        const cells = Array.from(tr.children).map(td => {
+            let text = td.textContent.trim().replace(/"/g, '""');
+            return `"${text}"`;
+        });
+        rows.push(cells.join(','));
+    });
+    const csv = "\uFEFF" + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'enumerator_summary_<?= $start_date ?>_to_<?= $end_date ?>.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 
 function buildUrl(overrides) {
     const p = {
@@ -982,7 +1257,13 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('customStartDate').value = PHP.startDate;
         document.getElementById('customEndDate').value = PHP.endDate;
     }
+
+    try {
+        const savedTab = sessionStorage.getItem('mpActiveTab');
+        if (savedTab === 'summary') switchTab('summary');
+    } catch (e) {}
 });
+
 </script>
 
 <?php require_once '../admin/includes/admin_footer.php'; ?>
