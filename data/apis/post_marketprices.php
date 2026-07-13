@@ -16,6 +16,43 @@ if (!isset($con) || $con->connect_error) {
 // Get the input data (JSON payload for POST requests)
 $input = json_decode(file_get_contents('php://input'), true);
 
+// ============================================================
+// IDENTIFY THE ENUMERATOR FROM THEIR LOGIN TOKEN
+// (same token issued by enumerator_login.php)
+// ============================================================
+$headers = function_exists('apache_request_headers') ? apache_request_headers() : [];
+$enumerator_token = isset($headers['Authorization']) ? str_replace('Bearer ', '', $headers['Authorization']) : '';
+if (empty($enumerator_token)) {
+    $enumerator_token = $_POST['token'] ?? $_GET['token'] ?? '';
+}
+if (empty($enumerator_token) && isset($input['token'])) {
+    $enumerator_token = $input['token'];
+}
+
+if (empty($enumerator_token)) {
+    sendJsonResponse(['error' => 'Missing enumerator token. Pass it as "Authorization: Bearer <token>", or a "token" field.'], 401);
+}
+
+$enumerator_name = null;
+$stmt_enumerator = $con->prepare("SELECT id, name, username FROM enumerators WHERE token = ?");
+if (!$stmt_enumerator) {
+    error_log("Failed to prepare enumerator lookup query: " . $con->error);
+    sendJsonResponse(['error' => 'Failed to prepare enumerator lookup query'], 500);
+}
+$stmt_enumerator->bind_param("s", $enumerator_token);
+$stmt_enumerator->execute();
+$enumerator_result = $stmt_enumerator->get_result();
+if ($enumerator_result && $enumerator_result->num_rows > 0) {
+    $enumerator_row = $enumerator_result->fetch_assoc();
+    // Prefer the enumerator's full name; fall back to username if name is blank
+    $enumerator_name = !empty(trim((string)$enumerator_row['name'])) ? $enumerator_row['name'] : $enumerator_row['username'];
+} else {
+    $stmt_enumerator->close();
+    error_log("Invalid or expired enumerator token used on post_marketprices.php");
+    sendJsonResponse(['error' => 'Invalid or expired token. Please log in again.'], 401);
+}
+$stmt_enumerator->close();
+
 // Validate top-level required fields
 $required_top_level_fields = ['tradepoint_id', 'submissions'];
 foreach ($required_top_level_fields as $field) {
@@ -262,9 +299,9 @@ foreach ($input['submissions'] as $index => $submission) {
     
     // Insert wholesale price if available
     if ($wholesale_price_local > 0) {
-        $sql = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source, supplied_volume, comments, supply_status, commodity_sources_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source, supplied_volume, comments, supply_status, commodity_sources_data, postedby) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
-        $types = "sisssdssdiiisssssssis"; // 21 characters - supplied_volume treated as string
+        $types = "sisssdssdiiisssssssiss"; // 22 characters - supplied_volume treated as string, postedby appended
         $params = [
             $category_name, 
             $commodity_id, 
@@ -286,10 +323,11 @@ foreach ($input['submissions'] as $index => $submission) {
             $supplied_volume_for_db,
             $comments, 
             $supply_status_from_payload, 
-            $commodity_sources_json_db_value
+            $commodity_sources_json_db_value,
+            $enumerator_name
         ];
         
-        error_log("INSERTING WHOLESALE - data_source: '{$data_source_db_value}'");
+        error_log("INSERTING WHOLESALE - data_source: '{$data_source_db_value}', postedby: '{$enumerator_name}'");
         $stmt = $con->prepare($sql);
         if ($stmt) {
             $stmt->bind_param($types, ...$params);
@@ -300,13 +338,13 @@ foreach ($input['submissions'] as $index => $submission) {
                 error_log("Wholesale inserted successfully, ID: " . $inserted_id);
                 
                 // Immediate verification
-                $verify_sql = "SELECT id, data_source, subject, supply_status FROM market_prices WHERE id = ?";
+                $verify_sql = "SELECT id, data_source, subject, supply_status, postedby FROM market_prices WHERE id = ?";
                 $stmt_verify = $con->prepare($verify_sql);
                 $stmt_verify->bind_param("i", $inserted_id);
                 $stmt_verify->execute();
                 $verify_result = $stmt_verify->get_result();
                 if ($verify_row = $verify_result->fetch_assoc()) {
-                    error_log("VERIFICATION WHOLESALE: ID {$verify_row['id']} - data_source='{$verify_row['data_source']}', subject='{$verify_row['subject']}', supply_status='{$verify_row['supply_status']}'");
+                    error_log("VERIFICATION WHOLESALE: ID {$verify_row['id']} - data_source='{$verify_row['data_source']}', subject='{$verify_row['subject']}', supply_status='{$verify_row['supply_status']}', postedby='{$verify_row['postedby']}'");
                 } else {
                     error_log("VERIFICATION FAILED: Could not retrieve inserted wholesale record");
                 }
@@ -326,9 +364,9 @@ foreach ($input['submissions'] as $index => $submission) {
     
     // Insert retail price if available
     if ($retail_price_local > 0) {
-        $sql = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source, supplied_volume, comments, supply_status, commodity_sources_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql = "INSERT INTO market_prices (category, commodity, country_admin_0, market_id, market, weight, unit, price_type, Price, subject, day, month, year, date_posted, status, variety, data_source, supplied_volume, comments, supply_status, commodity_sources_data, postedby) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
-        $types = "sisssdssdiiisssssssis"; // 21 characters - supplied_volume treated as string
+        $types = "sisssdssdiiisssssssiss"; // 22 characters - supplied_volume treated as string, postedby appended
         $params = [
             $category_name, 
             $commodity_id, 
@@ -350,10 +388,11 @@ foreach ($input['submissions'] as $index => $submission) {
             $supplied_volume_for_db,
             $comments, 
             $supply_status_from_payload, 
-            $commodity_sources_json_db_value
+            $commodity_sources_json_db_value,
+            $enumerator_name
         ];
         
-        error_log("INSERTING RETAIL - data_source: '{$data_source_db_value}'");
+        error_log("INSERTING RETAIL - data_source: '{$data_source_db_value}', postedby: '{$enumerator_name}'");
         $stmt = $con->prepare($sql);
         if ($stmt) {
             $stmt->bind_param($types, ...$params);
@@ -364,13 +403,13 @@ foreach ($input['submissions'] as $index => $submission) {
                 error_log("Retail inserted successfully, ID: " . $inserted_id);
                 
                 // Immediate verification
-                $verify_sql = "SELECT id, data_source, subject, supply_status FROM market_prices WHERE id = ?";
+                $verify_sql = "SELECT id, data_source, subject, supply_status, postedby FROM market_prices WHERE id = ?";
                 $stmt_verify = $con->prepare($verify_sql);
                 $stmt_verify->bind_param("i", $inserted_id);
                 $stmt_verify->execute();
                 $verify_result = $stmt_verify->get_result();
                 if ($verify_row = $verify_result->fetch_assoc()) {
-                    error_log("VERIFICATION RETAIL: ID {$verify_row['id']} - data_source='{$verify_row['data_source']}', subject='{$verify_row['subject']}', supply_status='{$verify_row['supply_status']}'");
+                    error_log("VERIFICATION RETAIL: ID {$verify_row['id']} - data_source='{$verify_row['data_source']}', subject='{$verify_row['subject']}', supply_status='{$verify_row['supply_status']}', postedby='{$verify_row['postedby']}'");
                 } else {
                     error_log("VERIFICATION FAILED: Could not retrieve inserted retail record");
                 }
@@ -397,13 +436,14 @@ foreach ($input['submissions'] as $index => $submission) {
 
 // Final response based on overall success/failure
 if ($all_success) {
-    sendJsonResponse(['message' => 'All market prices added successfully', 'inserted_ids' => $inserted_ids], 201);
+    sendJsonResponse(['message' => 'All market prices added successfully', 'inserted_ids' => $inserted_ids, 'postedby' => $enumerator_name], 201);
 } else {
     // Provide details about failures if any occurred
     sendJsonResponse([
         'error' => 'One or more submissions failed',
         'inserted_ids' => $inserted_ids, // IDs successfully inserted before failures
-        'failed_submissions' => $failed_submissions
+        'failed_submissions' => $failed_submissions,
+        'postedby' => $enumerator_name
     ], 500);
 }
 
