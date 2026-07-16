@@ -306,6 +306,13 @@ if (file_exists('includes/config.php')) {
 $message      = '';
 $message_type = '';
 
+// Pick up the flash message left behind by addtradepoint_process.php after its redirect
+if (isset($_SESSION['flash_message'])) {
+    $message      = $_SESSION['flash_message'];
+    $message_type = $_SESSION['flash_type'] ?? 'success';
+    unset($_SESSION['flash_message'], $_SESSION['flash_type']);
+}
+
 if (!isset($_SESSION['selected_tradepoints'])) {
     $_SESSION['selected_tradepoints'] = [];
 }
@@ -529,6 +536,11 @@ $currency_map = [
 .import-instructions-block .example-row{font-family:monospace;font-size:.68rem;color:#6b7280;word-break:break-all;margin:.5rem 0 0}
 .import-instructions-block .tpl-link{display:inline-flex;align-items:center;gap:.25rem;color:#800000;font-size:.72rem;font-weight:500;text-decoration:none;margin-top:.5rem}
 .import-instructions-block .tpl-link:hover{text-decoration:underline}
+
+/* Commodity picker */
+.commodity-tag{display:inline-flex;align-items:center;gap:.3rem;padding:.25rem .6rem;border-radius:9999px;font-size:.7rem;font-weight:500;background-color:#800000;color:#fff}
+.commodity-tag button{background:none;border:none;color:#fff;font-weight:bold;cursor:pointer;line-height:1;padding:0;margin-left:.15rem}
+.commodity-tag button:hover{color:#fecaca}
 </style>
 
 <div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
@@ -895,7 +907,23 @@ $currency_map = [
                     <!-- Step 3 -->
                     <div id="step3" class="step-content" style="display:none;">
                         <div id="marketStep3" class="step3-form" style="display:none;">
-                            <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Primary Commodities</label><input type="text" name="primary_commodity" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg" placeholder="Comma-separated list"></div>
+                            <div class="mb-4">
+                                <label class="block text-xs text-gray-600 mb-1">Primary Commodities <span class="text-red-500">*</span></label>
+                                <input type="text" id="commoditySearch" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg mb-2" placeholder="Search commodities…">
+                                <select id="commoditySelect" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white">
+                                    <option value="">Select a commodity to add…</option>
+                                    <?php foreach ($commodities as $c):
+                                        $display = $c['commodity_name'];
+                                        if (!empty($c['variety'])) $display .= ' (' . $c['variety'] . ')';
+                                    ?>
+                                    <option value="<?= htmlspecialchars($display) ?>"><?= htmlspecialchars($display) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div id="commodityTags" class="flex flex-wrap gap-2 mt-2 p-2 border border-gray-100 rounded-lg min-h-[40px]">
+                                    <small class="text-gray-400">Selected commodities will appear here</small>
+                                </div>
+                                <input type="hidden" name="primary_commodity" id="primaryCommodityHidden">
+                            </div>
                             <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Data Source</label><select name="additional_datasource" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($data_sources as $ds): ?><option><?= htmlspecialchars($ds) ?></option><?php endforeach; ?></select></div>
                             <div class="mb-4"><label class="block text-xs text-gray-600 mb-1">Market Images</label><input type="file" name="marketImages[]" multiple accept="image/*" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
                         </div>
@@ -1369,6 +1397,63 @@ function escapeHtml(str) {
         {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
     ));
 }
+
+// ---------------------------------------------------------------
+// Commodity multi-picker (Add Market → Step 3)
+// ---------------------------------------------------------------
+(function() {
+    const select   = document.getElementById('commoditySelect');
+    const search   = document.getElementById('commoditySearch');
+    const tagsWrap = document.getElementById('commodityTags');
+    const hidden   = document.getElementById('primaryCommodityHidden');
+    if (!select || !search || !tagsWrap || !hidden) return;
+
+    let selected = [];
+    const allOptions = Array.from(select.options).filter(o => o.value);
+
+    function renderTags() {
+        hidden.value = selected.join(',');
+        if (selected.length === 0) {
+            tagsWrap.innerHTML = '<small class="text-gray-400">Selected commodities will appear here</small>';
+            return;
+        }
+        tagsWrap.innerHTML = '';
+        selected.forEach(name => {
+            const tag = document.createElement('span');
+            tag.className = 'commodity-tag';
+            tag.innerHTML = `${escapeHtml(name)} <button type="button" title="Remove">&times;</button>`;
+            tag.querySelector('button').addEventListener('click', () => {
+                selected = selected.filter(s => s !== name);
+                renderTags();
+            });
+            tagsWrap.appendChild(tag);
+        });
+    }
+
+    search.addEventListener('input', function() {
+        const term = this.value.trim().toLowerCase();
+        select.innerHTML = '<option value="">Select a commodity to add…</option>';
+        allOptions
+            .filter(o => o.value.toLowerCase().includes(term))
+            .forEach(o => select.appendChild(o.cloneNode(true)));
+    });
+
+    select.addEventListener('change', function() {
+        const val = this.value;
+        if (val && !selected.includes(val)) {
+            selected.push(val);
+            renderTags();
+        }
+        this.selectedIndex = 0;
+    });
+
+    // Reset picker whenever the Add modal is reopened
+    document.querySelector('button[onclick="openAddModal()"]')?.addEventListener('click', function() {
+        selected = [];
+        renderTags();
+        search.value = '';
+    });
+})();
 
 // ---------------------------------------------------------------
 // DOMContentLoaded — wire up all static event listeners
