@@ -682,6 +682,81 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
 }
 
 // ============================================================
+// ONE-TIME CLEANUP: Normalize tradepoint type labels (Markets->Market, etc.)
+// ============================================================
+if (isset($_GET['fix_tradepoint_types'])) {
+    $typeMap = [
+        'Markets'       => 'Market',
+        'Border Points' => 'Border Point',
+        'Millers'       => 'Miller',
+    ];
+
+    function normalizeTpType($type, $typeMap) {
+        return $typeMap[$type] ?? $type;
+    }
+
+    function dedupeTpEntries(array $entries) {
+        $seen = [];
+        $out  = [];
+        foreach ($entries as $entry) {
+            $key = ($entry['id'] ?? '') . '|' . ($entry['type'] ?? '');
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $out[] = $entry;
+        }
+        return $out;
+    }
+
+    $cleanup_result  = $con->query("SELECT id, name, tradepoints FROM enumerators WHERE tradepoints IS NOT NULL AND tradepoints != '' AND tradepoints != '[]' AND tradepoints != '{}'");
+    $cleanup_log     = [];
+    $cleanup_changed = 0;
+    $cleanup_applied = isset($_GET['apply']);
+
+    while ($row = $cleanup_result->fetch_assoc()) {
+        $original = $row['tradepoints'];
+        $decoded  = json_decode($original, true);
+        if (!is_array($decoded)) continue;
+
+        $isAssoc = array_keys($decoded) !== range(0, count($decoded) - 1);
+
+        if ($isAssoc) {
+            // Object-style JSON: {"33": {"id":"33","type":"Markets", ...}, ...}
+            $newDecoded = [];
+            foreach ($decoded as $key => $entry) {
+                if (isset($entry['type'])) {
+                    $entry['type'] = normalizeTpType($entry['type'], $typeMap);
+                }
+                $newKey = $entry['id'] ?? $key;
+                $newDecoded[$newKey] = $entry;
+            }
+            $newJson = json_encode($newDecoded);
+        } else {
+            // Array-style JSON: [{"id":31,"type":"Markets"}, ...]
+            foreach ($decoded as &$entry) {
+                if (isset($entry['type'])) {
+                    $entry['type'] = normalizeTpType($entry['type'], $typeMap);
+                }
+            }
+            unset($entry);
+            $decoded = dedupeTpEntries($decoded);
+            $newJson = json_encode($decoded);
+        }
+
+        if ($newJson !== $original) {
+            $cleanup_changed++;
+            $cleanup_log[] = "#{$row['id']} " . htmlspecialchars($row['name']) . ": " . htmlspecialchars($original) . "  →  " . htmlspecialchars($newJson);
+
+            if ($cleanup_applied) {
+                $stmt = $con->prepare("UPDATE enumerators SET tradepoints = ? WHERE id = ?");
+                $stmt->bind_param("si", $newJson, $row['id']);
+                $stmt->execute();
+                $stmt->close();
+            }
+        }
+    }
+}
+
+// ============================================================
 // FETCH ENUMERATORS
 // ============================================================
 $search_name    = $_GET['search_name']    ?? '';
@@ -984,6 +1059,29 @@ if ($ctry_result) {
                 <?php foreach ($import_stats as $detail): ?>
                     <li><?= htmlspecialchars($detail) ?></li>
                 <?php endforeach; ?>
+            </ul>
+        </details>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+
+    <!-- Tradepoint Type Cleanup Messages (one-time maintenance tool) -->
+    <?php if (isset($cleanup_log)): ?>
+    <div class="mb-4 rounded-lg border-l-4 text-sm overflow-hidden <?= $cleanup_applied ? 'bg-green-100 text-green-800 border-green-500' : 'bg-amber-50 text-amber-800 border-amber-500' ?>">
+        <div class="flex items-center gap-2 p-3">
+            <span class="material-symbols-outlined text-base"><?= $cleanup_applied ? 'check_circle' : 'visibility' ?></span>
+            <span class="font-medium">
+                <?= $cleanup_changed ?> record(s) <?= $cleanup_applied ? 'updated.' : 'would be updated (dry run).' ?>
+                <?php if (!$cleanup_applied && $cleanup_changed > 0): ?>
+                    <a href="?fix_tradepoint_types=1&apply=1" onclick="return confirm('Apply these changes to the database?')" class="underline ml-2">Apply now</a>
+                <?php endif; ?>
+            </span>
+        </div>
+        <?php if (!empty($cleanup_log)): ?>
+        <details class="px-4 pb-3" open>
+            <summary class="cursor-pointer text-xs font-medium opacity-70">Show details</summary>
+            <ul class="mt-2 space-y-1 text-xs opacity-80 max-h-60 overflow-y-auto font-mono">
+                <?php foreach ($cleanup_log as $line): ?><li><?= $line ?></li><?php endforeach; ?>
             </ul>
         </details>
         <?php endif; ?>
