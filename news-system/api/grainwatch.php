@@ -71,7 +71,7 @@ function handleGet($pdo) {
         $id = filter_var($_GET['id'], FILTER_VALIDATE_INT);
         if (!$id) {
             http_response_code(400);
-            echo json_encode(['error' => 'Invalid ID']);
+            echo json_encode(['success' => false, 'error' => 'Invalid ID']);
             return;
         }
         
@@ -80,10 +80,10 @@ function handleGet($pdo) {
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if ($result) {
-            echo json_encode($result);
+            echo json_encode(['success' => true, 'data' => $result]);
         } else {
             http_response_code(404);
-            echo json_encode(['error' => 'GrainWatch entry not found']);
+            echo json_encode(['success' => false, 'error' => 'GrainWatch entry not found']);
         }
         return;
     }
@@ -131,7 +131,7 @@ function handlePost($pdo) {
     
     if (!isset($input['heading']) || !isset($input['description']) || !isset($input['category'])) {
         http_response_code(400);
-        echo json_encode(['error' => 'Heading, description and category are required']);
+        echo json_encode(['success' => false, 'error' => 'Heading, description and category are required']);
         return;
     }
     
@@ -145,13 +145,13 @@ function handlePost($pdo) {
     $validCategories = ['grain watch', 'grain standards', 'policy briefs', 'reports'];
     if (!in_array($category, $validCategories)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Invalid category. Must be one of: ' . implode(', ', $validCategories)]);
+        echo json_encode(['success' => false, 'error' => 'Invalid category. Must be one of: ' . implode(', ', $validCategories)]);
         return;
     }
     
     if (empty($heading) || empty($description) || empty($category)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Heading, description and category cannot be empty']);
+        echo json_encode(['success' => false, 'error' => 'Heading, description and category cannot be empty']);
         return;
     }
     
@@ -167,19 +167,17 @@ function handlePost($pdo) {
         ]);
     } catch (PDOException $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to create entry: ' . $e->getMessage()]);
+        echo json_encode(['success' => false, 'error' => 'Failed to create entry: ' . $e->getMessage()]);
     }
 }
 
 function handlePut($pdo) {
-    // Get ID from URL parameter
-    $url_parts = explode('/', $_SERVER['REQUEST_URI']);
-    $id = end($url_parts);
-    $id = filter_var($id, FILTER_VALIDATE_INT);
+    // Get ID from query parameter (NOT from URL path)
+    $id = isset($_GET['id']) ? filter_var($_GET['id'], FILTER_VALIDATE_INT) : null;
     
     if (!$id) {
         http_response_code(400);
-        echo json_encode(['error' => 'Invalid ID']);
+        echo json_encode(['success' => false, 'error' => 'Invalid ID']);
         return;
     }
     
@@ -187,7 +185,7 @@ function handlePut($pdo) {
     
     if (!isset($input['heading']) || !isset($input['description']) || !isset($input['category'])) {
         http_response_code(400);
-        echo json_encode(['error' => 'Heading, description and category are required']);
+        echo json_encode(['success' => false, 'error' => 'Heading, description and category are required']);
         return;
     }
     
@@ -201,41 +199,43 @@ function handlePut($pdo) {
     $validCategories = ['grain watch', 'grain standards', 'policy briefs', 'reports'];
     if (!in_array($category, $validCategories)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Invalid category. Must be one of: ' . implode(', ', $validCategories)]);
+        echo json_encode(['success' => false, 'error' => 'Invalid category. Must be one of: ' . implode(', ', $validCategories)]);
         return;
     }
     
     if (empty($heading) || empty($description) || empty($category)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Heading, description and category cannot be empty']);
+        echo json_encode(['success' => false, 'error' => 'Heading, description and category cannot be empty']);
         return;
     }
     
     try {
+        // First check if entry exists
+        $check_stmt = $pdo->prepare("SELECT id FROM grainwatch WHERE id = ?");
+        $check_stmt->execute([$id]);
+        if ($check_stmt->rowCount() === 0) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'error' => 'GrainWatch entry not found']);
+            return;
+        }
+        
         $stmt = $pdo->prepare("UPDATE grainwatch SET heading = ?, description = ?, category = ?, image = ?, document_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
         $stmt->execute([$heading, $description, $category, $image, $document_path, $id]);
         
-        if ($stmt->rowCount() > 0) {
-            echo json_encode(['success' => true, 'message' => 'GrainWatch entry updated successfully']);
-        } else {
-            http_response_code(404);
-            echo json_encode(['error' => 'GrainWatch entry not found']);
-        }
+        echo json_encode(['success' => true, 'message' => 'GrainWatch entry updated successfully']);
     } catch (PDOException $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to update entry: ' . $e->getMessage()]);
+        echo json_encode(['success' => false, 'error' => 'Failed to update entry: ' . $e->getMessage()]);
     }
 }
 
 function handleDelete($pdo) {
-    // Get ID from URL parameter
-    $url_parts = explode('/', $_SERVER['REQUEST_URI']);
-    $id = end($url_parts);
-    $id = filter_var($id, FILTER_VALIDATE_INT);
+    // Get ID from query parameter (NOT from URL path)
+    $id = isset($_GET['id']) ? filter_var($_GET['id'], FILTER_VALIDATE_INT) : null;
     
     if (!$id) {
         http_response_code(400);
-        echo json_encode(['error' => 'Invalid ID']);
+        echo json_encode(['success' => false, 'error' => 'Invalid ID']);
         return;
     }
     
@@ -258,11 +258,11 @@ function handleDelete($pdo) {
             echo json_encode(['success' => true, 'message' => 'GrainWatch entry deleted successfully']);
         } else {
             http_response_code(404);
-            echo json_encode(['error' => 'GrainWatch entry not found']);
+            echo json_encode(['success' => false, 'error' => 'GrainWatch entry not found']);
         }
     } catch (PDOException $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to delete entry: ' . $e->getMessage()]);
+        echo json_encode(['success' => false, 'error' => 'Failed to delete entry: ' . $e->getMessage()]);
     }
 }
 ?>
