@@ -328,12 +328,13 @@ function getPricesData($con, $limit = 20, $offset = 0, $sort_col = 'date_posted'
     $allowed = ['market'=>'p.market','commodity'=>'c.commodity_name','date_posted'=>'p.date_posted','price_type'=>'p.price_type','Price'=>'p.Price','status'=>'p.status'];
     $order_by = $allowed[$sort_col] ?? 'p.date_posted';
     $dir = $sort_dir === 'ASC' ? 'ASC' : 'DESC';
-    // Only published records
+    // Only published records, limited to the last 3 months
     $sql = "SELECT p.id,p.market,p.commodity,c.commodity_name,c.variety,
                    CONCAT(c.commodity_name,IF(c.variety IS NOT NULL AND c.variety!='',CONCAT(' (',c.variety,')'),'')) AS commodity_display,
                    p.price_type,p.Price,p.date_posted,p.status,p.data_source,p.market_id,p.category,p.weight,p.unit
             FROM market_prices p LEFT JOIN commodities c ON p.commodity=c.id
             WHERE p.status = 'published'
+              AND p.date_posted >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
             ORDER BY $order_by $dir, p.date_posted DESC LIMIT $limit OFFSET $offset";
     $result = $con->query($sql); $data = [];
     if ($result) { while ($row = $result->fetch_assoc()) $data[] = $row; $result->free(); }
@@ -341,7 +342,7 @@ function getPricesData($con, $limit = 20, $offset = 0, $sort_col = 'date_posted'
 }
 
 function getTotalPriceRecords($con) {
-    $r = $con->query("SELECT count(*) as total FROM market_prices WHERE status = 'published'");
+    $r = $con->query("SELECT count(*) as total FROM market_prices WHERE status = 'published' AND date_posted >= DATE_SUB(NOW(), INTERVAL 3 MONTH)");
     if ($r) { $row = $r->fetch_assoc(); return $row['total']; }
     return 0;
 }
@@ -753,7 +754,15 @@ $active_tab = $_GET['tab'] ?? 'table';
                 </button>
             </div>
         </div>
-
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:.8rem;color:var(--mp-muted);">
+            <span class="ms" style="font-size:1rem;color:var(--mp-accent);">schedule</span>
+            Showing the last 3 months of published records.
+            <span class="ms"
+                title="This view only shows the most recent 3 months of data. If you need older records, please request them from the admin."
+                style="cursor:help;font-size:1rem;color:var(--mp-primary);">
+                info
+            </span>
+        </div>
         <!-- Search -->
         <div class="mp-search-bar">
             <div class="mp-search-field">
