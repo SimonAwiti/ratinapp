@@ -960,74 +960,170 @@ async function editInsight(id) {
     } catch (error) { alert('Failed to load insight'); }
 }
 
+// ===== GRAINWATCH FUNCTIONS (UPDATED) =====
 async function saveGrainWatch() {
-    const formData = new FormData(document.getElementById('grainwatchForm'));
-    const id = formData.get('id');
-    const heading = formData.get('heading');
-    const category = formData.get('category');
-    const description = formData.get('description');
+    const id = document.getElementById('grainwatchId').value;
+    const heading = document.getElementById('grainwatchHeading').value.trim();
+    const category = document.getElementById('grainwatchCategory').value;
+    const image = document.getElementById('grainwatchImage').value || null;
+    const description = document.getElementById('grainwatchDescription').value.trim();
     
-    if (!heading || !category || !description) { alert('Please fill in required fields'); return; }
+    if (!heading || !category || !description) {
+        alert('Please fill in all required fields');
+        return;
+    }
     
-    const data = { heading, category, image: formData.get('image') || null, description, document_path: null };
+    const data = { heading, category, image, description };
     const file = document.getElementById('grainwatchDocument').files[0];
+    const existingDoc = document.getElementById('grainwatchForm').dataset.existingDoc || '';
     
     try {
-        if (file) {
+        // If there's a new file, upload it first
+        if (file && file.type === 'application/pdf') {
             const uploadForm = new FormData();
             uploadForm.append('document', file);
-            const uploadRes = await fetch('api/upload.php', { method: 'POST', body: uploadForm });
+            
+            const uploadRes = await fetch('api/upload.php', { 
+                method: 'POST', 
+                body: uploadForm 
+            });
+            
             const uploadResult = await uploadRes.json();
-            if (uploadResult.success) data.document_path = uploadResult.filePath;
+            if (uploadResult.success) {
+                data.document_path = uploadResult.filePath;
+            } else {
+                alert('Failed to upload PDF: ' + (uploadResult.message || 'Unknown error'));
+                return;
+            }
+        } else if (existingDoc) {
+            // Keep the existing document if no new file was uploaded
+            data.document_path = existingDoc;
         }
         
-        let response;
-        if (id) {
-            response = await fetch(`api/grainwatch.php/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-        } else {
-            response = await fetch('api/grainwatch.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-        }
-        if (response.ok) {
-            alert('GrainWatch saved successfully!');
+        const method = id ? 'PUT' : 'POST';
+        const url = id ? `api/grainwatch.php?id=${id}` : 'api/grainwatch.php';
+        
+        const response = await fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(result.message || 'GrainWatch saved successfully!');
             closeModal('grainwatchModal');
             loadGrainWatch();
         } else {
-            alert('Failed to save grainwatch');
+            alert('Failed to save grainwatch: ' + (result.message || result.error || 'Unknown error'));
         }
-    } catch (error) { alert('Failed to save grainwatch'); }
+    } catch (error) {
+        console.error('Error saving grainwatch:', error);
+        alert('Failed to save grainwatch: ' + error.message);
+    }
 }
 
 async function editGrainWatch(id) {
     try {
-        const response = await fetch(`api/grainwatch.php/${id}`);
-        const gw = await response.json();
+        const response = await fetch(`api/grainwatch.php?id=${id}`);
+        const result = await response.json();
+        
+        // Handle both response formats
+        const gw = result.data || result;
+        
+        if (!gw || !gw.id) {
+            alert('GrainWatch entry not found');
+            return;
+        }
+        
         document.getElementById('grainwatchModalTitle').innerHTML = 'Edit GrainWatch';
         document.getElementById('grainwatchId').value = gw.id;
-        document.getElementById('grainwatchHeading').value = gw.heading;
-        document.getElementById('grainwatchCategory').value = gw.category;
+        document.getElementById('grainwatchHeading').value = gw.heading || '';
+        document.getElementById('grainwatchCategory').value = gw.category || '';
         document.getElementById('grainwatchImage').value = gw.image || '';
-        document.getElementById('grainwatchDescription').value = gw.description;
-        if (gw.image) previewImage('grainwatchImage', 'grainwatchImagePreview');
+        document.getElementById('grainwatchDescription').value = gw.description || '';
+        
+        // Store existing document path
+        document.getElementById('grainwatchForm').dataset.existingDoc = gw.document_path || '';
+        
+        if (gw.image) {
+            const preview = document.getElementById('grainwatchImagePreview');
+            preview.src = gw.image;
+            preview.classList.remove('hidden');
+        } else {
+            document.getElementById('grainwatchImagePreview').classList.add('hidden');
+        }
+        
+        // Show existing document if there is one
+        if (gw.document_path) {
+            const docName = gw.document_path.split('/').pop();
+            document.getElementById('documentName').innerHTML = docName + ' (existing)';
+            document.getElementById('documentPreview').classList.remove('hidden');
+        } else {
+            document.getElementById('documentPreview').classList.add('hidden');
+        }
+        
+        // Reset the file input
+        document.getElementById('grainwatchDocument').value = '';
+        
         openModal('grainwatchModal');
-    } catch (error) { alert('Failed to load grainwatch'); }
+    } catch (error) {
+        console.error('Error loading grainwatch:', error);
+        alert('Failed to load grainwatch entry');
+    }
 }
 
-function deleteArticle(id) { currentDeleteId = id; currentDeleteType = 'article'; openModal('deleteModal'); }
-function deleteInsight(id) { currentDeleteId = id; currentDeleteType = 'insight'; openModal('deleteModal'); }
-function deleteGrainWatch(id) { currentDeleteId = id; currentDeleteType = 'grainwatch'; openModal('deleteModal'); }
+function deleteGrainWatch(id) {
+    currentDeleteId = id;
+    currentDeleteType = 'grainwatch';
+    openModal('deleteModal');
+}
+
+function showCreateGrainWatchModal() {
+    resetGrainWatchForm();
+    openModal('grainwatchModal');
+}
+
+function resetGrainWatchForm() {
+    document.getElementById('grainwatchModalTitle').innerHTML = 'Create New GrainWatch';
+    document.getElementById('grainwatchId').value = '';
+    document.getElementById('grainwatchHeading').value = '';
+    document.getElementById('grainwatchCategory').value = '';
+    document.getElementById('grainwatchImage').value = '';
+    document.getElementById('grainwatchDescription').value = '';
+    document.getElementById('grainwatchImagePreview').classList.add('hidden');
+    document.getElementById('documentPreview').classList.add('hidden');
+    document.getElementById('grainwatchDocument').value = '';
+    document.getElementById('grainwatchForm').dataset.existingDoc = '';
+}
+// ===== END GRAINWATCH FUNCTIONS =====
 
 async function confirmDelete() {
     try {
-        if (currentDeleteType === 'article') await fetch(`api/articles.php/${currentDeleteId}`, { method: 'DELETE' });
-        else if (currentDeleteType === 'insight') await fetch(`api/insights.php/${currentDeleteId}`, { method: 'DELETE' });
-        else if (currentDeleteType === 'grainwatch') await fetch(`api/grainwatch.php/${currentDeleteId}`, { method: 'DELETE' });
+        let response;
+        if (currentDeleteType === 'article') {
+            response = await fetch(`api/articles.php/${currentDeleteId}`, { method: 'DELETE' });
+        } else if (currentDeleteType === 'insight') {
+            response = await fetch(`api/insights.php/${currentDeleteId}`, { method: 'DELETE' });
+        } else if (currentDeleteType === 'grainwatch') {
+            response = await fetch(`api/grainwatch.php?id=${currentDeleteId}`, { method: 'DELETE' });
+        }
         
-        closeModal('deleteModal');
-        if (currentDeleteType === 'article') loadArticles();
-        else if (currentDeleteType === 'insight') loadInsights();
-        else if (currentDeleteType === 'grainwatch') loadGrainWatch();
-        alert('Item deleted successfully!');
-    } catch (error) { alert('Failed to delete'); }
+        const result = await response.json();
+        if (result.success) {
+            closeModal('deleteModal');
+            if (currentDeleteType === 'article') loadArticles();
+            else if (currentDeleteType === 'insight') loadInsights();
+            else if (currentDeleteType === 'grainwatch') loadGrainWatch();
+            alert(result.message || 'Item deleted successfully!');
+        } else {
+            alert('Failed to delete: ' + (result.message || result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error deleting:', error);
+        alert('Failed to delete');
+    }
 }
 
 // Bulk Delete Functions
@@ -1067,7 +1163,6 @@ function openModal(id) { document.getElementById(id).classList.remove('hidden');
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 function showCreateModal() { resetArticleForm(); openModal('articleModal'); }
 function showCreateInsightModal() { resetInsightForm(); openModal('insightModal'); }
-function showCreateGrainWatchModal() { resetGrainWatchForm(); openModal('grainwatchModal'); }
 
 function resetArticleForm() {
     document.getElementById('articleModalTitle').innerHTML = 'Create New Article';
@@ -1088,18 +1183,6 @@ function resetInsightForm() {
     if (insightQuill) insightQuill.setText('');
 }
 
-function resetGrainWatchForm() {
-    document.getElementById('grainwatchModalTitle').innerHTML = 'Create New GrainWatch';
-    document.getElementById('grainwatchId').value = '';
-    document.getElementById('grainwatchHeading').value = '';
-    document.getElementById('grainwatchCategory').value = '';
-    document.getElementById('grainwatchImage').value = '';
-    document.getElementById('grainwatchDescription').value = '';
-    document.getElementById('grainwatchImagePreview').classList.add('hidden');
-    document.getElementById('documentPreview').classList.add('hidden');
-    document.getElementById('grainwatchDocument').value = '';
-}
-
 function previewImage(inputId, previewId) {
     const url = document.getElementById(inputId).value;
     const preview = document.getElementById(previewId);
@@ -1110,8 +1193,17 @@ function previewImage(inputId, previewId) {
 function previewDocument() {
     const file = document.getElementById('grainwatchDocument').files[0];
     if (file && file.type === 'application/pdf') {
-        document.getElementById('documentName').innerHTML = file.name;
-        document.getElementById('documentPreview').classList.remove('hidden');
+        const preview = document.getElementById('documentPreview');
+        const nameDisplay = document.getElementById('documentName');
+        
+        // If editing and there's an existing doc, we show both
+        const existingDoc = document.getElementById('grainwatchForm').dataset.existingDoc || '';
+        if (existingDoc) {
+            nameDisplay.innerHTML = file.name + ' (will replace existing)';
+        } else {
+            nameDisplay.innerHTML = file.name;
+        }
+        preview.classList.remove('hidden');
     }
 }
 
@@ -1127,5 +1219,4 @@ document.getElementById('categoryFilter')?.addEventListener('change', () => { cu
 document.getElementById('statusFilter')?.addEventListener('change', () => { currentPage = 1; applyFilters(); });
 document.getElementById('bulkDeleteBtn')?.addEventListener('click', submitBulkDelete);
 </script>
-
 <?php require_once '../admin/includes/admin_footer.php'; ?>
