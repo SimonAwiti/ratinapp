@@ -342,33 +342,41 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
 
 // Handle Edit via POST
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_tradepoint'])) {
-    $id      = $_POST['tradepoint_id'];
-    $type    = $_POST['tradepoint_type_edit'];
-    $name    = trim($_POST['name']);
-    $country = trim($_POST['country']);
-    $region  = trim($_POST['region']);
+    $id   = $_POST['tradepoint_id'];
+    $type = $_POST['tradepoint_type_edit'];
 
     if ($type == 'Markets') {
-        $category             = trim($_POST['category']);
-        $market_type          = trim($_POST['market_type']);
-        $longitude            = $_POST['longitude'];
-        $latitude             = $_POST['latitude'];
-        $radius               = $_POST['radius'];
-        $currency             = trim($_POST['currency']);
-        $primary_commodity    = trim($_POST['primary_commodity']);
-        $additional_datasource= trim($_POST['additional_datasource']);
+        $name                  = trim($_POST['market_name']);
+        $category              = trim($_POST['market_category']);
+        $market_type           = trim($_POST['market_type_field']);
+        $country               = trim($_POST['market_country']);
+        $region                = trim($_POST['market_region']);
+        $longitude             = $_POST['market_longitude'];
+        $latitude              = $_POST['market_latitude'];
+        $radius                = $_POST['market_radius'];
+        $currency              = trim($_POST['market_currency']);
+        $primary_commodity     = trim($_POST['market_primary_commodity']);
+        $additional_datasource = trim($_POST['market_additional_datasource']);
 
         $stmt = $con->prepare("UPDATE markets SET market_name=?,category=?,type=?,country=?,county_district=?,longitude=?,latitude=?,radius=?,currency=?,primary_commodity=?,additional_datasource=? WHERE id=?");
         $stmt->bind_param("sssssdddsssi", $name,$category,$market_type,$country,$region,$longitude,$latitude,$radius,$currency,$primary_commodity,$additional_datasource,$id);
+
     } elseif ($type == 'Border Points') {
-        $longitude = $_POST['longitude'];
-        $latitude  = $_POST['latitude'];
-        $radius    = $_POST['radius'];
+        $name      = trim($_POST['border_name']);
+        $country   = trim($_POST['border_country']);
+        $region    = trim($_POST['border_region']);
+        $longitude = $_POST['border_longitude'];
+        $latitude  = $_POST['border_latitude'];
+        $radius    = $_POST['border_radius'];
 
         $stmt = $con->prepare("UPDATE border_points SET name=?,country=?,county=?,longitude=?,latitude=?,radius=? WHERE id=?");
         $stmt->bind_param("sssdddi", $name,$country,$region,$longitude,$latitude,$radius,$id);
+
     } elseif ($type == 'Millers') {
-        $currency       = trim($_POST['currency']);
+        $name           = trim($_POST['miller_name']);
+        $country        = trim($_POST['miller_country']);
+        $region         = trim($_POST['miller_region']);
+        $currency       = trim($_POST['miller_currency']);
         $miller_details = trim($_POST['miller_details']);
 
         $stmt = $con->prepare("UPDATE miller_details SET miller_name=?,country=?,county_district=?,currency=?,miller=? WHERE id=?");
@@ -966,39 +974,39 @@ $currency_map = [
                     <!-- Markets fields -->
                     <div id="editMarketFields" style="display:none;">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                            <div><label class="block text-xs text-gray-600 mb-1">Market Name</label><input type="text" name="name" id="editMarketName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Category</label><select name="category" id="editCategory" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>Regional</option><option>Wholesale</option><option>Retail</option><option>Terminal</option></select></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Market Type</label><select name="market_type" id="editMarketType" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>Primary</option><option>Secondary</option><option>Assembly</option><option>Terminal</option></select></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="country" id="editMarketCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Region</label><input type="text" name="region" id="editMarketRegion" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Longitude</label><input type="number" step="any" name="longitude" id="editMarketLongitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Latitude</label><input type="number" step="any" name="latitude" id="editMarketLatitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Radius</label><input type="number" step="any" name="radius" id="editMarketRadius" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Currency</label><select name="currency" id="editMarketCurrency" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>KES</option><option>UGX</option><option>TZS</option><option>RWF</option><option>BIF</option><option>SSP</option><option>ETB</option><option>SOS</option><option>CDF</option></select></div>
-                            <div class="md:col-span-2"><label class="block text-xs text-gray-600 mb-1">Primary Commodities</label><input type="text" name="primary_commodity" id="editMarketCommodities" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Data Source</label><input type="text" name="additional_datasource" id="editMarketDataSource" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Market Name</label><input type="text" name="market_name" id="editMarketName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Category</label><select name="market_category" id="editCategory" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>Regional</option><option>Wholesale</option><option>Retail</option><option>Terminal</option></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Market Type</label><select name="market_type_field" id="editMarketType" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>Primary</option><option>Secondary</option><option>Assembly</option><option>Terminal</option></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="market_country" id="editMarketCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Region</label><input type="text" name="market_region" id="editMarketRegion" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Longitude</label><input type="number" step="any" name="market_longitude" id="editMarketLongitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Latitude</label><input type="number" step="any" name="market_latitude" id="editMarketLatitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Radius</label><input type="number" step="any" name="market_radius" id="editMarketRadius" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Currency</label><select name="market_currency" id="editMarketCurrency" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>KES</option><option>UGX</option><option>TZS</option><option>RWF</option><option>BIF</option><option>SSP</option><option>ETB</option><option>SOS</option><option>CDF</option></select></div>
+                            <div class="md:col-span-2"><label class="block text-xs text-gray-600 mb-1">Primary Commodities</label><input type="text" name="market_primary_commodity" id="editMarketCommodities" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Data Source</label><input type="text" name="market_additional_datasource" id="editMarketDataSource" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
                         </div>
                     </div>
 
                     <!-- Border Points fields -->
                     <div id="editBorderFields" style="display:none;">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                            <div><label class="block text-xs text-gray-600 mb-1">Border Name</label><input type="text" name="name" id="editBorderName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="country" id="editBorderCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">County</label><input type="text" name="region" id="editBorderCounty" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Longitude</label><input type="number" step="any" name="longitude" id="editBorderLongitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Latitude</label><input type="number" step="any" name="latitude" id="editBorderLatitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Radius</label><input type="number" name="radius" id="editBorderRadius" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Border Name</label><input type="text" name="border_name" id="editBorderName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="border_country" id="editBorderCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">County</label><input type="text" name="border_region" id="editBorderCounty" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Longitude</label><input type="number" step="any" name="border_longitude" id="editBorderLongitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Latitude</label><input type="number" step="any" name="border_latitude" id="editBorderLatitude" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Radius</label><input type="number" name="border_radius" id="editBorderRadius" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
                         </div>
                     </div>
 
                     <!-- Millers fields -->
                     <div id="editMillerFields" style="display:none;">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                            <div><label class="block text-xs text-gray-600 mb-1">Miller Name</label><input type="text" name="name" id="editMillerName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="country" id="editMillerCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">County/District</label><input type="text" name="region" id="editMillerRegion" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
-                            <div><label class="block text-xs text-gray-600 mb-1">Currency</label><select name="currency" id="editMillerCurrency" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>KES</option><option>UGX</option><option>TZS</option><option>RWF</option><option>BIF</option><option>SSP</option><option>ETB</option><option>SOS</option><option>CDF</option></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Miller Name</label><input type="text" name="miller_name" id="editMillerName" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Country</label><select name="miller_country" id="editMillerCountry" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><?php foreach ($countries as $c): ?><option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option><?php endforeach; ?></select></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">County/District</label><input type="text" name="miller_region" id="editMillerRegion" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></div>
+                            <div><label class="block text-xs text-gray-600 mb-1">Currency</label><select name="miller_currency" id="editMillerCurrency" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"><option value="">Select</option><option>KES</option><option>UGX</option><option>TZS</option><option>RWF</option><option>BIF</option><option>SSP</option><option>ETB</option><option>SOS</option><option>CDF</option></select></div>
                             <div class="md:col-span-2"><label class="block text-xs text-gray-600 mb-1">Miller Details (JSON or text)</label><textarea name="miller_details" id="editMillerDetails" rows="3" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg"></textarea></div>
                         </div>
                     </div>
