@@ -175,7 +175,7 @@ if (isset($_GET['get_tradepoints'])) {
 }
 
 // ============================================================
-// EXPORT HANDLER
+// EXPORT ALL HANDLER
 // ============================================================
 if (isset($_GET['export_all'])) {
     if (file_exists('includes/config.php')) {
@@ -285,6 +285,123 @@ if (isset($_GET['export_all'])) {
 }
 
 // ============================================================
+// EXPORT SELECTED HANDLER
+// ============================================================
+if (isset($_GET['export_selected'])) {
+    if (file_exists('includes/config.php')) {
+        include 'includes/config.php';
+    } elseif (file_exists('../admin/includes/config.php')) {
+        include '../admin/includes/config.php';
+    }
+    while (ob_get_level()) ob_end_clean();
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="enumerators_selected_export_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    function getTradepointNameForExportSelected($con, $id, $type) {
+        $typeLower = strtolower(trim($type));
+
+        if ($typeLower == 'market' || $typeLower == 'markets') {
+            $stmt = $con->prepare("SELECT market_name as name FROM markets WHERE id = ? LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param("i", $id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($result && $result->num_rows > 0) {
+                    $row = $result->fetch_assoc();
+                    $stmt->close();
+                    return $row['name'];
+                }
+                $stmt->close();
+            }
+        } 
+        elseif ($typeLower == 'border point' || $typeLower == 'border points') {
+            $stmt = $con->prepare("SELECT name FROM border_points WHERE id = ? LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param("i", $id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($result && $result->num_rows > 0) {
+                    $row = $result->fetch_assoc();
+                    $stmt->close();
+                    return $row['name'];
+                }
+                $stmt->close();
+            }
+        } 
+        elseif ($typeLower == 'miller' || $typeLower == 'millers') {
+            $stmt = $con->prepare("SELECT miller_name as name FROM millers WHERE id = ? LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param("i", $id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($result && $result->num_rows > 0) {
+                    $row = $result->fetch_assoc();
+                    $stmt->close();
+                    return $row['name'];
+                }
+                $stmt->close();
+            }
+            $stmt = $con->prepare("SELECT miller_name as name FROM miller_details WHERE id = ? LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param("i", $id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($result && $result->num_rows > 0) {
+                    $row = $result->fetch_assoc();
+                    $stmt->close();
+                    return $row['name'];
+                }
+                $stmt->close();
+            }
+        }
+        return '';
+    }
+
+    $ids = $_SESSION['selected_enumerators'] ?? [];
+    if (empty($ids)) {
+        header('Location: ' . str_replace('?export_selected=1', '', $_SERVER['REQUEST_URI']));
+        exit;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $export_sql = "SELECT id, name, email, phone, gender, country, county_district, username, tradepoints, created_at FROM enumerators WHERE id IN ($placeholders) ORDER BY id DESC";
+    $stmt = $con->prepare($export_sql);
+    $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+    $stmt->execute();
+    $export_result = $stmt->get_result();
+
+    $output = fopen('php://output', 'w');
+    fputs($output, "\xEF\xBB\xBF");
+    fputcsv($output, ['ID', 'Name', 'Email', 'Phone', 'Gender', 'Country', 'County/District', 'Username', 'Assigned Tradepoints', 'Date Added']);
+
+    while ($row = $export_result->fetch_assoc()) {
+        $tradepoint_names = [];
+        $tps = json_decode($row['tradepoints'], true);
+        if (is_array($tps)) {
+            foreach ($tps as $tp) {
+                if (isset($tp['id'], $tp['type'])) {
+                    $name = getTradepointNameForExportSelected($con, $tp['id'], $tp['type']);
+                    if ($name) $tradepoint_names[] = $name . ' (' . $tp['type'] . ')';
+                }
+            }
+        }
+        fputcsv($output, [
+            $row['id'], $row['name'], $row['email'], $row['phone'],
+            $row['gender'], $row['country'], $row['county_district'],
+            $row['username'], implode('; ', $tradepoint_names),
+            date('Y-m-d', strtotime($row['created_at']))
+        ]);
+    }
+    fclose($output);
+    $stmt->close();
+    $con->close();
+    exit;
+}
+
+// ============================================================
 // CSV TEMPLATE DOWNLOAD
 // ============================================================
 if (isset($_GET['download_template'])) {
@@ -319,29 +436,54 @@ if (file_exists('includes/config.php')) {
 $message      = '';
 $message_type = '';
 
+// Initialize session selection if not exists
 if (!isset($_SESSION['selected_enumerators'])) {
     $_SESSION['selected_enumerators'] = [];
 }
 
-// Handle selection updates via AJAX
+// Handle AJAX selection updates
 if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
-    $id         = (int)$_POST['id'];
-    $isSelected = $_POST['selected'] === 'true';
-
-    if ($isSelected) {
-        if (!in_array($id, $_SESSION['selected_enumerators'])) {
-            $_SESSION['selected_enumerators'][] = $id;
-        }
-    } else {
-        $key = array_search($id, $_SESSION['selected_enumerators']);
-        if ($key !== false) {
-            unset($_SESSION['selected_enumerators'][$key]);
-            $_SESSION['selected_enumerators'] = array_values($_SESSION['selected_enumerators']);
-        }
-    }
     if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
         $_SESSION['selected_enumerators'] = [];
+    } else {
+        $id = (int)$_POST['id'];
+        $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+
+        if ($isSelected) {
+            if (!in_array($id, $_SESSION['selected_enumerators'])) {
+                $_SESSION['selected_enumerators'][] = $id;
+            }
+        } else {
+            $key = array_search($id, $_SESSION['selected_enumerators']);
+            if ($key !== false) {
+                unset($_SESSION['selected_enumerators'][$key]);
+                $_SESSION['selected_enumerators'] = array_values($_SESSION['selected_enumerators']);
+            }
+        }
     }
+    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_enumerators'])]);
+    exit;
+}
+
+// Bulk selection (select all on current page)
+if (isset($_POST['action']) && $_POST['action'] === 'update_selection_bulk') {
+    $ids = json_decode($_POST['ids'] ?? '[]', true) ?: [];
+    $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+
+    foreach ($ids as $id) {
+        $id = (int)$id;
+        if ($isSelected) {
+            if (!in_array($id, $_SESSION['selected_enumerators'])) {
+                $_SESSION['selected_enumerators'][] = $id;
+            }
+        } else {
+            $key = array_search($id, $_SESSION['selected_enumerators']);
+            if ($key !== false) {
+                unset($_SESSION['selected_enumerators'][$key]);
+            }
+        }
+    }
+    $_SESSION['selected_enumerators'] = array_values($_SESSION['selected_enumerators']);
     echo json_encode(['success' => true, 'count' => count($_SESSION['selected_enumerators'])]);
     exit;
 }
@@ -540,22 +682,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_enumerator'])) {
 }
 
 // ============================================================
-// DELETE SELECTED ENUMERATORS
+// DELETE HANDLERS
 // ============================================================
-if (isset($_POST['delete_selected']) && !empty($_POST['selected_ids'])) {
-    $selected_ids = array_map('intval', (array)$_POST['selected_ids']);
-    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
-    $stmt = $con->prepare("DELETE FROM enumerators WHERE id IN ($placeholders)");
-    if ($stmt) {
+
+// Single-row delete
+if (isset($_POST['delete_selected']) && isset($_POST['single_delete_id'])) {
+    $id = (int)$_POST['single_delete_id'];
+    $stmt = $con->prepare("DELETE FROM enumerators WHERE id = ?");
+    $stmt->bind_param("i", $id);
+    if ($stmt->execute() && $stmt->affected_rows > 0) {
+        $message = "Enumerator deleted successfully.";
+        $message_type = "success";
+        $key = array_search($id, $_SESSION['selected_enumerators']);
+        if ($key !== false) {
+            unset($_SESSION['selected_enumerators'][$key]);
+            $_SESSION['selected_enumerators'] = array_values($_SESSION['selected_enumerators']);
+        }
+    } else {
+        $message = "Error deleting enumerator.";
+        $message_type = "error";
+    }
+    $stmt->close();
+}
+
+// Bulk delete — everything currently selected, across ALL pages
+elseif (isset($_POST['delete_selected']) && isset($_POST['bulk_delete'])) {
+    $selected_ids = $_SESSION['selected_enumerators'] ?? [];
+    if (!empty($selected_ids)) {
+        $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+        $stmt = $con->prepare("DELETE FROM enumerators WHERE id IN ($placeholders)");
         $stmt->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
         if ($stmt->execute()) {
             $deleted = $stmt->affected_rows;
-            $message = "Successfully deleted $deleted enumerator(ies)."; 
+            $message = "Successfully deleted $deleted enumerator(s).";
             $message_type = "success";
-            $_SESSION['selected_enumerators'] = array_values(array_diff($_SESSION['selected_enumerators'], $selected_ids));
-            echo "<script>setTimeout(function() { window.location.href = window.location.pathname; }, 1500);</script>";
+            $_SESSION['selected_enumerators'] = [];
         } else {
-            $message = "Error deleting: " . $stmt->error; 
+            $message = "Error deleting: " . $stmt->error;
             $message_type = "error";
         }
         $stmt->close();
@@ -860,6 +1023,9 @@ if ($ctry_result) {
         $countries[] = $row['country'];
     }
 }
+
+// Get initial selected count for display
+$selected_count = count($_SESSION['selected_enumerators'] ?? []);
 ?>
 
 <!DOCTYPE html>
@@ -1022,13 +1188,19 @@ if ($ctry_result) {
                 <h1 class="text-2xl font-bold" style="color: #800000;">Enumerators Management</h1>
                 <p class="text-gray-600 text-sm mt-1">Manage field enumerators and their assignments</p>
             </div>
-            <div class="flex gap-2">
+            <div class="flex gap-2 flex-wrap">
                 <button onclick="openImportModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-all shadow-sm">
                     <span class="material-symbols-outlined text-base">upload_file</span>Import CSV
                 </button>
                 <a href="?export_all=1" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
                     <span class="material-symbols-outlined text-base">download</span>Export All CSV
                 </a>
+                <button id="bulkExportBtn" onclick="exportSelected()"
+                        <?= empty($_SESSION['selected_enumerators']) ? 'disabled' : '' ?>
+                        class="px-3 py-2 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1 shadow-sm">
+                    <span class="material-symbols-outlined text-base">file_download</span>
+                    Export Selected (<span class="selected-count-display"><?= $selected_count ?></span>)
+                </button>
                 <button onclick="openAddModal()" class="inline-flex items-center gap-1.5 px-4 py-2 text-white text-sm rounded-lg transition-all shadow-sm" style="background-color: #800000;">
                     <span class="material-symbols-outlined text-base">add_circle</span>Add Enumerator
                 </button>
@@ -1156,7 +1328,7 @@ if ($ctry_result) {
                     <span class="material-symbols-outlined text-base">clear</span>Clear Selected
                 </button>
                 <button id="bulkDeleteBtn" disabled class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
-                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span id="selectedCount">0</span>)
+                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span class="selected-count-display"><?= $selected_count ?></span>)
                 </button>
             </div>
         </div>
@@ -1207,7 +1379,7 @@ if ($ctry_result) {
                             <input type="checkbox" class="row-checkbox rounded border-gray-300"
                                    value="<?= $e['id'] ?>"
                                    <?= in_array($e['id'], $_SESSION['selected_enumerators']) ? 'checked' : '' ?>
-                                   onchange="updateSelection(this, <?= $e['id'] ?>)">
+                                   onchange="onCheckboxChange(this, <?= $e['id'] ?>)">
                         </td>
                         <td class="px-3 py-2 text-xs text-gray-600"><?= $e['id'] ?></td>
                         <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($e['name']) ?></td>
@@ -1501,6 +1673,13 @@ function closeModal(id) {
     document.body.style.overflow = 'auto';
 }
 
+// Refresh the selected count display
+function refreshSelectionCount(count) {
+    document.querySelectorAll('.selected-count-display').forEach(el => el.textContent = count);
+    document.getElementById('bulkDeleteBtn').disabled = count === 0;
+    document.getElementById('bulkExportBtn').disabled = count === 0;
+}
+
 // Load tradepoints from API
 async function loadTradepoints() {
     try {
@@ -1745,46 +1924,42 @@ function changeRowsPerPage(limit) {
     window.location.href = window.location.pathname + '?' + params.toString();
 }
 
-let selectedEnumeratorIds = new Set();
+// --- CROSS-PAGE SELECTION FUNCTIONS ---
 
-function updateSelection(checkbox, id) {
+function onCheckboxChange(checkbox, id) {
     const isSelected = checkbox.checked;
     
-    if (isSelected) {
-        selectedEnumeratorIds.add(id);
-    } else {
-        selectedEnumeratorIds.delete(id);
-    }
-    
-    fetch(window.location.href, {
+    fetch(window.location.pathname, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `action=update_selection&id=${id}&selected=${isSelected}`
-    }).catch(e => console.error(e));
+        body: new URLSearchParams({
+            action: 'update_selection',
+            id: id,
+            selected: isSelected
+        })
+    })
+    .then(res => res.json())
+    .then(data => refreshSelectionCount(data.count))
+    .catch(err => console.error('Selection persist failed', err));
     
-    updateSelectedCount();
+    // Update select-all checkbox state
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total = checkboxes.length;
+    const selAll = document.getElementById('selectAllCheckbox');
+    if (selAll) {
+        selAll.checked = checked > 0 && checked === total;
+        selAll.indeterminate = checked > 0 && checked < total;
+    }
 }
 
-function updateSelectedCount() {
-    const count = selectedEnumeratorIds.size;
-    const countEl = document.getElementById('selectedCount');
-    const deleteBtn = document.getElementById('bulkDeleteBtn');
-    if (countEl) countEl.textContent = count;
-    if (deleteBtn) deleteBtn.disabled = count === 0;
-    
-    const checkboxes = document.querySelectorAll('.row-checkbox');
-    const selectAll = document.getElementById('selectAllCheckbox');
-    if (selectAll && checkboxes.length > 0) {
-        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-        const someChecked = Array.from(checkboxes).some(cb => cb.checked);
-        selectAll.checked = allChecked;
-        selectAll.indeterminate = !allChecked && someChecked;
-    }
+function exportSelected() {
+    window.location.href = '?export_selected=1';
 }
 
 function deleteSingle(id, name) {
     document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${escapeHtml(name)}</strong>?`;
-    document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="selected_ids[]" value="${id}">`;
+    document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="single_delete_id" value="${id}">`;
     openModal('deleteModal');
 }
 
@@ -1797,10 +1972,27 @@ document.addEventListener('DOMContentLoaded', async function() {
     await loadTradepoints();
     setupTradepointSearch();
     
-    <?php foreach ($_SESSION['selected_enumerators'] as $id): ?>
-    selectedEnumeratorIds.add(<?= $id ?>);
-    <?php endforeach; ?>
-    updateSelectedCount();
+    // Initial selected count
+    refreshSelectionCount(<?= $selected_count ?>);
+    
+    // Set initial checkbox states
+    document.querySelectorAll('.row-checkbox').forEach(cb => {
+        if (cb.checked) {
+            const id = parseInt(cb.value);
+            <?php foreach ($_SESSION['selected_enumerators'] as $id): ?>
+            if (id === <?= $id ?>) cb.checked = true;
+            <?php endforeach; ?>
+        }
+    });
+    
+    // Update select-all state
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const selAll = document.getElementById('selectAllCheckbox');
+    if (selAll && checkboxes.length > 0) {
+        selAll.checked = checked > 0 && checked === checkboxes.length;
+        selAll.indeterminate = checked > 0 && checked < checkboxes.length;
+    }
     
     document.querySelectorAll('.sortable').forEach(th => {
         th.addEventListener('click', () => sortTable(th.dataset.sort));
@@ -1821,53 +2013,75 @@ document.addEventListener('DOMContentLoaded', async function() {
         genderSelect.addEventListener('change', applyFilters);
     }
     
+    // --- Select all on current page ---
     const selectAll = document.getElementById('selectAllCheckbox');
     if (selectAll) {
         selectAll.addEventListener('change', function() {
             const isChecked = this.checked;
-            document.querySelectorAll('.row-checkbox').forEach(cb => {
-                if (cb.checked !== isChecked) {
-                    cb.checked = isChecked;
-                    updateSelection(cb, parseInt(cb.value));
-                }
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            const ids = [];
+            checkboxes.forEach(cb => {
+                cb.checked = isChecked;
+                ids.push(parseInt(cb.value));
             });
-            updateSelectedCount();
+            
+            fetch(window.location.pathname, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    action: 'update_selection_bulk',
+                    ids: JSON.stringify(ids),
+                    selected: isChecked
+                })
+            })
+            .then(res => res.json())
+            .then(data => refreshSelectionCount(data.count))
+            .catch(err => console.error('Bulk selection failed', err));
         });
     }
     
+    // --- Clear selections ---
     const clearBtn = document.getElementById('clearSelectionsBtn');
     if (clearBtn) {
         clearBtn.addEventListener('click', function() {
             if (confirm('Clear all selections across all pages?')) {
-                document.querySelectorAll('.row-checkbox').forEach(cb => {
-                    cb.checked = false;
-                    updateSelection(cb, parseInt(cb.value));
-                });
-                updateSelectedCount();
+                document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+                const selAll = document.getElementById('selectAllCheckbox');
+                if (selAll) {
+                    selAll.checked = false;
+                    selAll.indeterminate = false;
+                }
                 
-                fetch(window.location.href, {
+                fetch(window.location.pathname, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: 'action=update_selection&clear_all=true'
-                }).catch(e => console.error(e));
+                    body: new URLSearchParams({
+                        action: 'update_selection',
+                        clear_all: 'true'
+                    })
+                })
+                .then(res => res.json())
+                .then(data => refreshSelectionCount(data.count))
+                .catch(err => console.error('Clear selection failed', err));
             }
         });
     }
     
+    // --- Bulk delete ---
     const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
     if (bulkDeleteBtn) {
         bulkDeleteBtn.addEventListener('click', function() {
-            const ids = Array.from(selectedEnumeratorIds);
-            if (ids.length === 0) return;
+            const count = parseInt(document.querySelector('.selected-count-display').textContent, 10) || 0;
+            if (count === 0) return;
             
-            document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${ids.length}</strong> selected enumerator(s)?`;
-            document.getElementById('deleteIdsContainer').innerHTML = ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+            document.getElementById('deleteModalText').innerHTML = 
+                `Are you sure you want to delete <strong>${count}</strong> selected enumerator(s) across all pages?`;
+            document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="bulk_delete" value="1">`;
             openModal('deleteModal');
         });
     }
 });
 </script>
-
 
 </body>
 </html>
