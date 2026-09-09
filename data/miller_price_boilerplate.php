@@ -1,9 +1,9 @@
 <?php
-// miller_prices.php
+// miller_price_boilerplate.php
 session_start();
 
 // ============================================================
-// EXPORT CSV — must run BEFORE admin_header.php is included
+// EXPORT ALL CSV — must run BEFORE admin_header.php is included
 // ============================================================
 if (isset($_GET['export_csv'])) {
     if (file_exists('includes/config.php')) include 'includes/config.php';
@@ -60,6 +60,60 @@ if (isset($_GET['export_csv'])) {
         ]);
     }
     fclose($out);
+    exit;
+}
+
+// ============================================================
+// EXPORT SELECTED CSV
+// ============================================================
+if (isset($_GET['export_selected'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+
+    $ids = $_SESSION['selected_miller_prices'] ?? [];
+    if (empty($ids)) {
+        header('Location: ' . str_replace('?export_selected=1', '', $_SERVER['REQUEST_URI']));
+        exit;
+    }
+
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="miller_prices_selected_export_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $exp_query = "SELECT 
+        mp.id, mp.country, mp.town, 
+        CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
+        mp.price, mp.price_usd, mp.day_change, mp.month_change,
+        DATE(mp.date_posted) as price_date, mp.status, ds.data_source_name as data_source
+        FROM miller_prices mp
+        LEFT JOIN commodities c ON mp.commodity_id = c.id
+        LEFT JOIN data_sources ds ON mp.data_source_id = ds.id
+        WHERE mp.id IN ($placeholders)
+        ORDER BY mp.date_posted DESC";
+    
+    $stmt = $con->prepare($exp_query);
+    $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+    $stmt->execute();
+    $exp_result = $stmt->get_result();
+
+    $out = fopen('php://output', 'w');
+    fputs($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['ID', 'Country', 'Town', 'Commodity', 'Price (Local)', 'Price (USD)', 'Day Change %', 'Month Change %', 'Date', 'Status', 'Data Source']);
+
+    while ($row = $exp_result->fetch_assoc()) {
+        fputcsv($out, [
+            $row['id'], $row['country'], $row['town'], $row['commodity_display'],
+            number_format($row['price'], 2, '.', ''), number_format($row['price_usd'], 2, '.', ''),
+            $row['day_change'] !== null ? $row['day_change'] . '%' : 'N/A',
+            $row['month_change'] !== null ? $row['month_change'] . '%' : 'N/A',
+            $row['price_date'], $row['status'], $row['data_source']
+        ]);
+    }
+    fclose($out);
+    $stmt->close();
     exit;
 }
 
@@ -124,7 +178,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['add_miller_price'])) {
         $_SESSION['import_status'] = "danger";
     }
     $stmt->close();
-    header("Location: miller_prices.php");
+    header("Location: miller_price_boilerplate.php");
     exit;
 }
 
@@ -188,33 +242,61 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_miller_price'])) 
         $_SESSION['import_status'] = "danger";
     }
     $stmt->close();
-    header("Location: miller_prices.php");
+    header("Location: miller_price_boilerplate.php");
     exit;
 }
 
 // ============================================================
-// POST: Delete Miller Prices
+// DELETE HANDLERS
 // ============================================================
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['delete_selected']) && !empty($_POST['selected_ids'])) {
+
+// Single-row delete
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['delete_selected']) && isset($_POST['single_delete_id'])) {
     if (file_exists('includes/config.php')) include 'includes/config.php';
     elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
     
-    $selected_ids = array_map('intval', (array)$_POST['selected_ids']);
-    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
-    $stmt = $con->prepare("DELETE FROM miller_prices WHERE id IN ($placeholders)");
-    if ($stmt) {
+    $id = (int)$_POST['single_delete_id'];
+    $stmt = $con->prepare("DELETE FROM miller_prices WHERE id = ?");
+    $stmt->bind_param("i", $id);
+    if ($stmt->execute() && $stmt->affected_rows > 0) {
+        $_SESSION['import_message'] = "Miller price deleted successfully!";
+        $_SESSION['import_status'] = "success";
+        $key = array_search($id, $_SESSION['selected_miller_prices'] ?? []);
+        if ($key !== false) {
+            unset($_SESSION['selected_miller_prices'][$key]);
+            $_SESSION['selected_miller_prices'] = array_values($_SESSION['selected_miller_prices']);
+        }
+    } else {
+        $_SESSION['import_message'] = "Error deleting miller price.";
+        $_SESSION['import_status'] = "danger";
+    }
+    $stmt->close();
+    header("Location: miller_price_boilerplate.php");
+    exit;
+}
+
+// Bulk delete — everything currently selected, across ALL pages
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['delete_selected']) && isset($_POST['bulk_delete'])) {
+    if (file_exists('includes/config.php')) include 'includes/config.php';
+    elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+    
+    $selected_ids = $_SESSION['selected_miller_prices'] ?? [];
+    if (!empty($selected_ids)) {
+        $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+        $stmt = $con->prepare("DELETE FROM miller_prices WHERE id IN ($placeholders)");
         $stmt->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
         if ($stmt->execute()) {
             $deleted = $stmt->affected_rows;
             $_SESSION['import_message'] = "Successfully deleted $deleted miller price(s).";
             $_SESSION['import_status'] = "success";
+            $_SESSION['selected_miller_prices'] = [];
         } else {
             $_SESSION['import_message'] = "Error deleting: " . $stmt->error;
             $_SESSION['import_status'] = "danger";
         }
         $stmt->close();
     }
-    header("Location: miller_prices.php");
+    header("Location: miller_price_boilerplate.php");
     exit;
 }
 
@@ -242,7 +324,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['bulk_status_update']) 
         }
         $stmt->close();
     }
-    header("Location: miller_prices.php");
+    header("Location: miller_price_boilerplate.php");
     exit;
 }
 
@@ -397,7 +479,7 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
         $_SESSION['import_status'] = "danger";
     }
     fclose($handle);
-    header("Location: miller_prices.php");
+    header("Location: miller_price_boilerplate.php");
     exit;
 }
 
@@ -438,6 +520,65 @@ if (isset($_GET['get_miller_price']) && is_numeric($_GET['get_miller_price'])) {
 }
 
 // ============================================================
+// AJAX SELECTION HANDLERS
+// ============================================================
+
+// Single item selection
+if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
+    if (!isset($_SESSION['selected_miller_prices'])) {
+        $_SESSION['selected_miller_prices'] = [];
+    }
+    
+    if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
+        $_SESSION['selected_miller_prices'] = [];
+    } else {
+        $id = (int)$_POST['id'];
+        $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+        
+        if ($isSelected) {
+            if (!in_array($id, $_SESSION['selected_miller_prices'])) {
+                $_SESSION['selected_miller_prices'][] = $id;
+            }
+        } else {
+            $key = array_search($id, $_SESSION['selected_miller_prices']);
+            if ($key !== false) {
+                unset($_SESSION['selected_miller_prices'][$key]);
+                $_SESSION['selected_miller_prices'] = array_values($_SESSION['selected_miller_prices']);
+            }
+        }
+    }
+    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_miller_prices'])]);
+    exit;
+}
+
+// Bulk selection (select all on current page)
+if (isset($_POST['action']) && $_POST['action'] === 'update_selection_bulk') {
+    if (!isset($_SESSION['selected_miller_prices'])) {
+        $_SESSION['selected_miller_prices'] = [];
+    }
+    
+    $ids = json_decode($_POST['ids'] ?? '[]', true) ?: [];
+    $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+    
+    foreach ($ids as $id) {
+        $id = (int)$id;
+        if ($isSelected) {
+            if (!in_array($id, $_SESSION['selected_miller_prices'])) {
+                $_SESSION['selected_miller_prices'][] = $id;
+            }
+        } else {
+            $key = array_search($id, $_SESSION['selected_miller_prices']);
+            if ($key !== false) {
+                unset($_SESSION['selected_miller_prices'][$key]);
+            }
+        }
+    }
+    $_SESSION['selected_miller_prices'] = array_values($_SESSION['selected_miller_prices']);
+    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_miller_prices'])]);
+    exit;
+}
+
+// ============================================================
 // CHECK ADMIN LOGIN
 // ============================================================
 require_once '../admin/includes/admin_header.php';
@@ -452,6 +593,11 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 // ============================================================
 if (file_exists('includes/config.php')) include 'includes/config.php';
 elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
+
+// Initialize session selection if not exists
+if (!isset($_SESSION['selected_miller_prices'])) {
+    $_SESSION['selected_miller_prices'] = [];
+}
 
 // ============================================================
 // STATISTICS
@@ -475,6 +621,8 @@ $distinct_countries = [];
 while ($row = $countries_result->fetch_assoc()) {
     $distinct_countries[] = $row['country'];
 }
+
+$selected_count = count($_SESSION['selected_miller_prices']);
 
 // ============================================================
 // PAGINATION + SORTING + FILTERING
@@ -654,8 +802,14 @@ function getChangeIcon($change) {
             </div>
             <div class="flex gap-2 flex-wrap">
                 <a href="?export_csv=1&search_country=<?= urlencode($search_country) ?>&search_town=<?= urlencode($search_town) ?>&search_commodity=<?= urlencode($search_commodity) ?>&filter_status=<?= urlencode($filter_status) ?>" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
-                    <span class="material-symbols-outlined text-base">download</span>Export CSV
+                    <span class="material-symbols-outlined text-base">download</span>Export All CSV
                 </a>
+                <button id="bulkExportBtn" onclick="exportSelected()"
+                        <?= empty($_SESSION['selected_miller_prices']) ? 'disabled' : '' ?>
+                        class="px-3 py-2 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1 shadow-sm">
+                    <span class="material-symbols-outlined text-base">file_download</span>
+                    Export Selected (<span class="selected-count-display"><?= $selected_count ?></span>)
+                </button>
                 <button onclick="openImportModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-all shadow-sm">
                     <span class="material-symbols-outlined text-base">upload_file</span>Import CSV
                 </button>
@@ -763,7 +917,7 @@ function getChangeIcon($change) {
                     <span class="material-symbols-outlined text-base">clear</span>Clear Selected
                 </button>
                 <button id="bulkDeleteBtn" disabled class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
-                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span id="selectedCount">0</span>)
+                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span class="selected-count-display"><?= $selected_count ?></span>)
                 </button>
             </div>
         </div>
@@ -825,7 +979,9 @@ function getChangeIcon($change) {
                     ?>
                     <tr class="table-row-hover" data-id="<?= $price['id'] ?>">
                         <td class="px-3 py-2">
-                            <input type="checkbox" class="row-checkbox rounded border-gray-300" value="<?= $price['id'] ?>" onchange="onCheckboxChange()">
+                            <input type="checkbox" class="row-checkbox rounded border-gray-300" value="<?= $price['id'] ?>"
+                                   <?= in_array($price['id'], $_SESSION['selected_miller_prices']) ? 'checked' : '' ?>
+                                   onchange="onCheckboxChange(this, <?= $price['id'] ?>)">
                         </td>
                         <td class="px-3 py-2 text-xs text-gray-500"><?= $price['id'] ?></td>
                         <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($price['country']) ?></td>
@@ -1172,6 +1328,45 @@ function sortTable(col) {
     window.location.href = buildUrl({ page: 1, sort: col, dir: newDir });
 }
 
+// --- SELECTION FUNCTIONS ---
+function refreshSelectionCount(count) {
+    document.querySelectorAll('.selected-count-display').forEach(el => el.textContent = count);
+    document.getElementById('bulkDeleteBtn').disabled = count === 0;
+    document.getElementById('bulkExportBtn').disabled = count === 0;
+    document.getElementById('bulkStatusBtn').disabled = count === 0;
+}
+
+function onCheckboxChange(checkbox, id) {
+    const isSelected = checkbox.checked;
+    
+    fetch(window.location.pathname, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            action: 'update_selection',
+            id: id,
+            selected: isSelected
+        })
+    })
+    .then(res => res.json())
+    .then(data => refreshSelectionCount(data.count))
+    .catch(err => console.error('Selection persist failed', err));
+    
+    // Update select-all checkbox state
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total = checkboxes.length;
+    const selAll = document.getElementById('selectAllCheckbox');
+    if (selAll) {
+        selAll.checked = checked > 0 && checked === total;
+        selAll.indeterminate = checked > 0 && checked < total;
+    }
+}
+
+function exportSelected() {
+    window.location.href = '?export_selected=1';
+}
+
 // Add modal
 function openAddModal() {
     document.getElementById('modalTitle').textContent = 'Add Miller Price';
@@ -1213,20 +1408,8 @@ function editMillerPrice(id) {
 // Delete functions
 function deleteSingle(id, label) {
     document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${escapeHtml(label)}</strong>?`;
-    document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="selected_ids[]" value="${id}">`;
+    document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="single_delete_id" value="${id}">`;
     openModal('deleteModal');
-}
-
-// Checkbox handling
-function onCheckboxChange() {
-    const checked = document.querySelectorAll('.row-checkbox:checked').length;
-    const total = document.querySelectorAll('.row-checkbox').length;
-    const selAll = document.getElementById('selectAllCheckbox');
-    document.getElementById('selectedCount').textContent = checked;
-    document.getElementById('bulkDeleteBtn').disabled = checked === 0;
-    document.getElementById('bulkStatusBtn').disabled = checked === 0;
-    selAll.checked = checked > 0 && checked === total;
-    selAll.indeterminate = checked > 0 && checked < total;
 }
 
 // Import modal functions
@@ -1260,26 +1443,77 @@ function escapeHtml(str) {
 
 // DOMContentLoaded
 document.addEventListener('DOMContentLoaded', function() {
+    // Initial selected count
+    refreshSelectionCount(<?= $selected_count ?>);
+    
+    // Set initial checkbox states
+    document.querySelectorAll('.row-checkbox').forEach(cb => {
+        const id = parseInt(cb.value);
+        <?php foreach ($_SESSION['selected_miller_prices'] as $id): ?>
+        if (id === <?= $id ?>) cb.checked = true;
+        <?php endforeach; ?>
+    });
+    
+    // Update select-all state
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const selAll = document.getElementById('selectAllCheckbox');
+    if (selAll && checkboxes.length > 0) {
+        selAll.checked = checked > 0 && checked === checkboxes.length;
+        selAll.indeterminate = checked > 0 && checked < checkboxes.length;
+    }
+    
     // Select-all checkbox
     document.getElementById('selectAllCheckbox')?.addEventListener('change', function() {
-        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = this.checked);
-        onCheckboxChange();
+        const isChecked = this.checked;
+        const checkboxes = document.querySelectorAll('.row-checkbox');
+        const ids = [];
+        checkboxes.forEach(cb => {
+            cb.checked = isChecked;
+            ids.push(parseInt(cb.value));
+        });
+        
+        fetch(window.location.pathname, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                action: 'update_selection_bulk',
+                ids: JSON.stringify(ids),
+                selected: isChecked
+            })
+        })
+        .then(res => res.json())
+        .then(data => refreshSelectionCount(data.count))
+        .catch(err => console.error('Bulk selection failed', err));
     });
     
     // Clear selections
     document.getElementById('clearSelectionsBtn')?.addEventListener('click', function() {
-        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
-        document.getElementById('selectAllCheckbox').checked = false;
-        document.getElementById('selectAllCheckbox').indeterminate = false;
-        onCheckboxChange();
+        if (confirm('Clear all selections across all pages?')) {
+            document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+            document.getElementById('selectAllCheckbox').checked = false;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            
+            fetch(window.location.pathname, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    action: 'update_selection',
+                    clear_all: 'true'
+                })
+            })
+            .then(res => res.json())
+            .then(data => refreshSelectionCount(data.count))
+            .catch(err => console.error('Clear selection failed', err));
+        }
     });
     
     // Bulk delete
     document.getElementById('bulkDeleteBtn')?.addEventListener('click', function() {
-        const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
-        if (!ids.length) return;
-        document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${ids.length}</strong> selected price(s)?`;
-        document.getElementById('deleteIdsContainer').innerHTML = ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+        const count = parseInt(document.querySelector('.selected-count-display').textContent, 10) || 0;
+        if (count === 0) return;
+        document.getElementById('deleteModalText').innerHTML = `Are you sure you want to delete <strong>${count}</strong> selected price(s) across all pages?`;
+        document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="bulk_delete" value="1">`;
         openModal('deleteModal');
     });
     
@@ -1309,8 +1543,6 @@ document.addEventListener('DOMContentLoaded', function() {
     ['searchCommodity'].forEach(id => {
         document.getElementById(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
     });
-    
-    onCheckboxChange();
 });
 </script>
 
