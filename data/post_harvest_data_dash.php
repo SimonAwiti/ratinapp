@@ -1,18 +1,17 @@
 <?php
 // admin/harvest_dashboard.php - Post-Harvest Data Dashboard
 // ─────────────────────────────────────────────────────────────
-// FIX (this version): the "View Details" and "Review" action buttons in
-// each table row live inside <form id="bulkForm"> but had no type
-// attribute, so browsers defaulted them to type="submit". Clicking them
-// opened the modal via onclick AND submitted bulkForm at the same time,
-// reloading the page and killing the modal almost immediately. Both
-// buttons now explicitly declare type="button" so they only run their
-// onclick handler.
-// ─────────────────────────────────────────────────────────────
+// This version includes cross-page selection, export selected,
+// and persistent session-based selection across pagination.
 
 if (session_status() == PHP_SESSION_NONE) session_start();
 include '../admin/includes/config.php';
 include '../admin/includes/admin_header.php';
+
+// Initialize session selection if not exists
+if (!isset($_SESSION['selected_harvest_submissions'])) {
+    $_SESSION['selected_harvest_submissions'] = [];
+}
 
 // ── Handle POST actions ──
 $action_result = ['success' => false, 'msg' => ''];
@@ -20,7 +19,56 @@ $action_result = ['success' => false, 'msg' => ''];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     
-    // Update status
+    // ── AJAX: Update selection ──
+    if ($action === 'update_selection') {
+        header('Content-Type: application/json');
+        if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
+            $_SESSION['selected_harvest_submissions'] = [];
+        } else {
+            $id = (int)$_POST['id'];
+            $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+            
+            if ($isSelected) {
+                if (!in_array($id, $_SESSION['selected_harvest_submissions'])) {
+                    $_SESSION['selected_harvest_submissions'][] = $id;
+                }
+            } else {
+                $key = array_search($id, $_SESSION['selected_harvest_submissions']);
+                if ($key !== false) {
+                    unset($_SESSION['selected_harvest_submissions'][$key]);
+                    $_SESSION['selected_harvest_submissions'] = array_values($_SESSION['selected_harvest_submissions']);
+                }
+            }
+        }
+        echo json_encode(['success' => true, 'count' => count($_SESSION['selected_harvest_submissions'])]);
+        exit;
+    }
+    
+    // ── AJAX: Bulk selection ──
+    if ($action === 'update_selection_bulk') {
+        header('Content-Type: application/json');
+        $ids = json_decode($_POST['ids'] ?? '[]', true) ?: [];
+        $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+        
+        foreach ($ids as $id) {
+            $id = (int)$id;
+            if ($isSelected) {
+                if (!in_array($id, $_SESSION['selected_harvest_submissions'])) {
+                    $_SESSION['selected_harvest_submissions'][] = $id;
+                }
+            } else {
+                $key = array_search($id, $_SESSION['selected_harvest_submissions']);
+                if ($key !== false) {
+                    unset($_SESSION['selected_harvest_submissions'][$key]);
+                }
+            }
+        }
+        $_SESSION['selected_harvest_submissions'] = array_values($_SESSION['selected_harvest_submissions']);
+        echo json_encode(['success' => true, 'count' => count($_SESSION['selected_harvest_submissions'])]);
+        exit;
+    }
+    
+    // ── Update status ──
     if ($action === 'update_status' && isset($_POST['submission_id'], $_POST['status'])) {
         $id = (int)$_POST['submission_id'];
         $status = in_array($_POST['status'], ['pending','approved','rejected']) ? $_POST['status'] : 'pending';
@@ -30,13 +78,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->bind_param('ssi', $status, $admin_notes, $id);
         if ($stmt->execute()) {
             $action_result = ['success' => true, 'msg' => 'Status updated successfully'];
+            // Remove from session if deleted/rejected
+            if ($status === 'rejected') {
+                $key = array_search($id, $_SESSION['selected_harvest_submissions']);
+                if ($key !== false) {
+                    unset($_SESSION['selected_harvest_submissions'][$key]);
+                    $_SESSION['selected_harvest_submissions'] = array_values($_SESSION['selected_harvest_submissions']);
+                }
+            }
         } else {
             $action_result = ['success' => false, 'msg' => 'Failed to update status'];
         }
         $stmt->close();
     }
     
-    // Bulk action
+    // ── Bulk action ──
     if ($action === 'bulk_action' && isset($_POST['bulk_ids'], $_POST['bulk_status'])) {
         $ids = array_filter(array_map('intval', explode(',', $_POST['bulk_ids'])));
         $bulk_status = in_array($_POST['bulk_status'], ['pending','approved','rejected']) ? $_POST['bulk_status'] : 'pending';
@@ -48,6 +104,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param('s' . $types, $bulk_status, ...$ids);
             if ($stmt->execute()) {
                 $action_result = ['success' => true, 'msg' => count($ids) . ' items updated successfully'];
+                // Remove from session if rejected
+                if ($bulk_status === 'rejected') {
+                    foreach ($ids as $id) {
+                        $key = array_search($id, $_SESSION['selected_harvest_submissions']);
+                        if ($key !== false) {
+                            unset($_SESSION['selected_harvest_submissions'][$key]);
+                        }
+                    }
+                    $_SESSION['selected_harvest_submissions'] = array_values($_SESSION['selected_harvest_submissions']);
+                }
             } else {
                 $action_result = ['success' => false, 'msg' => 'Bulk update failed'];
             }
@@ -55,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    // Delete submissions
+    // ── Delete submissions (single or bulk) ──
     if ($action === 'delete_submissions' && isset($_POST['bulk_ids'])) {
         $ids = array_filter(array_map('intval', explode(',', $_POST['bulk_ids'])));
         if (!empty($ids)) {
@@ -64,7 +130,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $con->prepare("DELETE FROM harvest_submissions WHERE id IN ($placeholders)");
             $stmt->bind_param($types, ...$ids);
             if ($stmt->execute()) {
-                $action_result = ['success' => true, 'msg' => count($ids) . ' items deleted successfully'];
+                $deleted = $stmt->affected_rows;
+                $action_result = ['success' => true, 'msg' => $deleted . ' items deleted successfully'];
+                // Remove from session
+                foreach ($ids as $id) {
+                    $key = array_search($id, $_SESSION['selected_harvest_submissions']);
+                    if ($key !== false) {
+                        unset($_SESSION['selected_harvest_submissions'][$key]);
+                    }
+                }
+                $_SESSION['selected_harvest_submissions'] = array_values($_SESSION['selected_harvest_submissions']);
             } else {
                 $action_result = ['success' => false, 'msg' => 'Delete failed'];
             }
@@ -72,7 +147,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    // Export
+    // ── Single delete ──
+    if ($action === 'delete_single' && isset($_POST['single_id'])) {
+        $id = (int)$_POST['single_id'];
+        $stmt = $con->prepare("DELETE FROM harvest_submissions WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        if ($stmt->execute() && $stmt->affected_rows > 0) {
+            $action_result = ['success' => true, 'msg' => 'Submission deleted successfully'];
+            $key = array_search($id, $_SESSION['selected_harvest_submissions']);
+            if ($key !== false) {
+                unset($_SESSION['selected_harvest_submissions'][$key]);
+                $_SESSION['selected_harvest_submissions'] = array_values($_SESSION['selected_harvest_submissions']);
+            }
+        } else {
+            $action_result = ['success' => false, 'msg' => 'Failed to delete submission'];
+        }
+        $stmt->close();
+    }
+    
+    // ── Export ──
     if ($action === 'export_harvest') {
         $format = $_POST['export_format'] ?? 'csv';
         $filter_status = $_POST['filter_status'] ?? '';
@@ -80,109 +173,121 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $date_from = $_POST['date_from'] ?? '';
         $date_to = $_POST['date_to'] ?? '';
         $selected_ids = isset($_POST['selected_ids']) ? $_POST['selected_ids'] : '';
+        $export_type = $_POST['export_type'] ?? 'all';
         
         $where = ['1=1'];
         $params = [];
         $types = '';
         
-        if ($filter_status && $filter_status !== 'all') {
-            $where[] = "status = ?";
-            $params[] = $filter_status;
-            $types .= 's';
-        }
-        if ($filter_crop && $filter_crop !== 'all') {
-            $where[] = "crop_type = ?";
-            $params[] = $filter_crop;
-            $types .= 's';
-        }
-        if ($date_from && $date_to) {
-            $where[] = "submission_date BETWEEN ? AND ?";
-            $params[] = $date_from . ' 00:00:00';
-            $params[] = $date_to . ' 23:59:59';
-            $types .= 'ss';
-        } elseif ($date_from) {
-            $where[] = "submission_date >= ?";
-            $params[] = $date_from . ' 00:00:00';
-            $types .= 's';
-        } elseif ($date_to) {
-            $where[] = "submission_date <= ?";
-            $params[] = $date_to . ' 23:59:59';
-            $types .= 's';
-        }
-        
-        if (!empty($selected_ids)) {
-            $id_array = array_filter(array_map('intval', explode(',', $selected_ids)));
-            if (!empty($id_array)) {
-                $placeholders = implode(',', array_fill(0, count($id_array), '?'));
+        // If exporting selected, use the session
+        if ($export_type === 'selected') {
+            $ids = $_SESSION['selected_harvest_submissions'] ?? [];
+            if (!empty($ids)) {
+                $placeholders = implode(',', array_fill(0, count($ids), '?'));
                 $where[] = "id IN ($placeholders)";
-                foreach ($id_array as $id) {
+                foreach ($ids as $id) {
                     $params[] = $id;
                     $types .= 'i';
                 }
+            } else {
+                $action_result = ['success' => false, 'msg' => 'No items selected for export'];
+                // Fall through - don't proceed with export
+                $export_type = 'none';
+            }
+        } elseif ($export_type === 'all' || $export_type === 'filtered') {
+            if ($filter_status && $filter_status !== 'all') {
+                $where[] = "status = ?";
+                $params[] = $filter_status;
+                $types .= 's';
+            }
+            if ($filter_crop && $filter_crop !== 'all') {
+                $where[] = "crop_type = ?";
+                $params[] = $filter_crop;
+                $types .= 's';
+            }
+            if ($date_from && $date_to) {
+                $where[] = "submission_date BETWEEN ? AND ?";
+                $params[] = $date_from . ' 00:00:00';
+                $params[] = $date_to . ' 23:59:59';
+                $types .= 'ss';
+            } elseif ($date_from) {
+                $where[] = "submission_date >= ?";
+                $params[] = $date_from . ' 00:00:00';
+                $types .= 's';
+            } elseif ($date_to) {
+                $where[] = "submission_date <= ?";
+                $params[] = $date_to . ' 23:59:59';
+                $types .= 's';
             }
         }
         
-        $sql = "SELECT 
-            id, submission_uuid, farmer_id, full_name, gender, age_group,
-            contact_details, cooperative, county, sub_county, ward, village,
-            crop_type, variety, season, harvest_date,
-            total_production, total_production_unit, yield_value,
-            qty_stored_kg, qty_lost, quantity_sold_kg, quantity_retained_kg,
-            selling_price, market_type, date_of_sale,
-            posted_by_name, posted_by_email, posted_by_username,
-            status, submission_date
-            FROM harvest_submissions 
-            WHERE " . implode(' AND ', $where) . " 
-            ORDER BY submission_date DESC";
-        
-        $stmt = $con->prepare($sql);
-        if (!empty($params)) {
-            $stmt->bind_param($types, ...$params);
-        }
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $data = [];
-        while ($row = $result->fetch_assoc()) {
-            $data[] = $row;
-        }
-        $stmt->close();
-        
-        if ($format === 'csv') {
-            header('Content-Type: text/csv; charset=utf-8');
-            header('Content-Disposition: attachment; filename="harvest_data_' . date('Y-m-d') . '.csv"');
-            $out = fopen('php://output', 'w');
-            fputs($out, "\xEF\xBB\xBF");
-            fputcsv($out, [
-                'ID','UUID','Farmer ID','Full Name','Gender','Age Group',
-                'Contact','Cooperative','County','Sub County','Ward','Village',
-                'Crop Type','Variety','Season','Harvest Date',
-                'Total Production','Unit','Yield',
-                'Stored (kg)','Lost (kg)','Sold (kg)','Retained (kg)',
-                'Selling Price','Market Type','Date of Sale',
-                'Posted By','Posted Email','Posted Username',
-                'Status','Submission Date'
-            ]);
-            foreach ($data as $row) {
+        // If export_type is 'none', skip
+        if ($export_type === 'none') {
+            // Don't export, just show error
+        } else {
+            $sql = "SELECT 
+                id, submission_uuid, farmer_id, full_name, gender, age_group,
+                contact_details, cooperative, county, sub_county, ward, village,
+                crop_type, variety, season, harvest_date,
+                total_production, total_production_unit, yield_value,
+                qty_stored_kg, qty_lost, quantity_sold_kg, quantity_retained_kg,
+                selling_price, market_type, date_of_sale,
+                posted_by_name, posted_by_email, posted_by_username,
+                status, submission_date
+                FROM harvest_submissions 
+                WHERE " . implode(' AND ', $where) . " 
+                ORDER BY submission_date DESC";
+            
+            $stmt = $con->prepare($sql);
+            if (!empty($params)) {
+                $stmt->bind_param($types, ...$params);
+            }
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $data = [];
+            while ($row = $result->fetch_assoc()) {
+                $data[] = $row;
+            }
+            $stmt->close();
+            
+            if ($format === 'csv') {
+                header('Content-Type: text/csv; charset=utf-8');
+                $filename = ($export_type === 'selected') ? 'harvest_data_selected_' : 'harvest_data_';
+                header('Content-Disposition: attachment; filename="' . $filename . date('Y-m-d') . '.csv"');
+                $out = fopen('php://output', 'w');
+                fputs($out, "\xEF\xBB\xBF");
                 fputcsv($out, [
-                    $row['id'], $row['submission_uuid'], $row['farmer_id'],
-                    $row['full_name'], $row['gender'], $row['age_group'],
-                    $row['contact_details'], $row['cooperative'],
-                    $row['county'], $row['sub_county'], $row['ward'], $row['village'],
-                    $row['crop_type'], $row['variety'], $row['season'],
-                    $row['harvest_date'],
-                    $row['total_production'], $row['total_production_unit'],
-                    $row['yield_value'],
-                    $row['qty_stored_kg'], $row['qty_lost'],
-                    $row['quantity_sold_kg'], $row['quantity_retained_kg'],
-                    $row['selling_price'], $row['market_type'],
-                    $row['date_of_sale'],
-                    $row['posted_by_name'], $row['posted_by_email'],
-                    $row['posted_by_username'],
-                    $row['status'], $row['submission_date']
+                    'ID','UUID','Farmer ID','Full Name','Gender','Age Group',
+                    'Contact','Cooperative','County','Sub County','Ward','Village',
+                    'Crop Type','Variety','Season','Harvest Date',
+                    'Total Production','Unit','Yield',
+                    'Stored (kg)','Lost (kg)','Sold (kg)','Retained (kg)',
+                    'Selling Price','Market Type','Date of Sale',
+                    'Posted By','Posted Email','Posted Username',
+                    'Status','Submission Date'
                 ]);
+                foreach ($data as $row) {
+                    fputcsv($out, [
+                        $row['id'], $row['submission_uuid'], $row['farmer_id'],
+                        $row['full_name'], $row['gender'], $row['age_group'],
+                        $row['contact_details'], $row['cooperative'],
+                        $row['county'], $row['sub_county'], $row['ward'], $row['village'],
+                        $row['crop_type'], $row['variety'], $row['season'],
+                        $row['harvest_date'],
+                        $row['total_production'], $row['total_production_unit'],
+                        $row['yield_value'],
+                        $row['qty_stored_kg'], $row['qty_lost'],
+                        $row['quantity_sold_kg'], $row['quantity_retained_kg'],
+                        $row['selling_price'], $row['market_type'],
+                        $row['date_of_sale'],
+                        $row['posted_by_name'], $row['posted_by_email'],
+                        $row['posted_by_username'],
+                        $row['status'], $row['submission_date']
+                    ]);
+                }
+                fclose($out);
+                exit;
             }
-            fclose($out);
-            exit;
         }
     }
 }
@@ -295,6 +400,9 @@ $stats = $stats_result->fetch_assoc();
 // ── Get distinct values for filters ──
 $crops = $con->query("SELECT DISTINCT crop_type FROM harvest_submissions ORDER BY crop_type")->fetch_all(MYSQLI_ASSOC);
 $enumerators = $con->query("SELECT DISTINCT posted_by_id, posted_by_name, posted_by_username FROM harvest_submissions WHERE posted_by_id IS NOT NULL ORDER BY posted_by_name")->fetch_all(MYSQLI_ASSOC);
+
+// ── Get selected count for display ──
+$selected_count = count($_SESSION['selected_harvest_submissions'] ?? []);
 
 // ── Helper functions ──
 function getStatusBadge($status) {
@@ -690,7 +798,7 @@ function getCropIcon($crop) {
         <div class="hs-toolbar-left">
             <button type="button" class="hs-btn danger" id="bulkDeleteBtn" disabled onclick="deleteSelected()">
                 <span class="material-symbols-outlined">delete</span> Delete
-                <span class="hs-badge-count" id="selectedCount" style="background:rgba(0,0,0,.1);color:inherit;">0</span>
+                <span class="hs-badge-count" id="selectedCount" style="background:rgba(0,0,0,.1);color:inherit;"><?= $selected_count ?></span>
             </button>
             <button type="button" class="hs-btn ghost" onclick="clearAllSelections()">
                 <span class="material-symbols-outlined">clear</span> Clear Selected
@@ -703,6 +811,9 @@ function getCropIcon($crop) {
             </button>
         </div>
         <div class="hs-toolbar-right">
+            <button type="button" class="hs-btn" id="bulkExportBtn" onclick="exportSelected()" <?= empty($_SESSION['selected_harvest_submissions']) ? 'disabled' : '' ?>>
+                <span class="material-symbols-outlined">download</span> Export Selected (<span class="selected-count-display"><?= $selected_count ?></span>)
+            </button>
             <button type="button" class="hs-btn" onclick="exportAll('csv')">
                 <span class="material-symbols-outlined">download</span> Export All
             </button>
@@ -807,9 +918,13 @@ function getCropIcon($crop) {
                             </td>
                         </tr>
                         <?php else: ?>
-                        <?php foreach ($submissions as $row): ?>
+                        <?php foreach ($submissions as $row):
+                            $is_selected = in_array($row['id'], $_SESSION['selected_harvest_submissions'] ?? []);
+                        ?>
                         <tr class="<?= $row['status'] === 'pending' ? 'hs-pending-row' : '' ?>" data-id="<?= $row['id'] ?>">
-                            <td><input type="checkbox" class="hs-check row-checkbox" value="<?= $row['id'] ?>" onchange="updateBulkCount()"></td>
+                            <td><input type="checkbox" class="hs-check row-checkbox" value="<?= $row['id'] ?>" 
+                                       <?= $is_selected ? 'checked' : '' ?>
+                                       onchange="onCheckboxChange(this, <?= $row['id'] ?>)"></td>
                             <td><span class="font-mono text-sm">#<?= $row['id'] ?></span></td>
                             <td><span class="font-mono text-xs"><?= htmlspecialchars($row['farmer_id']) ?></span></td>
                             <td>
@@ -838,12 +953,10 @@ function getCropIcon($crop) {
                             </td>
                             <td>
                                 <div class="flex items-center gap-1">
-                                    <!-- FIX: type="button" prevents this from also submitting bulkForm -->
                                     <button type="button" onclick="viewSubmission(<?= $row['id'] ?>)" class="hs-action-btn" title="View Details">
                                         <span class="material-symbols-outlined text-sm">visibility</span>
                                     </button>
                                     <?php if ($row['status'] === 'pending'): ?>
-                                    <!-- FIX: type="button" prevents this from also submitting bulkForm -->
                                     <button type="button" onclick="reviewSubmission(<?= $row['id'] ?>)" class="hs-action-btn success" title="Review">
                                         <span class="material-symbols-outlined text-sm">rate_review</span>
                                     </button>
@@ -984,28 +1097,95 @@ function getCropIcon($crop) {
 
 <script>
 // ── Bulk Selection ──
+function refreshSelectionCount(count) {
+    document.querySelectorAll('.selected-count-display').forEach(el => el.textContent = count);
+    document.getElementById('selectedCount').textContent = count;
+    document.getElementById('bulkDeleteBtn').disabled = count === 0;
+    document.getElementById('bulkExportBtn').disabled = count === 0;
+    document.getElementById('approveBtn').disabled = count === 0;
+    document.getElementById('rejectBtn').disabled = count === 0;
+}
+
+function onCheckboxChange(checkbox, id) {
+    const isSelected = checkbox.checked;
+    
+    fetch(window.location.pathname, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            action: 'update_selection',
+            id: id,
+            selected: isSelected
+        })
+    })
+    .then(res => res.json())
+    .then(data => refreshSelectionCount(data.count))
+    .catch(err => console.error('Selection persist failed', err));
+    
+    updateSelectAllState();
+}
+
+function updateSelectAllState() {
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total = checkboxes.length;
+    const selAll = document.getElementById('selectAll');
+    if (selAll) {
+        selAll.checked = checked > 0 && checked === total;
+        selAll.indeterminate = checked > 0 && checked < total;
+    }
+}
+
 function updateBulkCount() {
     const checked = document.querySelectorAll('.row-checkbox:checked');
     const count = checked.length;
-    document.getElementById('selectedCount').textContent = count;
-    document.getElementById('selectAll').checked = count > 0 && 
-        count === document.querySelectorAll('.row-checkbox').length;
-    
-    const isAny = count > 0;
-    ['bulkDeleteBtn','approveBtn','rejectBtn'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.disabled = !isAny;
-    });
+    refreshSelectionCount(count);
+    updateSelectAllState();
 }
 
 function toggleAllCheckboxes(master) {
-    document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = master.checked);
-    updateBulkCount();
+    const isChecked = master.checked;
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const ids = [];
+    checkboxes.forEach(cb => {
+        cb.checked = isChecked;
+        ids.push(parseInt(cb.value));
+    });
+    
+    fetch(window.location.pathname, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            action: 'update_selection_bulk',
+            ids: JSON.stringify(ids),
+            selected: isChecked
+        })
+    })
+    .then(res => res.json())
+    .then(data => refreshSelectionCount(data.count))
+    .catch(err => console.error('Bulk selection failed', err));
+    
+    updateSelectAllState();
 }
 
 function clearAllSelections() {
+    if (!confirm('Clear all selections across all pages?')) return;
+    
     document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
-    updateBulkCount();
+    document.getElementById('selectAll').checked = false;
+    document.getElementById('selectAll').indeterminate = false;
+    
+    fetch(window.location.pathname, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            action: 'update_selection',
+            clear_all: 'true'
+        })
+    })
+    .then(res => res.json())
+    .then(data => refreshSelectionCount(data.count))
+    .catch(err => console.error('Clear selection failed', err));
 }
 
 function submitBulkAction(status) {
@@ -1033,7 +1213,7 @@ function deleteSelected() {
     }
     const ids = Array.from(checked).map(cb => cb.value);
     document.getElementById('deleteModalText').innerHTML = 
-        `Are you sure you want to delete <strong>${checked.length}</strong> submission(s)?`;
+        `Are you sure you want to delete <strong>${checked.length}</strong> submission(s) across all pages?`;
     document.getElementById('confirmDeleteBtn').onclick = function() {
         closeDeleteModal();
         if (!confirm(`Permanently delete ${checked.length} submission(s)?`)) return;
@@ -1058,7 +1238,7 @@ function exportAll(format) {
     form.innerHTML = `
         <input type="hidden" name="action" value="export_harvest">
         <input type="hidden" name="export_format" value="${format}">
-        <input type="hidden" name="export_all" value="true">
+        <input type="hidden" name="export_type" value="all">
         <input type="hidden" name="filter_status" value="${document.querySelector('select[name="status"]')?.value || 'all'}">
         <input type="hidden" name="filter_crop" value="${document.querySelector('select[name="crop"]')?.value || 'all'}">
         <input type="hidden" name="date_from" value="${document.querySelector('input[name="date_from"]')?.value || ''}">
@@ -1069,14 +1249,32 @@ function exportAll(format) {
     document.body.removeChild(form);
 }
 
+function exportSelected() {
+    const count = parseInt(document.querySelector('.selected-count-display').textContent, 10) || 0;
+    if (count === 0) {
+        alert('No items selected for export.');
+        return;
+    }
+    if (!confirm(`Export ${count} selected submission(s)?`)) return;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.target = '_blank';
+    form.innerHTML = `
+        <input type="hidden" name="action" value="export_harvest">
+        <input type="hidden" name="export_format" value="csv">
+        <input type="hidden" name="export_type" value="selected">
+    `;
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+}
+
 // ── View Submission ──
 function viewSubmission(id) {
-    // Prevent event bubbling
     if (window.event) {
         window.event.stopPropagation();
     }
     
-    // Show loading state
     const viewContent = document.getElementById('viewContent');
     viewContent.innerHTML = `
         <div style="text-align:center;padding:30px;">
@@ -1085,10 +1283,8 @@ function viewSubmission(id) {
         </div>
     `;
     
-    // Open modal
     openViewModal();
     
-    // Fetch data
     fetch(`get_submission.php?id=${id}`)
         .then(r => r.json())
         .then(data => {
@@ -1180,6 +1376,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    
+    // Initial count
+    refreshSelectionCount(<?= $selected_count ?>);
+    updateSelectAllState();
 });
 
 // ── Keyboard shortcuts ──
