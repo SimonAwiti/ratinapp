@@ -1,31 +1,72 @@
 <?php
 // data/grain_quality_dashboard.php - Grain Quality Testing Dashboard
 // ─────────────────────────────────────────────────────────────
-// FIXES (this version):
-// 1) The "View Details" and "Review" action buttons in each table row
-//    live inside <form id="bulkForm"> but had no type attribute, so
-//    browsers defaulted them to type="submit". Clicking them opened the
-//    modal via onclick AND submitted bulkForm at the same time, reloading
-//    the page and killing the modal almost immediately. All non-submitting
-//    buttons now explicitly declare type="button".
-// 2) Bulk export was opening a new tab (form.target = '_blank') instead of
-//    downloading a CSV. Routing a Content-Disposition: attachment response
-//    into a brand-new tab is unreliable across browsers — many just render
-//    the raw CSV text instead of prompting a download. Removed
-//    form.target = '_blank' so the export form submits in the current tab;
-//    the browser intercepts the attachment response and downloads the file
-//    without ever navigating away from the dashboard.
-// ─────────────────────────────────────────────────────────────
+// This version includes cross-page selection, export selected,
+// and persistent session-based selection across pagination.
 
 if (session_status() == PHP_SESSION_NONE) session_start();
 include '../admin/includes/config.php';
 include '../admin/includes/admin_header.php';
+
+// Initialize session selection if not exists
+if (!isset($_SESSION['selected_grain_quality'])) {
+    $_SESSION['selected_grain_quality'] = [];
+}
 
 // ── Handle POST actions ──
 $action_result = ['success' => false, 'msg' => ''];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+    
+    // ── AJAX: Update selection ──
+    if ($action === 'update_selection') {
+        header('Content-Type: application/json');
+        if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
+            $_SESSION['selected_grain_quality'] = [];
+        } else {
+            $id = (int)$_POST['id'];
+            $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+            
+            if ($isSelected) {
+                if (!in_array($id, $_SESSION['selected_grain_quality'])) {
+                    $_SESSION['selected_grain_quality'][] = $id;
+                }
+            } else {
+                $key = array_search($id, $_SESSION['selected_grain_quality']);
+                if ($key !== false) {
+                    unset($_SESSION['selected_grain_quality'][$key]);
+                    $_SESSION['selected_grain_quality'] = array_values($_SESSION['selected_grain_quality']);
+                }
+            }
+        }
+        echo json_encode(['success' => true, 'count' => count($_SESSION['selected_grain_quality'])]);
+        exit;
+    }
+    
+    // ── AJAX: Bulk selection ──
+    if ($action === 'update_selection_bulk') {
+        header('Content-Type: application/json');
+        $ids = json_decode($_POST['ids'] ?? '[]', true) ?: [];
+        $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+        
+        foreach ($ids as $id) {
+            $id = (int)$id;
+            if ($isSelected) {
+                if (!in_array($id, $_SESSION['selected_grain_quality'])) {
+                    $_SESSION['selected_grain_quality'][] = $id;
+                }
+            } else {
+                $key = array_search($id, $_SESSION['selected_grain_quality']);
+                if ($key !== false) {
+                    unset($_SESSION['selected_grain_quality'][$key]);
+                }
+            }
+        }
+        $_SESSION['selected_grain_quality'] = array_values($_SESSION['selected_grain_quality']);
+        echo json_encode(['success' => true, 'count' => count($_SESSION['selected_grain_quality'])]);
+        exit;
+    }
     
     // Update status
     if ($action === 'update_status' && isset($_POST['submission_id'], $_POST['status'])) {
@@ -37,6 +78,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->bind_param('ssi', $status, $admin_notes, $id);
         if ($stmt->execute()) {
             $action_result = ['success' => true, 'msg' => 'Status updated successfully'];
+            // Remove from session if rejected
+            if ($status === 'rejected') {
+                $key = array_search($id, $_SESSION['selected_grain_quality']);
+                if ($key !== false) {
+                    unset($_SESSION['selected_grain_quality'][$key]);
+                    $_SESSION['selected_grain_quality'] = array_values($_SESSION['selected_grain_quality']);
+                }
+            }
         } else {
             $action_result = ['success' => false, 'msg' => 'Failed to update status'];
         }
@@ -55,6 +104,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param('s' . $types, $bulk_status, ...$ids);
             if ($stmt->execute()) {
                 $action_result = ['success' => true, 'msg' => count($ids) . ' items updated successfully'];
+                // Remove from session if rejected
+                if ($bulk_status === 'rejected') {
+                    foreach ($ids as $id) {
+                        $key = array_search($id, $_SESSION['selected_grain_quality']);
+                        if ($key !== false) {
+                            unset($_SESSION['selected_grain_quality'][$key]);
+                        }
+                    }
+                    $_SESSION['selected_grain_quality'] = array_values($_SESSION['selected_grain_quality']);
+                }
             } else {
                 $action_result = ['success' => false, 'msg' => 'Bulk update failed'];
             }
@@ -62,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    // Delete submissions
+    // Delete submissions (single or bulk)
     if ($action === 'delete_submissions' && isset($_POST['bulk_ids'])) {
         $ids = array_filter(array_map('intval', explode(',', $_POST['bulk_ids'])));
         if (!empty($ids)) {
@@ -71,12 +130,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $con->prepare("DELETE FROM grain_quality_submissions WHERE id IN ($placeholders)");
             $stmt->bind_param($types, ...$ids);
             if ($stmt->execute()) {
-                $action_result = ['success' => true, 'msg' => count($ids) . ' items deleted successfully'];
+                $deleted = $stmt->affected_rows;
+                $action_result = ['success' => true, 'msg' => $deleted . ' items deleted successfully'];
+                // Remove from session
+                foreach ($ids as $id) {
+                    $key = array_search($id, $_SESSION['selected_grain_quality']);
+                    if ($key !== false) {
+                        unset($_SESSION['selected_grain_quality'][$key]);
+                    }
+                }
+                $_SESSION['selected_grain_quality'] = array_values($_SESSION['selected_grain_quality']);
             } else {
                 $action_result = ['success' => false, 'msg' => 'Delete failed'];
             }
             $stmt->close();
         }
+    }
+    
+    // Single delete
+    if ($action === 'delete_single' && isset($_POST['single_id'])) {
+        $id = (int)$_POST['single_id'];
+        $stmt = $con->prepare("DELETE FROM grain_quality_submissions WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        if ($stmt->execute() && $stmt->affected_rows > 0) {
+            $action_result = ['success' => true, 'msg' => 'Submission deleted successfully'];
+            $key = array_search($id, $_SESSION['selected_grain_quality']);
+            if ($key !== false) {
+                unset($_SESSION['selected_grain_quality'][$key]);
+                $_SESSION['selected_grain_quality'] = array_values($_SESSION['selected_grain_quality']);
+            }
+        } else {
+            $action_result = ['success' => false, 'msg' => 'Failed to delete submission'];
+        }
+        $stmt->close();
     }
     
     // Export
@@ -87,115 +173,126 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $date_from = $_POST['date_from'] ?? '';
         $date_to = $_POST['date_to'] ?? '';
         $selected_ids = isset($_POST['selected_ids']) ? $_POST['selected_ids'] : '';
+        $export_type = $_POST['export_type'] ?? 'all';
         
         $where = ['1=1'];
         $params = [];
         $types = '';
         
-        if ($filter_status && $filter_status !== 'all') {
-            $where[] = "status = ?";
-            $params[] = $filter_status;
-            $types .= 's';
-        }
-        if ($filter_grade && $filter_grade !== 'all') {
-            $where[] = "grade_classification = ?";
-            $params[] = $filter_grade;
-            $types .= 's';
-        }
-        if ($date_from && $date_to) {
-            $where[] = "sampling_date BETWEEN ? AND ?";
-            $params[] = $date_from;
-            $params[] = $date_to;
-            $types .= 'ss';
-        } elseif ($date_from) {
-            $where[] = "sampling_date >= ?";
-            $params[] = $date_from;
-            $types .= 's';
-        } elseif ($date_to) {
-            $where[] = "sampling_date <= ?";
-            $params[] = $date_to;
-            $types .= 's';
-        }
-        
-        if (!empty($selected_ids)) {
-            $id_array = array_filter(array_map('intval', explode(',', $selected_ids)));
-            if (!empty($id_array)) {
-                $placeholders = implode(',', array_fill(0, count($id_array), '?'));
+        // If exporting selected, use the session
+        if ($export_type === 'selected') {
+            $ids = $_SESSION['selected_grain_quality'] ?? [];
+            if (!empty($ids)) {
+                $placeholders = implode(',', array_fill(0, count($ids), '?'));
                 $where[] = "id IN ($placeholders)";
-                foreach ($id_array as $id) {
+                foreach ($ids as $id) {
                     $params[] = $id;
                     $types .= 'i';
                 }
+            } else {
+                $action_result = ['success' => false, 'msg' => 'No items selected for export'];
+                $export_type = 'none';
+            }
+        } elseif ($export_type === 'all' || $export_type === 'filtered') {
+            if ($filter_status && $filter_status !== 'all') {
+                $where[] = "status = ?";
+                $params[] = $filter_status;
+                $types .= 's';
+            }
+            if ($filter_grade && $filter_grade !== 'all') {
+                $where[] = "grade_classification = ?";
+                $params[] = $filter_grade;
+                $types .= 's';
+            }
+            if ($date_from && $date_to) {
+                $where[] = "sampling_date BETWEEN ? AND ?";
+                $params[] = $date_from;
+                $params[] = $date_to;
+                $types .= 'ss';
+            } elseif ($date_from) {
+                $where[] = "sampling_date >= ?";
+                $params[] = $date_from;
+                $types .= 's';
+            } elseif ($date_to) {
+                $where[] = "sampling_date <= ?";
+                $params[] = $date_to;
+                $types .= 's';
             }
         }
         
-        $sql = "SELECT 
-            id, submission_uuid, sample_id, sampling_date, location, warehouse,
-            moisture, test_weight, uniformity_grade, broken_grains, foreign_matter,
-            impurities, insect_damaged, discolored, shrivelled, moldy_grains, rotten_grains,
-            pest_infestation_level, live_insects_present, filth_contamination,
-            aflatoxin_level, other_mycotoxins,
-            odor_assessment, color_assessment, grade_classification, eagc_compliant,
-            reason_for_downgrade,
-            posted_by_name, posted_by_email, posted_by_username,
-            status, submission_date
-            FROM grain_quality_submissions 
-            WHERE " . implode(' AND ', $where) . " 
-            ORDER BY sampling_date DESC";
-        
-        $stmt = $con->prepare($sql);
-        if (!empty($params)) {
-            $stmt->bind_param($types, ...$params);
-        }
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $data = [];
-        while ($row = $result->fetch_assoc()) {
-            $data[] = $row;
-        }
-        $stmt->close();
-        
-        if ($format === 'csv') {
-            header('Content-Type: text/csv; charset=utf-8');
-            header('Content-Disposition: attachment; filename="grain_quality_' . date('Y-m-d') . '.csv"');
-            $out = fopen('php://output', 'w');
-            fputs($out, "\xEF\xBB\xBF");
-            fputcsv($out, [
-                'ID', 'UUID', 'Sample ID', 'Sampling Date', 'Location', 'Warehouse',
-                'Moisture (%)', 'Test Weight (kg/hl)', 'Uniformity Grade',
-                'Broken Grains (%)', 'Foreign Matter (%)', 'Impurities (%)',
-                'Insect Damaged (%)', 'Discolored (%)', 'Shrivelled (%)',
-                'Moldy Grains (%)', 'Rotten Grains (%)',
-                'Pest Infestation', 'Live Insects', 'Filth Contamination',
-                'Aflatoxin (ppb)', 'Other Mycotoxins',
-                'Odor Assessment', 'Color Assessment', 'Grade', 'EAGC Compliant',
-                'Reason for Downgrade',
-                'Posted By', 'Posted Email', 'Posted Username',
-                'Status', 'Submission Date'
-            ]);
-            foreach ($data as $row) {
+        // If export_type is 'none', skip
+        if ($export_type === 'none') {
+            // Don't export, just show error
+        } else {
+            $sql = "SELECT 
+                id, submission_uuid, sample_id, sampling_date, location, warehouse,
+                moisture, test_weight, uniformity_grade, broken_grains, foreign_matter,
+                impurities, insect_damaged, discolored, shrivelled, moldy_grains, rotten_grains,
+                pest_infestation_level, live_insects_present, filth_contamination,
+                aflatoxin_level, other_mycotoxins,
+                odor_assessment, color_assessment, grade_classification, eagc_compliant,
+                reason_for_downgrade,
+                posted_by_name, posted_by_email, posted_by_username,
+                status, submission_date
+                FROM grain_quality_submissions 
+                WHERE " . implode(' AND ', $where) . " 
+                ORDER BY sampling_date DESC";
+            
+            $stmt = $con->prepare($sql);
+            if (!empty($params)) {
+                $stmt->bind_param($types, ...$params);
+            }
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $data = [];
+            while ($row = $result->fetch_assoc()) {
+                $data[] = $row;
+            }
+            $stmt->close();
+            
+            if ($format === 'csv') {
+                header('Content-Type: text/csv; charset=utf-8');
+                $filename = ($export_type === 'selected') ? 'grain_quality_selected_' : 'grain_quality_';
+                header('Content-Disposition: attachment; filename="' . $filename . date('Y-m-d') . '.csv"');
+                $out = fopen('php://output', 'w');
+                fputs($out, "\xEF\xBB\xBF");
                 fputcsv($out, [
-                    $row['id'], $row['submission_uuid'], $row['sample_id'],
-                    $row['sampling_date'], $row['location'], $row['warehouse'],
-                    $row['moisture'], $row['test_weight'], $row['uniformity_grade'],
-                    $row['broken_grains'], $row['foreign_matter'], $row['impurities'],
-                    $row['insect_damaged'], $row['discolored'], $row['shrivelled'],
-                    $row['moldy_grains'], $row['rotten_grains'],
-                    $row['pest_infestation_level'],
-                    $row['live_insects_present'] ? 'Yes' : 'No',
-                    $row['filth_contamination'] ? 'Yes' : 'No',
-                    $row['aflatoxin_level'], $row['other_mycotoxins'],
-                    $row['odor_assessment'], $row['color_assessment'],
-                    $row['grade_classification'],
-                    $row['eagc_compliant'] ? 'Yes' : 'No',
-                    $row['reason_for_downgrade'],
-                    $row['posted_by_name'], $row['posted_by_email'],
-                    $row['posted_by_username'],
-                    $row['status'], $row['submission_date']
+                    'ID', 'UUID', 'Sample ID', 'Sampling Date', 'Location', 'Warehouse',
+                    'Moisture (%)', 'Test Weight (kg/hl)', 'Uniformity Grade',
+                    'Broken Grains (%)', 'Foreign Matter (%)', 'Impurities (%)',
+                    'Insect Damaged (%)', 'Discolored (%)', 'Shrivelled (%)',
+                    'Moldy Grains (%)', 'Rotten Grains (%)',
+                    'Pest Infestation', 'Live Insects', 'Filth Contamination',
+                    'Aflatoxin (ppb)', 'Other Mycotoxins',
+                    'Odor Assessment', 'Color Assessment', 'Grade', 'EAGC Compliant',
+                    'Reason for Downgrade',
+                    'Posted By', 'Posted Email', 'Posted Username',
+                    'Status', 'Submission Date'
                 ]);
+                foreach ($data as $row) {
+                    fputcsv($out, [
+                        $row['id'], $row['submission_uuid'], $row['sample_id'],
+                        $row['sampling_date'], $row['location'], $row['warehouse'],
+                        $row['moisture'], $row['test_weight'], $row['uniformity_grade'],
+                        $row['broken_grains'], $row['foreign_matter'], $row['impurities'],
+                        $row['insect_damaged'], $row['discolored'], $row['shrivelled'],
+                        $row['moldy_grains'], $row['rotten_grains'],
+                        $row['pest_infestation_level'],
+                        $row['live_insects_present'] ? 'Yes' : 'No',
+                        $row['filth_contamination'] ? 'Yes' : 'No',
+                        $row['aflatoxin_level'], $row['other_mycotoxins'],
+                        $row['odor_assessment'], $row['color_assessment'],
+                        $row['grade_classification'],
+                        $row['eagc_compliant'] ? 'Yes' : 'No',
+                        $row['reason_for_downgrade'],
+                        $row['posted_by_name'], $row['posted_by_email'],
+                        $row['posted_by_username'],
+                        $row['status'], $row['submission_date']
+                    ]);
+                }
+                fclose($out);
+                exit;
             }
-            fclose($out);
-            exit;
         }
     }
 }
@@ -308,6 +405,9 @@ $stats = $stats_result->fetch_assoc();
 // ── Get distinct values for filters ──
 $grades = $con->query("SELECT DISTINCT grade_classification FROM grain_quality_submissions WHERE grade_classification IS NOT NULL ORDER BY grade_classification")->fetch_all(MYSQLI_ASSOC);
 $enumerators = $con->query("SELECT DISTINCT posted_by_id, posted_by_name, posted_by_username FROM grain_quality_submissions WHERE posted_by_id IS NOT NULL ORDER BY posted_by_name")->fetch_all(MYSQLI_ASSOC);
+
+// ── Get selected count for display ──
+$selected_count = count($_SESSION['selected_grain_quality'] ?? []);
 
 // ── Helper functions ──
 function getStatusBadge($status) {
@@ -702,7 +802,7 @@ function getComplianceBadge($compliant) {
         <div class="gq-toolbar-left">
             <button type="button" class="gq-btn danger" id="bulkDeleteBtn" disabled onclick="deleteSelected()">
                 <span class="material-symbols-outlined">delete</span> Delete
-                <span class="gq-badge-count" id="selectedCount" style="background:rgba(0,0,0,.1);color:inherit;padding:0 6px;border-radius:99px;font-size:.7rem;">0</span>
+                <span class="gq-badge-count" id="selectedCount" style="background:rgba(0,0,0,.1);color:inherit;padding:0 6px;border-radius:99px;font-size:.7rem;"><?= $selected_count ?></span>
             </button>
             <button type="button" class="gq-btn ghost" onclick="clearAllSelections()">
                 <span class="material-symbols-outlined">clear</span> Clear Selected
@@ -715,6 +815,9 @@ function getComplianceBadge($compliant) {
             </button>
         </div>
         <div class="gq-toolbar-right">
+            <button type="button" class="gq-btn" id="bulkExportBtn" onclick="exportSelected()" <?= empty($_SESSION['selected_grain_quality']) ? 'disabled' : '' ?>>
+                <span class="material-symbols-outlined">download</span> Export Selected (<span class="selected-count-display"><?= $selected_count ?></span>)
+            </button>
             <button type="button" class="gq-btn" onclick="exportAll('csv')">
                 <span class="material-symbols-outlined">download</span> Export All
             </button>
@@ -820,9 +923,13 @@ function getComplianceBadge($compliant) {
                             </td>
                         </tr>
                         <?php else: ?>
-                        <?php foreach ($submissions as $row): ?>
+                        <?php foreach ($submissions as $row):
+                            $is_selected = in_array($row['id'], $_SESSION['selected_grain_quality'] ?? []);
+                        ?>
                         <tr class="<?= $row['status'] === 'pending' ? 'gq-pending-row' : '' ?>" data-id="<?= $row['id'] ?>">
-                            <td><input type="checkbox" class="gq-check row-checkbox" value="<?= $row['id'] ?>" onchange="updateBulkCount()"></td>
+                            <td><input type="checkbox" class="gq-check row-checkbox" value="<?= $row['id'] ?>"
+                                       <?= $is_selected ? 'checked' : '' ?>
+                                       onchange="onCheckboxChange(this, <?= $row['id'] ?>)"></td>
                             <td><span class="font-mono text-sm">#<?= $row['id'] ?></span></td>
                             <td><span class="font-mono text-xs"><?= htmlspecialchars($row['sample_id']) ?></span></td>
                             <td><?= htmlspecialchars($row['location'] ?? '—') ?></td>
@@ -844,12 +951,10 @@ function getComplianceBadge($compliant) {
                             </td>
                             <td>
                                 <div class="flex items-center gap-1">
-                                    <!-- FIX: type="button" prevents this from also submitting bulkForm -->
                                     <button type="button" onclick="viewSubmission(<?= $row['id'] ?>)" class="gq-action-btn" title="View Details">
                                         <span class="material-symbols-outlined text-sm">visibility</span>
                                     </button>
                                     <?php if ($row['status'] === 'pending'): ?>
-                                    <!-- FIX: type="button" prevents this from also submitting bulkForm -->
                                     <button type="button" onclick="reviewSubmission(<?= $row['id'] ?>)" class="gq-action-btn success" title="Review">
                                         <span class="material-symbols-outlined text-sm">rate_review</span>
                                     </button>
@@ -990,28 +1095,95 @@ function getComplianceBadge($compliant) {
 
 <script>
 // ── Bulk Selection ──
+function refreshSelectionCount(count) {
+    document.querySelectorAll('.selected-count-display').forEach(el => el.textContent = count);
+    document.getElementById('selectedCount').textContent = count;
+    document.getElementById('bulkDeleteBtn').disabled = count === 0;
+    document.getElementById('bulkExportBtn').disabled = count === 0;
+    document.getElementById('approveBtn').disabled = count === 0;
+    document.getElementById('rejectBtn').disabled = count === 0;
+}
+
+function onCheckboxChange(checkbox, id) {
+    const isSelected = checkbox.checked;
+    
+    fetch(window.location.pathname, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            action: 'update_selection',
+            id: id,
+            selected: isSelected
+        })
+    })
+    .then(res => res.json())
+    .then(data => refreshSelectionCount(data.count))
+    .catch(err => console.error('Selection persist failed', err));
+    
+    updateSelectAllState();
+}
+
+function updateSelectAllState() {
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total = checkboxes.length;
+    const selAll = document.getElementById('selectAll');
+    if (selAll) {
+        selAll.checked = checked > 0 && checked === total;
+        selAll.indeterminate = checked > 0 && checked < total;
+    }
+}
+
 function updateBulkCount() {
     const checked = document.querySelectorAll('.row-checkbox:checked');
     const count = checked.length;
-    document.getElementById('selectedCount').textContent = count;
-    document.getElementById('selectAll').checked = count > 0 && 
-        count === document.querySelectorAll('.row-checkbox').length;
-    
-    const isAny = count > 0;
-    ['bulkDeleteBtn','approveBtn','rejectBtn'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.disabled = !isAny;
-    });
+    refreshSelectionCount(count);
+    updateSelectAllState();
 }
 
 function toggleAllCheckboxes(master) {
-    document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = master.checked);
-    updateBulkCount();
+    const isChecked = master.checked;
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    const ids = [];
+    checkboxes.forEach(cb => {
+        cb.checked = isChecked;
+        ids.push(parseInt(cb.value));
+    });
+    
+    fetch(window.location.pathname, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            action: 'update_selection_bulk',
+            ids: JSON.stringify(ids),
+            selected: isChecked
+        })
+    })
+    .then(res => res.json())
+    .then(data => refreshSelectionCount(data.count))
+    .catch(err => console.error('Bulk selection failed', err));
+    
+    updateSelectAllState();
 }
 
 function clearAllSelections() {
+    if (!confirm('Clear all selections across all pages?')) return;
+    
     document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
-    updateBulkCount();
+    document.getElementById('selectAll').checked = false;
+    document.getElementById('selectAll').indeterminate = false;
+    
+    fetch(window.location.pathname, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            action: 'update_selection',
+            clear_all: 'true'
+        })
+    })
+    .then(res => res.json())
+    .then(data => refreshSelectionCount(data.count))
+    .catch(err => console.error('Clear selection failed', err));
 }
 
 function submitBulkAction(status) {
@@ -1039,7 +1211,7 @@ function deleteSelected() {
     }
     const ids = Array.from(checked).map(cb => cb.value);
     document.getElementById('deleteModalText').innerHTML = 
-        `Are you sure you want to delete <strong>${checked.length}</strong> submission(s)?`;
+        `Are you sure you want to delete <strong>${checked.length}</strong> submission(s) across all pages?`;
     document.getElementById('confirmDeleteBtn').onclick = function() {
         closeDeleteModal();
         if (!confirm(`Permanently delete ${checked.length} submission(s)?`)) return;
@@ -1056,12 +1228,6 @@ function deleteSelected() {
 }
 
 // ── Export ──
-// FIX: removed form.target = '_blank'. Routing a
-// Content-Disposition: attachment response into a brand-new tab is
-// unreliable across browsers (some render the raw CSV instead of
-// downloading it). Submitting in the current tab lets the browser
-// correctly intercept the attachment response and download the file
-// without navigating away from the dashboard.
 function exportAll(format) {
     if (!confirm('Export ALL grain quality submissions? This may take a moment.')) return;
     const form = document.createElement('form');
@@ -1069,11 +1235,30 @@ function exportAll(format) {
     form.innerHTML = `
         <input type="hidden" name="action" value="export_quality">
         <input type="hidden" name="export_format" value="${format}">
-        <input type="hidden" name="export_all" value="true">
+        <input type="hidden" name="export_type" value="all">
         <input type="hidden" name="filter_status" value="${document.querySelector('select[name="status"]')?.value || 'all'}">
         <input type="hidden" name="filter_grade" value="${document.querySelector('select[name="grade"]')?.value || 'all'}">
         <input type="hidden" name="date_from" value="${document.querySelector('input[name="date_from"]')?.value || ''}">
         <input type="hidden" name="date_to" value="${document.querySelector('input[name="date_to"]')?.value || ''}">
+    `;
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+}
+
+function exportSelected() {
+    const count = parseInt(document.querySelector('.selected-count-display').textContent, 10) || 0;
+    if (count === 0) {
+        alert('No items selected for export.');
+        return;
+    }
+    if (!confirm(`Export ${count} selected submission(s)?`)) return;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.innerHTML = `
+        <input type="hidden" name="action" value="export_quality">
+        <input type="hidden" name="export_format" value="csv">
+        <input type="hidden" name="export_type" value="selected">
     `;
     document.body.appendChild(form);
     form.submit();
@@ -1187,6 +1372,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    
+    // Initial count
+    refreshSelectionCount(<?= $selected_count ?>);
+    updateSelectAllState();
 });
 
 // ── Keyboard shortcuts ──
