@@ -41,7 +41,7 @@ if (isset($_GET['get_tradepoint']) && is_numeric($_GET['get_tradepoint'])) {
 }
 
 // ============================================================
-// EXPORT HANDLER
+// EXPORT ALL HANDLER
 // ============================================================
 if (isset($_GET['export_all'])) {
     if (file_exists('includes/config.php')) {
@@ -78,6 +78,65 @@ if (isset($_GET['export_all'])) {
             $row['region'],
             date('Y-m-d', strtotime($row['created_at']))
         ]);
+    }
+    fclose($output);
+    $con->close();
+    exit;
+}
+
+// ============================================================
+// EXPORT SELECTED HANDLER
+// ============================================================
+if (isset($_GET['export_selected'])) {
+    if (file_exists('includes/config.php')) {
+        include 'includes/config.php';
+    } elseif (file_exists('../admin/includes/config.php')) {
+        include '../admin/includes/config.php';
+    }
+
+    $table_map = [
+        'Markets'       => ['markets', 'market_name', 'county_district'],
+        'Border Points' => ['border_points', 'name', 'county'],
+        'Millers'       => ['miller_details', 'miller_name', 'county_district'],
+    ];
+
+    $ids_by_type = [];
+    foreach (($_SESSION['selected_tradepoints'] ?? []) as $key) {
+        [$type, $id] = array_pad(explode('|', $key, 2), 2, null);
+        if (isset($table_map[$type]) && is_numeric($id)) {
+            $ids_by_type[$type][] = (int)$id;
+        }
+    }
+
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="tradepoints_selected_export_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $output = fopen('php://output', 'w');
+    fputs($output, "\xEF\xBB\xBF");
+    fputcsv($output, ['ID', 'Name', 'Type', 'Country', 'Region', 'Date Added']);
+
+    $all_rows = [];
+    foreach ($ids_by_type as $type => $ids) {
+        if (empty($ids)) continue;
+        [$tbl, $name_col, $region_col] = $table_map[$type];
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $con->prepare("SELECT id, $name_col as name, country, $region_col as region, created_at FROM $tbl WHERE id IN ($placeholders)");
+        $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $row['type'] = $type;
+            $all_rows[] = $row;
+        }
+        $stmt->close();
+    }
+
+    usort($all_rows, fn($a, $b) => strcmp($a['name'], $b['name']));
+    foreach ($all_rows as $row) {
+        fputcsv($output, [$row['id'], $row['name'], $row['type'], $row['country'], $row['region'], date('Y-m-d', strtotime($row['created_at']))]);
     }
     fclose($output);
     $con->close();
@@ -313,34 +372,120 @@ if (isset($_SESSION['flash_message'])) {
     unset($_SESSION['flash_message'], $_SESSION['flash_type']);
 }
 
+// Initialize session selection if not exists
 if (!isset($_SESSION['selected_tradepoints'])) {
     $_SESSION['selected_tradepoints'] = [];
 }
 
-// AJAX selection handler
-if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
-    $id         = $_POST['id'];
-    $isSelected = $_POST['selected'] === 'true';
+// ============================================================
+// AJAX SELECTION HANDLERS
+// ============================================================
 
-    if ($isSelected) {
-        if (!in_array($id, $_SESSION['selected_tradepoints'])) {
-            $_SESSION['selected_tradepoints'][] = $id;
-        }
-    } else {
-        $key = array_search($id, $_SESSION['selected_tradepoints']);
-        if ($key !== false) {
-            unset($_SESSION['selected_tradepoints'][$key]);
-            $_SESSION['selected_tradepoints'] = array_values($_SESSION['selected_tradepoints']);
-        }
-    }
+// Single item selection
+if (isset($_POST['action']) && $_POST['action'] === 'update_selection') {
     if (isset($_POST['clear_all']) && $_POST['clear_all'] === 'true') {
         $_SESSION['selected_tradepoints'] = [];
+    } else {
+        $id   = $_POST['id'] ?? '';
+        $type = $_POST['type'] ?? '';
+        $key  = $type . '|' . $id;
+        $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+
+        if ($isSelected) {
+            if (!in_array($key, $_SESSION['selected_tradepoints'])) {
+                $_SESSION['selected_tradepoints'][] = $key;
+            }
+        } else {
+            $k = array_search($key, $_SESSION['selected_tradepoints']);
+            if ($k !== false) {
+                unset($_SESSION['selected_tradepoints'][$k]);
+                $_SESSION['selected_tradepoints'] = array_values($_SESSION['selected_tradepoints']);
+            }
+        }
     }
     echo json_encode(['success' => true, 'count' => count($_SESSION['selected_tradepoints'])]);
     exit;
 }
 
-// Handle Edit via POST
+// Bulk selection (select all on current page)
+if (isset($_POST['action']) && $_POST['action'] === 'update_selection_bulk') {
+    $items      = json_decode($_POST['items'] ?? '[]', true) ?: [];
+    $isSelected = ($_POST['selected'] ?? 'false') === 'true';
+
+    foreach ($items as $item) {
+        $key = ($item['type'] ?? '') . '|' . ($item['id'] ?? '');
+        if ($isSelected) {
+            if (!in_array($key, $_SESSION['selected_tradepoints'])) {
+                $_SESSION['selected_tradepoints'][] = $key;
+            }
+        } else {
+            $k = array_search($key, $_SESSION['selected_tradepoints']);
+            if ($k !== false) unset($_SESSION['selected_tradepoints'][$k]);
+        }
+    }
+    $_SESSION['selected_tradepoints'] = array_values($_SESSION['selected_tradepoints']);
+    echo json_encode(['success' => true, 'count' => count($_SESSION['selected_tradepoints'])]);
+    exit;
+}
+
+// ============================================================
+// DELETE HANDLERS
+// ============================================================
+
+// Single-row delete
+if (isset($_POST['delete_selected']) && isset($_POST['single_delete_id'], $_POST['single_delete_type'])) {
+    $table_map = ['Markets' => 'markets', 'Border Points' => 'border_points', 'Millers' => 'miller_details'];
+    $type = $_POST['single_delete_type'];
+    $id   = (int)$_POST['single_delete_id'];
+    $deleted_count = 0;
+
+    if (isset($table_map[$type])) {
+        $tbl = $table_map[$type];
+        $s = $con->prepare("DELETE FROM $tbl WHERE id = ?");
+        $s->bind_param("i", $id);
+        if ($s->execute() && $s->affected_rows > 0) $deleted_count++;
+        $s->close();
+
+        $key = $type . '|' . $id;
+        $k = array_search($key, $_SESSION['selected_tradepoints']);
+        if ($k !== false) {
+            unset($_SESSION['selected_tradepoints'][$k]);
+            $_SESSION['selected_tradepoints'] = array_values($_SESSION['selected_tradepoints']);
+        }
+    }
+
+    $message      = $deleted_count ? "Successfully deleted tradepoint." : "No tradepoint was deleted.";
+    $message_type = $deleted_count ? "success" : "error";
+}
+
+// Bulk delete — everything currently selected, across ALL pages
+elseif (isset($_POST['delete_selected']) && isset($_POST['bulk_delete'])) {
+    $table_map = ['Markets' => 'markets', 'Border Points' => 'border_points', 'Millers' => 'miller_details'];
+    $deleted_count = 0;
+
+    foreach (($_SESSION['selected_tradepoints'] ?? []) as $key) {
+        [$type, $id] = array_pad(explode('|', $key, 2), 2, null);
+        if (!isset($table_map[$type]) || !is_numeric($id)) continue;
+
+        $s = $con->prepare("DELETE FROM {$table_map[$type]} WHERE id = ?");
+        $s->bind_param("i", (int)$id);
+        if ($s->execute() && $s->affected_rows > 0) $deleted_count++;
+        $s->close();
+    }
+
+    if ($deleted_count > 0) {
+        $message      = "Successfully deleted $deleted_count tradepoint(s).";
+        $message_type = "success";
+        $_SESSION['selected_tradepoints'] = [];
+    } else {
+        $message      = "No tradepoints were deleted.";
+        $message_type = "error";
+    }
+}
+
+// ============================================================
+// EDIT HANDLER
+// ============================================================
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_tradepoint'])) {
     $id   = $_POST['tradepoint_id'];
     $type = $_POST['tradepoint_type_edit'];
@@ -391,31 +536,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['edit_tradepoint'])) {
         $message_type = "error";
     }
     if (isset($stmt)) $stmt->close();
-}
-
-// Handle Delete
-if (isset($_POST['delete_selected']) && !empty($_POST['selected_ids'])) {
-    $selected_ids  = array_map('intval', (array)$_POST['selected_ids']);
-    $deleted_count = 0;
-
-    foreach ($selected_ids as $delete_id) {
-        foreach (['markets','border_points','miller_details'] as $tbl) {
-            $col = ($tbl === 'miller_details') ? 'id' : 'id';
-            $s   = $con->prepare("DELETE FROM $tbl WHERE id = ?");
-            $s->bind_param("i", $delete_id);
-            if ($s->execute() && $s->affected_rows > 0) $deleted_count++;
-            $s->close();
-        }
-    }
-
-    if ($deleted_count > 0) {
-        $message      = "Successfully deleted $deleted_count tradepoint(s).";
-        $message_type = "success";
-        $_SESSION['selected_tradepoints'] = [];
-    } else {
-        $message      = "No tradepoints were deleted.";
-        $message_type = "error";
-    }
 }
 
 // ============================================================
@@ -580,6 +700,12 @@ $currency_map = [
                 <a href="?export_all=1" class="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all shadow-sm">
                     <span class="material-symbols-outlined text-base">download</span> Export All CSV
                 </a>
+                <button id="bulkExportBtn" onclick="exportSelected()"
+                        <?= empty($_SESSION['selected_tradepoints']) ? 'disabled' : '' ?>
+                        class="px-3 py-2 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1 shadow-sm">
+                    <span class="material-symbols-outlined text-base">file_download</span>
+                    Export Selected (<span class="selected-count-display"><?= count($_SESSION['selected_tradepoints']) ?></span>)
+                </button>
                 <button onclick="openAddModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all shadow-sm">
                     <span class="material-symbols-outlined text-base">add_circle</span> Add Tradepoint
                 </button>
@@ -657,7 +783,7 @@ $currency_map = [
                     <span class="material-symbols-outlined text-base">clear</span>Clear Selected
                 </button>
                 <button id="bulkDeleteBtn" disabled class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1">
-                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span id="selectedCount">0</span>)
+                    <span class="material-symbols-outlined text-base">delete</span>Delete (<span class="selected-count-display"><?= count($_SESSION['selected_tradepoints']) ?></span>)
                 </button>
             </div>
         </div>
@@ -702,10 +828,14 @@ $currency_map = [
                 <?php else: ?>
                     <?php foreach ($tradepoints_data as $tp):
                         $badgeClass = $tp['type'] === 'Markets' ? 'type-market' : ($tp['type'] === 'Border Points' ? 'type-border' : 'type-miller');
+                        $row_key = $tp['type'] . '|' . $tp['id'];
                     ?>
                     <tr class="table-row-hover" data-id="<?= $tp['id'] ?>" data-type="<?= $tp['type'] ?>">
                         <td class="px-3 py-2">
-                            <input type="checkbox" class="row-checkbox rounded border-gray-300" value="<?= $tp['id'] ?>" onchange="onCheckboxChange()">
+                            <input type="checkbox" class="row-checkbox rounded border-gray-300" value="<?= $tp['id'] ?>"
+                                   data-type="<?= htmlspecialchars($tp['type']) ?>"
+                                   <?= in_array($row_key, $_SESSION['selected_tradepoints'] ?? []) ? 'checked' : '' ?>
+                                   onchange="onCheckboxChange(this)">
                         </td>
                         <td class="px-3 py-2 text-xs text-gray-600"><?= $tp['id'] ?></td>
                         <td class="px-3 py-2 text-xs font-medium text-gray-800"><?= htmlspecialchars($tp['name']) ?></td>
@@ -719,7 +849,7 @@ $currency_map = [
                                         class="action-btn bg-blue-100 text-blue-700 hover:bg-blue-200" title="Edit">
                                     <span class="material-symbols-outlined text-sm">edit</span>
                                 </button>
-                                <button onclick="deleteSingle(<?= $tp['id'] ?>,'<?= htmlspecialchars(addslashes($tp['name'])) ?>')"
+                                <button onclick="deleteSingle(<?= $tp['id'] ?>, '<?= $tp['type'] ?>', '<?= htmlspecialchars(addslashes($tp['name'])) ?>')"
                                         class="action-btn bg-red-100 text-red-700 hover:bg-red-200" title="Delete">
                                     <span class="material-symbols-outlined text-sm">delete</span>
                                 </button>
@@ -1219,7 +1349,6 @@ function goToPage(pg) {
     }
 }
 
-// FIX: read the new value from the select element itself
 function changeRowsPerPage() {
     const newLimit = document.getElementById('rowsPerPage').value;
     window.location.href = buildUrl({ page: 1, limit: newLimit });
@@ -1247,6 +1376,51 @@ function sortTable(column) {
 // ---------------------------------------------------------------
 function openModal(id)  { document.getElementById(id).classList.remove('hidden'); }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+// ---------------------------------------------------------------
+// Selection helpers
+// ---------------------------------------------------------------
+function refreshSelectionCount(count) {
+    document.querySelectorAll('.selected-count-display').forEach(el => el.textContent = count);
+    document.getElementById('bulkDeleteBtn').disabled = count === 0;
+    document.getElementById('bulkExportBtn').disabled  = count === 0;
+}
+
+function onCheckboxChange(checkbox) {
+    if (checkbox) {
+        fetch(window.location.pathname, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                action: 'update_selection',
+                id: checkbox.value,
+                type: checkbox.dataset.type,
+                selected: checkbox.checked
+            })
+        })
+        .then(res => res.json())
+        .then(data => refreshSelectionCount(data.count))
+        .catch(err => console.error('Selection persist failed', err));
+    }
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    const total   = document.querySelectorAll('.row-checkbox').length;
+    const selAll  = document.getElementById('selectAllCheckbox');
+    selAll.checked       = checked > 0 && checked === total;
+    selAll.indeterminate = checked > 0 && checked < total;
+}
+
+function exportSelected() {
+    window.location.href = '?export_selected=1';
+}
+
+function deleteSingle(id, type, name) {
+    document.getElementById('deleteModalText').innerHTML =
+        `Are you sure you want to delete <strong>${escapeHtml(name)}</strong>?`;
+    document.getElementById('deleteIdsContainer').innerHTML =
+        `<input type="hidden" name="single_delete_id" value="${id}">
+         <input type="hidden" name="single_delete_type" value="${escapeHtml(type)}">`;
+    openModal('deleteModal');
+}
 
 // ---------------------------------------------------------------
 // Add modal (3-step)
@@ -1371,32 +1545,6 @@ function editTradepoint(id, type) {
 }
 
 // ---------------------------------------------------------------
-// Delete helpers
-// ---------------------------------------------------------------
-function deleteSingle(id, name) {
-    document.getElementById('deleteModalText').innerHTML =
-        `Are you sure you want to delete <strong>${escapeHtml(name)}</strong>?`;
-    document.getElementById('deleteIdsContainer').innerHTML =
-        `<input type="hidden" name="selected_ids[]" value="${id}">`;
-    openModal('deleteModal');
-}
-
-// ---------------------------------------------------------------
-// Checkbox / bulk actions
-// ---------------------------------------------------------------
-function onCheckboxChange() {
-    const checked = document.querySelectorAll('.row-checkbox:checked').length;
-    const total   = document.querySelectorAll('.row-checkbox').length;
-    const selAll  = document.getElementById('selectAllCheckbox');
-    const delBtn  = document.getElementById('bulkDeleteBtn');
-
-    document.getElementById('selectedCount').textContent = checked;
-    delBtn.disabled          = checked === 0;
-    selAll.checked           = checked > 0 && checked === total;
-    selAll.indeterminate     = checked > 0 && checked < total;
-}
-
-// ---------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------
 function escapeHtml(str) {
@@ -1518,26 +1666,53 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // --- Select-all checkbox ---
     document.getElementById('selectAllCheckbox').addEventListener('change', function () {
-        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = this.checked);
-        onCheckboxChange();
+        const checkboxes = document.querySelectorAll('.row-checkbox');
+        const items = [];
+        checkboxes.forEach(cb => {
+            cb.checked = this.checked;
+            items.push({ id: cb.value, type: cb.dataset.type });
+        });
+        fetch(window.location.pathname, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                action: 'update_selection_bulk',
+                items: JSON.stringify(items),
+                selected: this.checked
+            })
+        })
+        .then(res => res.json())
+        .then(data => refreshSelectionCount(data.count))
+        .catch(err => console.error('Bulk selection failed', err));
     });
 
     // --- Clear selections ---
     document.getElementById('clearSelectionsBtn').addEventListener('click', function () {
-        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
-        document.getElementById('selectAllCheckbox').checked      = false;
-        document.getElementById('selectAllCheckbox').indeterminate = false;
-        onCheckboxChange();
+        fetch(window.location.pathname, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                action: 'update_selection',
+                clear_all: 'true'
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+            document.getElementById('selectAllCheckbox').checked = false;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            refreshSelectionCount(data.count);
+        })
+        .catch(err => console.error('Clear selection failed', err));
     });
 
     // --- Bulk delete ---
     document.getElementById('bulkDeleteBtn').addEventListener('click', function () {
-        const ids = [...document.querySelectorAll('.row-checkbox:checked')].map(cb => cb.value);
-        if (!ids.length) return;
+        const count = parseInt(document.querySelector('.selected-count-display').textContent, 10) || 0;
+        if (count === 0) return;
         document.getElementById('deleteModalText').innerHTML =
-            `Are you sure you want to delete <strong>${ids.length}</strong> selected tradepoint(s)?`;
-        document.getElementById('deleteIdsContainer').innerHTML =
-            ids.map(id => `<input type="hidden" name="selected_ids[]" value="${id}">`).join('');
+            `Are you sure you want to delete <strong>${count}</strong> selected tradepoint(s) across all pages?`;
+        document.getElementById('deleteIdsContainer').innerHTML = `<input type="hidden" name="bulk_delete" value="1">`;
         openModal('deleteModal');
     });
 
@@ -1558,8 +1733,16 @@ document.addEventListener('DOMContentLoaded', function () {
     const jumpInput = document.getElementById('pageJumpInput');
     if (jumpInput) jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') jumpToPage(); });
 
-    // Initialise checkbox state counters
-    onCheckboxChange();
+    // Initialise checkbox state based on session
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    let checkedCount = 0;
+    checkboxes.forEach(cb => {
+        if (cb.checked) checkedCount++;
+    });
+    const selAll = document.getElementById('selectAllCheckbox');
+    selAll.checked = checkedCount > 0 && checkedCount === checkboxes.length;
+    selAll.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+    refreshSelectionCount(<?= count($_SESSION['selected_tradepoints']) ?>);
 });
 </script>
 
