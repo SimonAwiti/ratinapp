@@ -182,6 +182,247 @@ if (isset($_GET['predict_data'])) {
     exit;
 }
 
+// ── CSV EXPORT ENDPOINT ──
+if (isset($_GET['export_forecast_csv'])) {
+    if (session_status() == PHP_SESSION_NONE) session_start();
+    include '../admin/includes/config.php';
+    
+    $commodity_id = isset($_GET['commodity_id']) ? (int)$_GET['commodity_id'] : 0;
+    $market_id    = isset($_GET['market_id'])    ? (int)$_GET['market_id']    : 0;
+    $country      = isset($_GET['country'])      ? trim($_GET['country'])      : '';
+    $horizon_days = isset($_GET['horizon'])      ? (int)$_GET['horizon']      : 90;
+    $price_type   = in_array($_GET['price_type'] ?? '', ['Wholesale','Retail','Both']) ? $_GET['price_type'] : 'Both';
+
+    // Re-fetch the same data used for the forecast
+    $where = ["mp.status = 'published'", "mp.date_posted >= DATE_SUB(NOW(), INTERVAL 730 DAY)"];
+    $params = []; $types = '';
+
+    if ($commodity_id) { $where[] = "mp.commodity = ?"; $params[] = $commodity_id; $types .= 'i'; }
+    if ($market_id)    { $where[] = "mp.market_id = ?"; $params[] = $market_id;    $types .= 'i'; }
+    if ($country)      { $where[] = "mp.country_admin_0 = ?"; $params[] = $country; $types .= 's'; }
+    if ($price_type !== 'Both') { $where[] = "mp.price_type = ?"; $params[] = $price_type; $types .= 's'; }
+
+    $sql_monthly = "SELECT
+                        DATE_FORMAT(mp.date_posted, '%Y-%m-01') AS month_start,
+                        mp.price_type,
+                        AVG(mp.Price) AS avg_price,
+                        MIN(mp.Price) AS min_price,
+                        MAX(mp.Price) AS max_price,
+                        COUNT(*) AS record_count,
+                        STDDEV(mp.Price) AS std_price
+                    FROM market_prices mp
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY month_start, mp.price_type
+                    ORDER BY month_start ASC, mp.price_type ASC";
+
+    $stmt = $con->prepare($sql_monthly);
+    if ($params) { $stmt->bind_param($types, ...$params); }
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $historical = [];
+    while ($r = $result->fetch_assoc()) $historical[] = $r;
+    $stmt->close();
+
+    $by_type = ['Wholesale' => [], 'Retail' => []];
+    foreach ($historical as $row) {
+        if (isset($by_type[$row['price_type']])) {
+            $by_type[$row['price_type']][] = $row;
+        }
+    }
+
+    // Use the same compute_forecast function
+    function compute_forecast_export(array $series, int $horizon_days): array {
+        if (count($series) < 3) return ['error' => 'insufficient_data', 'min_required' => 3];
+
+        $n = count($series);
+        $prices = array_column($series, 'avg_price');
+        $stds   = array_column($series, 'std_price');
+
+        $first_ts = strtotime($series[0]['month_start']);
+        $x_vals = array_map(function($s) use ($first_ts) {
+            return (strtotime($s['month_start']) - $first_ts) / (30.44 * 86400);
+        }, $series);
+
+        $sum_x = array_sum($x_vals);
+        $sum_y = array_sum($prices);
+        $sum_xx = array_sum(array_map(fn($x) => $x*$x, $x_vals));
+        $sum_xy = 0;
+        for ($i = 0; $i < $n; $i++) $sum_xy += $x_vals[$i] * $prices[$i];
+        $denom = $n * $sum_xx - $sum_x * $sum_x;
+        if ($denom == 0) return ['error' => 'no_variance'];
+        $slope     = ($n * $sum_xy - $sum_x * $sum_y) / $denom;
+        $intercept = ($sum_y - $slope * $sum_x) / $n;
+
+        $y_mean = $sum_y / $n;
+        $ss_tot = array_sum(array_map(fn($y) => ($y - $y_mean) ** 2, $prices));
+        $ss_res = 0;
+        for ($i = 0; $i < $n; $i++) {
+            $pred = $intercept + $slope * $x_vals[$i];
+            $ss_res += ($prices[$i] - $pred) ** 2;
+        }
+        $r_squared = $ss_tot > 0 ? 1 - ($ss_res / $ss_tot) : 0;
+        $rse = $n > 2 ? sqrt($ss_res / ($n - 2)) : 0;
+
+        $seasonal = array_fill(1, 12, ['sum_dev' => 0, 'count' => 0]);
+        for ($i = 0; $i < $n; $i++) {
+            $month_num = (int)date('n', strtotime($series[$i]['month_start']));
+            $trend_at  = $intercept + $slope * $x_vals[$i];
+            if ($trend_at > 0) {
+                $dev = $prices[$i] / $trend_at;
+                $seasonal[$month_num]['sum_dev'] += $dev;
+                $seasonal[$month_num]['count']++;
+            }
+        }
+        $seasonal_idx = [];
+        for ($m = 1; $m <= 12; $m++) {
+            $seasonal_idx[$m] = $seasonal[$m]['count'] > 0
+                ? $seasonal[$m]['sum_dev'] / $seasonal[$m]['count']
+                : 1.0;
+        }
+        $idx_mean = array_sum($seasonal_idx) / 12;
+        if ($idx_mean > 0) {
+            foreach ($seasonal_idx as $m => $v) $seasonal_idx[$m] = $v / $idx_mean;
+        }
+
+        $last_ts  = strtotime(end($series)['month_start']);
+        $last_x   = $x_vals[$n - 1];
+        $forecast_months = (int)ceil($horizon_days / 30.44);
+
+        $forecast_points = [];
+        for ($i = 1; $i <= $forecast_months; $i++) {
+            $proj_ts    = strtotime("+$i months", $last_ts);
+            $proj_x     = $last_x + $i;
+            $trend_val  = $intercept + $slope * $proj_x;
+            $month_num  = (int)date('n', $proj_ts);
+            $seas_val   = $trend_val * $seasonal_idx[$month_num];
+
+            $x_mean = $sum_x / $n;
+            $s_xx = $sum_xx - ($sum_x * $sum_x / $n);
+            $ci_factor = $s_xx > 0
+                ? 1.96 * $rse * sqrt(1 + 1/$n + pow($proj_x - $x_mean, 2) / $s_xx)
+                : 1.96 * $rse;
+
+            $forecast_points[] = [
+                'month'         => date('Y-m-01', $proj_ts),
+                'month_label'   => date('M Y', $proj_ts),
+                'trend'         => round($trend_val,   6),
+                'forecast'      => round($seas_val,    6),
+                'ci_lower'      => round(max(0, $seas_val - $ci_factor), 6),
+                'ci_upper'      => round($seas_val + $ci_factor, 6),
+                'months_ahead'  => $i,
+            ];
+        }
+
+        return [
+            'series'        => $series,
+            'forecast'      => $forecast_points,
+            'model' => [
+                'slope'       => round($slope,    6),
+                'intercept'   => round($intercept,6),
+                'r_squared'   => round($r_squared,4),
+                'rse'         => round($rse,      6),
+                'n_obs'       => $n,
+                'seasonal'    => $seasonal_idx,
+            ],
+        ];
+    }
+
+    $forecast_results = [];
+    foreach ($by_type as $pt => $rows) {
+        if (!empty($rows)) {
+            $forecast_results[$pt] = compute_forecast_export($rows, $horizon_days);
+        }
+    }
+
+    // Generate CSV
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="price_forecast_' . date('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    $out = fopen('php://output', 'w');
+    fputs($out, "\xEF\xBB\xBF");
+
+    // Header
+    fputcsv($out, [
+        'Month',
+        'Months Ahead',
+        'Wholesale Forecast',
+        'WS CI Lower',
+        'WS CI Upper',
+        'Wholesale Trend (Historical)',
+        'Retail Forecast',
+        'RT CI Lower',
+        'RT CI Upper',
+        'Retail Trend (Historical)'
+    ]);
+
+    // Get forecast months
+    $ws_forecast = $forecast_results['Wholesale']['forecast'] ?? [];
+    $rt_forecast = $forecast_results['Retail']['forecast'] ?? [];
+
+    $ws_map = [];
+    foreach ($ws_forecast as $f) { $ws_map[$f['month']] = $f; }
+    $rt_map = [];
+    foreach ($rt_forecast as $f) { $rt_map[$f['month']] = $f; }
+
+    // Get historical series for trend
+    $ws_series = $forecast_results['Wholesale']['series'] ?? [];
+    $rt_series = $forecast_results['Retail']['series'] ?? [];
+    $ws_series_last = !empty($ws_series) ? end($ws_series) : null;
+    $rt_series_last = !empty($rt_series) ? end($rt_series) : null;
+    $ws_last_avg = $ws_series_last ? $ws_series_last['avg_price'] : null;
+    $rt_last_avg = $rt_series_last ? $rt_series_last['avg_price'] : null;
+
+    // Combine all forecast months
+    $all_months = array_unique(array_merge(array_keys($ws_map), array_keys($rt_map)));
+    sort($all_months);
+
+    foreach ($all_months as $month) {
+        $w = $ws_map[$month] ?? null;
+        $r = $rt_map[$month] ?? null;
+
+        $ws_forecast_val = $w ? round($w['forecast'], 6) : '';
+        $ws_ci_lower = $w ? round($w['ci_lower'], 6) : '';
+        $ws_ci_upper = $w ? round($w['ci_upper'], 6) : '';
+        $rt_forecast_val = $r ? round($r['forecast'], 6) : '';
+        $rt_ci_lower = $r ? round($r['ci_lower'], 6) : '';
+        $rt_ci_upper = $r ? round($r['ci_upper'], 6) : '';
+        $months_ahead = $w ? $w['months_ahead'] : ($r ? $r['months_ahead'] : '');
+
+        // Calculate trend direction
+        $ws_trend = '';
+        if ($w && $ws_last_avg) {
+            $pct = (($w['forecast'] - $ws_last_avg) / $ws_last_avg) * 100;
+            $ws_trend = ($pct > 0.5 ? '+' : ($pct < -0.5 ? '-' : '')) . round($pct, 1) . '%';
+        }
+        $rt_trend = '';
+        if ($r && $rt_last_avg) {
+            $pct = (($r['forecast'] - $rt_last_avg) / $rt_last_avg) * 100;
+            $rt_trend = ($pct > 0.5 ? '+' : ($pct < -0.5 ? '-' : '')) . round($pct, 1) . '%';
+        }
+
+        $month_label = date('M Y', strtotime($month));
+
+        fputcsv($out, [
+            $month_label,
+            $months_ahead,
+            $ws_forecast_val,
+            $ws_ci_lower,
+            $ws_ci_upper,
+            $ws_trend,
+            $rt_forecast_val,
+            $rt_ci_lower,
+            $rt_ci_upper,
+            $rt_trend
+        ]);
+    }
+
+    fclose($out);
+    exit;
+}
+
 // ── JSON ENDPOINT: same cascading filters as main dashboard ──
 if (isset($_GET['get_commodities'])) {
     if (session_status() == PHP_SESSION_NONE) session_start();
@@ -301,7 +542,7 @@ if ($all_commodities_q) { while ($r = $all_commodities_q->fetch_assoc()) $all_co
 .mp-stat-icon  { font-size:2.2rem; opacity:.25; }
 
 /* tabs */
-.mp-tabs { display:flex; gap:0; border-bottom:2px solid var(--mp-border); margin-bottom:20px; overflow-x:auto; }
+.mp-tabs { display:flex; gap:0; border-bottom:2px solid var(--mp-border); margin-bottom:20px; overflow-x:auto; align-items:center; }
 .mp-tab { display:inline-flex; align-items:center; gap:6px; padding:10px 20px; font-size:.875rem; font-weight:500; color:var(--mp-muted); border-bottom:2px solid transparent; cursor:pointer; transition:all .2s; white-space:nowrap; margin-bottom:-2px; text-decoration:none; background:none; border-top:none; border-left:none; border-right:none; }
 .mp-tab:hover { color:var(--mp-primary); background:rgba(128,0,0,.03); }
 .mp-tab.active { color:var(--mp-primary); border-bottom-color:var(--mp-primary); font-weight:600; }
@@ -376,6 +617,8 @@ if ($all_commodities_q) { while ($r = $all_commodities_q->fetch_assoc()) $all_co
 .mp-btn { display:inline-flex; align-items:center; gap:5px; padding:6px 14px; border-radius:6px; font-size:.8125rem; font-weight:500; border:1px solid var(--mp-border); background:white; color:var(--mp-text); cursor:pointer; transition:all .2s; }
 .mp-btn.primary { background:var(--mp-primary); color:white; border-color:var(--mp-primary); }
 .mp-btn.primary:hover { background:var(--mp-primary-dk); }
+.mp-btn.success { background:#16a34a; color:white; border-color:#16a34a; }
+.mp-btn.success:hover { background:#15803d; }
 
 /* confidence band note */
 .mp-ci-note { font-size:.75rem; color:var(--mp-muted); margin-top:10px; }
@@ -385,9 +628,13 @@ if ($all_commodities_q) { while ($r = $all_commodities_q->fetch_assoc()) $all_co
 
 .ms { font-family:'Material Symbols Outlined' !important; font-style:normal; font-weight:normal; line-height:1; letter-spacing:normal; text-transform:none; display:inline-block; white-space:nowrap; direction:ltr; -webkit-font-smoothing:antialiased; vertical-align:middle; }
 
+/* export button group */
+.mp-export-group { display:flex; gap:6px; align-items:center; }
+
 @media (max-width:768px) {
     .mp-stats { grid-template-columns:repeat(2,1fr); }
     .mp-filters { flex-direction:column; }
+    .mp-tabs { flex-wrap:nowrap; overflow-x:auto; }
 }
 </style>
 </head>
@@ -481,7 +728,7 @@ if ($all_commodities_q) { while ($r = $all_commodities_q->fetch_assoc()) $all_co
                 <button class="mp-horizon-btn"         data-days="730" onclick="setHorizon(730,this)">2 yr</button>
             </div>
         </div>
-        <div style="align-self:flex-end;">
+        <div style="align-self:flex-end;display:flex;gap:6px;">
             <button class="mp-btn primary" onclick="runForecast()">
                 <span class="ms">auto_graph</span> Run Forecast
             </button>
@@ -525,7 +772,14 @@ if ($all_commodities_q) { while ($r = $all_commodities_q->fetch_assoc()) $all_co
 
         <!-- Main forecast chart -->
         <div class="mp-chart-panel" id="forecastChartWrap" style="display:none;">
-            <h3>Price Forecast — Historical + Projection</h3>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+                <h3 style="margin:0;">Price Forecast — Historical + Projection</h3>
+                <div class="mp-export-group">
+                    <button class="mp-btn success" onclick="exportChartPNG()" title="Download chart as PNG">
+                        <span class="ms">download</span> PNG
+                    </button>
+                </div>
+            </div>
             <p class="subtitle">Historical averages (solid) with forecast (dashed) and 95% confidence interval (shaded band)</p>
 
             <div class="mp-legend">
@@ -583,9 +837,16 @@ if ($all_commodities_q) { while ($r = $all_commodities_q->fetch_assoc()) $all_co
     ══════════════════ -->
     <div id="panel-table" class="mp-panel">
         <div class="mp-chart-panel" id="forecastTableWrap" style="display:none;">
-            <h3>Monthly Forecast Values</h3>
-            <p class="subtitle">Projected prices per month with confidence range</p>
-            <div style="overflow-x:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+                <div>
+                    <h3 style="margin:0;">Monthly Forecast Values</h3>
+                    <p class="subtitle" style="margin:4px 0 0;">Projected prices per month with confidence range</p>
+                </div>
+                <button class="mp-btn success" onclick="exportForecastCSV()">
+                    <span class="ms">download</span> Export CSV
+                </button>
+            </div>
+            <div style="overflow-x:auto;margin-top:12px;">
                 <table class="mp-fc-table">
                     <thead>
                         <tr>
@@ -659,6 +920,7 @@ let _horizon = 90;
 let _fcChart = null;
 let _seasChart = null;
 let _lastData = null;
+let _currentFilters = {};
 
 // ── Tab switching
 function switchTab(tab) {
@@ -713,6 +975,9 @@ function runForecast() {
     const market_id    = document.getElementById('f_market').value;
     const commodity_id = document.getElementById('f_commodity').value;
     const price_type   = document.getElementById('f_price_type').value;
+
+    // Save current filters for export
+    _currentFilters = { country, market_id, commodity_id, price_type };
 
     // Show loading
     setLoadingState(true);
@@ -1089,6 +1354,38 @@ function renderModelStats(ws, rt) {
     document.getElementById('wsModelStats').innerHTML = statGrid(ws?.model);
     document.getElementById('rtModelStats').innerHTML = statGrid(rt?.model);
     wrap.style.display = 'block';
+}
+
+// ── Export: Chart as PNG ──
+function exportChartPNG() {
+    if (!_fcChart) {
+        alert('No forecast chart available to export. Run a forecast first.');
+        return;
+    }
+    const canvas = document.getElementById('forecastChart');
+    if (!canvas) return;
+    
+    // Create a temporary link to download the canvas as PNG
+    const link = document.createElement('a');
+    link.download = `price_forecast_chart_${new Date().toISOString().slice(0,10)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+}
+
+// ── Export: Forecast CSV ──
+function exportForecastCSV() {
+    const country      = document.getElementById('f_country').value;
+    const market_id    = document.getElementById('f_market').value;
+    const commodity_id = document.getElementById('f_commodity').value;
+    const price_type   = document.getElementById('f_price_type').value;
+
+    let url = `?export_forecast_csv=1&horizon=${_horizon}&price_type=${encodeURIComponent(price_type)}`;
+    if (country)      url += `&country=${encodeURIComponent(country)}`;
+    if (market_id)    url += `&market_id=${market_id}`;
+    if (commodity_id) url += `&commodity_id=${commodity_id}`;
+
+    // Open in new tab or download directly
+    window.location.href = url;
 }
 
 // ── Auto-run on load with defaults
