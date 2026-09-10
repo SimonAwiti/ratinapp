@@ -1,9 +1,11 @@
 <?php
-// xbt_volumes.php
+// xbt_volumes.php - Public XBT Volumes Dashboard
+// READ-ONLY: published records only, no data manipulation
+
 session_start();
 
 // ============================================================
-// EXPORT CSV — must run BEFORE admin_header.php is included
+// EXPORT CSV — must run BEFORE any output
 // ============================================================
 if (isset($_GET['export_csv'])) {
     if (file_exists('includes/config.php')) include 'includes/config.php';
@@ -63,18 +65,10 @@ if (isset($_GET['export_csv'])) {
 }
 
 // ============================================================
-// CHECK ADMIN LOGIN
+// INCLUDE HEADER & CONFIG
 // ============================================================
 require_once 'user_header.php';
 
-if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    header("Location: ../admin/login.php");
-    exit;
-}
-
-// ============================================================
-// INCLUDE CONFIG
-// ============================================================
 if (file_exists('includes/config.php')) include 'includes/config.php';
 elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
 
@@ -238,6 +232,9 @@ function getStatusBadge($status) {
 .status-unpublished::before{background:#dc2626}
 
 .volume-value{font-family:monospace;font-weight:700;font-size:.85rem}
+
+/* Published pill */
+.published-pill{display:inline-flex;align-items:center;gap:5px;background:#dcfce7;color:#166534;font-size:.75rem;font-weight:600;padding:3px 10px;border-radius:99px;border:1px solid #bbf7d0;}
 </style>
 
 <div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
@@ -247,7 +244,12 @@ function getStatusBadge($status) {
     <div class="mb-6">
         <div class="flex justify-between items-center flex-wrap gap-4">
             <div>
-                <h1 class="text-2xl font-bold text-maroon">Published XBT Volumes</h1>
+                <h1 class="text-2xl font-bold text-maroon flex items-center gap-3">
+                    XBT Volumes Dashboard
+                    <span class="published-pill">
+                        <span class="material-symbols-outlined text-sm">verified</span> Published Data Only
+                    </span>
+                </h1>
                 <p class="text-gray-600 text-sm mt-1">View published cross-border trade volume data</p>
             </div>
             <div class="flex gap-2 flex-wrap">
@@ -259,18 +261,6 @@ function getStatusBadge($status) {
         <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
     </div>
 
-    <!-- Alert Messages -->
-    <?php if (isset($_SESSION['import_message'])): ?>
-    <div class="mb-4 p-3 rounded-lg flex items-center gap-2 text-sm <?= $_SESSION['import_status'] == 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-600' : 'bg-red-100 text-red-700 border-l-4 border-red-600' ?>">
-        <span class="material-symbols-outlined text-base"><?= $_SESSION['import_status'] == 'success' ? 'check_circle' : 'error' ?></span>
-        <span class="text-sm font-medium"><?= htmlspecialchars($_SESSION['import_message']) ?></span>
-    </div>
-    <?php 
-        unset($_SESSION['import_message']); 
-        unset($_SESSION['import_status']);
-    endif; 
-    ?>
-
     <!-- Stat Cards - Only published -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
         <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
@@ -281,7 +271,7 @@ function getStatusBadge($status) {
         </div>
         <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
             <div class="flex items-center justify-between">
-                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Published</p><p class="text-xl font-bold text-green-600"><?= number_format($published_count) ?></p></div>
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Published Records</p><p class="text-xl font-bold text-green-600"><?= number_format($published_count) ?></p></div>
                 <span class="material-symbols-outlined text-3xl text-green-500/50">public</span>
             </div>
         </div>
@@ -333,6 +323,9 @@ function getStatusBadge($status) {
             </div>
             <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all inline-flex items-center gap-1">
                 <span class="material-symbols-outlined text-base">filter_list</span>Filter
+            </button>
+            <button onclick="clearFilters()" class="px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all inline-flex items-center gap-1">
+                <span class="material-symbols-outlined text-base">close</span>Clear
             </button>
         </div>
     </div>
@@ -494,7 +487,16 @@ function goToPage(pg) {
 }
 
 function changeRowsPerPage() { window.location.href = buildUrl({ page: 1 }); }
+
 function applyFilters() { window.location.href = buildUrl({ page: 1 }); }
+
+function clearFilters() {
+    document.getElementById('searchBorder').value = '';
+    document.getElementById('searchCommodity').value = '';
+    document.getElementById('searchSource').value = '';
+    document.getElementById('searchDestination').value = '';
+    window.location.href = buildUrl({ page: 1, search_border: '', search_commodity: '', search_source: '', search_destination: '' });
+}
 
 function sortTable(col) {
     const newDir = (PHP.sort === col && PHP.dir === 'asc') ? 'desc' : 'asc';
@@ -514,5 +516,3 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
-
-<?php require_once '../admin/includes/admin_footer.php'; ?>
