@@ -1,9 +1,11 @@
 <?php
-// miller_prices.php
+// miller_prices.php - Public Miller Prices Dashboard
+// READ-ONLY: published records only, no data manipulation
+
 session_start();
 
 // ============================================================
-// EXPORT CSV — must run BEFORE admin_header.php is included
+// EXPORT CSV — must run BEFORE any output
 // ============================================================
 if (isset($_GET['export_csv'])) {
     if (file_exists('includes/config.php')) include 'includes/config.php';
@@ -60,18 +62,10 @@ if (isset($_GET['export_csv'])) {
 }
 
 // ============================================================
-// CHECK ADMIN LOGIN
+// INCLUDE HEADER & CONFIG
 // ============================================================
 require_once 'user_header.php';
 
-if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    header("Location: ../admin/login.php");
-    exit;
-}
-
-// ============================================================
-// INCLUDE CONFIG
-// ============================================================
 if (file_exists('includes/config.php')) include 'includes/config.php';
 elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
 
@@ -238,6 +232,9 @@ function getChangeIcon($change) {
 .change-flat{background:#f3f4f6;color:#6b7280}
 
 .price-value{font-family:monospace;font-weight:700;font-size:.85rem}
+
+/* Published pill */
+.published-pill{display:inline-flex;align-items:center;gap:5px;background:#dcfce7;color:#166534;font-size:.75rem;font-weight:600;padding:3px 10px;border-radius:99px;border:1px solid #bbf7d0;}
 </style>
 
 <div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
@@ -247,7 +244,12 @@ function getChangeIcon($change) {
     <div class="mb-6">
         <div class="flex justify-between items-center flex-wrap gap-4">
             <div>
-                <h1 class="text-2xl font-bold text-maroon">Published Miller Prices</h1>
+                <h1 class="text-2xl font-bold text-maroon flex items-center gap-3">
+                    Miller Prices Dashboard
+                    <span class="published-pill">
+                        <span class="material-symbols-outlined text-sm">verified</span> Published Data Only
+                    </span>
+                </h1>
                 <p class="text-gray-600 text-sm mt-1">View published miller price data across towns and commodities</p>
             </div>
             <div class="flex gap-2 flex-wrap">
@@ -269,7 +271,7 @@ function getChangeIcon($change) {
         </div>
         <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
             <div class="flex items-center justify-between">
-                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Published</p><p class="text-xl font-bold text-green-600"><?= number_format($published_count) ?></p></div>
+                <div><p class="text-xs text-gray-400 uppercase tracking-wide">Published Records</p><p class="text-xl font-bold text-green-600"><?= number_format($published_count) ?></p></div>
                 <span class="material-symbols-outlined text-3xl text-green-500/50">public</span>
             </div>
         </div>
@@ -310,6 +312,9 @@ function getChangeIcon($change) {
             </div>
             <button onclick="applyFilters()" class="px-3 py-1.5 bg-maroon text-white text-sm rounded-lg hover:bg-[#660000] transition-all inline-flex items-center gap-1">
                 <span class="material-symbols-outlined text-base">filter_list</span>Filter
+            </button>
+            <button onclick="clearFilters()" class="px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-all inline-flex items-center gap-1">
+                <span class="material-symbols-outlined text-base">close</span>Clear
             </button>
         </div>
     </div>
@@ -477,7 +482,15 @@ function goToPage(pg) {
 }
 
 function changeRowsPerPage() { window.location.href = buildUrl({ page: 1 }); }
+
 function applyFilters() { window.location.href = buildUrl({ page: 1 }); }
+
+function clearFilters() {
+    document.getElementById('searchCountry').value = '';
+    document.getElementById('searchTown').value = '';
+    document.getElementById('searchCommodity').value = '';
+    window.location.href = buildUrl({ page: 1, search_country: '', search_town: '', search_commodity: '' });
+}
 
 function sortTable(col) {
     const newDir = (PHP.sort === col && PHP.dir === 'asc') ? 'desc' : 'asc';
