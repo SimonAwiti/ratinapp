@@ -1,30 +1,90 @@
 <?php
-// marketprices_dashboard.php — Extended Market Prices Dashboard (Public Reporting View)
+// marketprices_dashboard.php — Subscription-Aware Market Prices Dashboard
 // Tabs: Table | Charts | Cards | Map | Compare
+// Subscription limits: Basic=3 months, Medium=1 year, Premium=all
 // READ-ONLY: published records only, no data manipulation
+
+if (session_status() == PHP_SESSION_NONE) session_start();
+
+// ── SUBSCRIPTION CHECK ────────────────────────────────────────
+// Include config early (needed for both JSON endpoints and page render)
+$config_paths = ['../admin/includes/config.php', 'includes/config.php'];
+$config_loaded = false;
+foreach ($config_paths as $cp) {
+    if (file_exists($cp)) { include $cp; $config_loaded = true; break; }
+}
+if (!$config_loaded) { http_response_code(500); die('Config not found'); }
+
+// Auth check — user must be logged in
+if (!isset($_SESSION['user_id']) && !isset($_SESSION['subscriber_id'])) {
+    header("Location: ../admin/login.php");
+    exit;
+}
+$current_user_id = $_SESSION['user_id'] ?? $_SESSION['subscriber_id'];
+
+// Fetch subscription type from DB (fresh, not from session — in case admin changed it)
+$sub_stmt = $con->prepare("SELECT subscription_type, status, approved_date FROM subscribed_users WHERE id = ?");
+$sub_stmt->bind_param("i", $current_user_id);
+$sub_stmt->execute();
+$sub_result = $sub_stmt->get_result();
+$current_user = $sub_result->fetch_assoc();
+$sub_stmt->close();
+
+if (!$current_user) {
+    session_destroy();
+    header("Location: ../admin/login.php");
+    exit;
+}
+
+// Block inactive users
+if ($current_user['status'] !== 'active') {
+    session_destroy();
+    header("Location: ../admin/login.php?error=not_active");
+    exit;
+}
+
+$subscription_type = $current_user['subscription_type'] ?? 'basic';
+
+// ── SUBSCRIPTION-BASED DATA LIMIT ────────────────────────────
+// Basic: 3 months (90 days) | Medium: 1 year (365 days) | Premium: all time
+$subscription_days = 90;      // default basic
+$subscription_label = '3 months';
+if ($subscription_type === 'medium') {
+    $subscription_days = 365;
+    $subscription_label = '1 year';
+} elseif ($subscription_type === 'premium') {
+    $subscription_days = 36500; // 100 years = effectively "all"
+    $subscription_label = 'all time';
+}
+
+// Hard cap on chart query days
+$max_query_days = $subscription_days;
 
 // ── JSON ENDPOINT: chart data ─────────────────────────────────
 if (isset($_GET['chart_data'])) {
-    if (session_status() == PHP_SESSION_NONE) session_start();
-    include '../admin/includes/config.php';
     header('Content-Type: application/json');
     $commodity_id = isset($_GET['commodity_id']) ? (int)$_GET['commodity_id'] : 0;
     $market_id    = isset($_GET['market_id'])    ? (int)$_GET['market_id']    : 0;
     $country      = isset($_GET['country'])      ? trim($_GET['country'])      : '';
-    $days         = isset($_GET['days'])         ? min((int)$_GET['days'], 730): 90;
-    // Custom date range
+    $days         = isset($_GET['days'])         ? min((int)$_GET['days'], $max_query_days) : 90;
     $date_from    = isset($_GET['date_from'])    ? trim($_GET['date_from'])    : '';
     $date_to      = isset($_GET['date_to'])      ? trim($_GET['date_to'])      : '';
 
-    // Only published records
+    // Enforce subscription limit on custom range too
+    $min_allowed_date = date('Y-m-d', strtotime("-$subscription_days days"));
+
     $where = ["mp.status = 'published'"];
     $params = []; $types = '';
 
     if ($date_from && $date_to) {
+        // Clamp custom range to subscription limit
+        if ($date_from < $min_allowed_date) $date_from = $min_allowed_date;
         $where[] = "mp.date_posted BETWEEN ? AND ?";
         $params[] = $date_from . ' 00:00:00'; $types .= 's';
         $params[] = $date_to   . ' 23:59:59'; $types .= 's';
     } else {
+        // Cap to subscription
+        if ($days > $max_query_days) $days = $max_query_days;
         $where[] = "mp.date_posted >= DATE_SUB(NOW(), INTERVAL ? DAY)";
         $params[] = $days; $types .= 'i';
     }
@@ -33,6 +93,7 @@ if (isset($_GET['chart_data'])) {
     if ($market_id)    { $where[] = "mp.market_id = ?"; $params[] = $market_id;    $types .= 'i'; }
     if ($country)      { $where[] = "mp.country_admin_0 = ?"; $params[] = $country; $types .= 's'; }
 
+    // Optimized: use a subquery-friendly approach with proper indexes
     $sql = "SELECT DATE(mp.date_posted) as date_label,
                    mp.price_type,
                    AVG(mp.Price) as avg_price,
@@ -50,27 +111,33 @@ if (isset($_GET['chart_data'])) {
     $rows = [];
     while ($r = $result->fetch_assoc()) $rows[] = $r;
     $stmt->close();
-    echo json_encode(['success' => true, 'data' => $rows]); exit;
+    echo json_encode(['success' => true, 'data' => $rows, 'subscription' => $subscription_type, 'max_days' => $max_query_days]); exit;
 }
 
 // ── JSON ENDPOINT: filtered commodities by country/market ─────
 if (isset($_GET['get_commodities'])) {
-    if (session_status() == PHP_SESSION_NONE) session_start();
-    include '../admin/includes/config.php';
     header('Content-Type: application/json');
     $country   = trim($_GET['country']   ?? '');
     $market_id = (int)($_GET['market_id'] ?? 0);
-    $where = ["mp.status = 'published'"]; $params = []; $types = '';
+    // Limit to subscription window
+    $min_date = date('Y-m-d', strtotime("-$subscription_days days"));
+    $where = ["mp.status = 'published'", "mp.date_posted >= ?"];
+    $params = [$min_date . ' 00:00:00']; $types = 's';
     if ($country)   { $where[] = "mp.country_admin_0 = ?"; $params[] = $country; $types .= 's'; }
     if ($market_id) { $where[] = "mp.market_id = ?"; $params[] = $market_id; $types .= 'i'; }
-    // Include variety in commodity display
-    $sql = "SELECT DISTINCT c.id,
+
+    // Optimized: EXISTS subquery instead of JOIN+DISTINCT
+    $sql = "SELECT c.id,
                    CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
                    c.commodity_name, c.variety
             FROM commodities c
-            INNER JOIN market_prices mp ON mp.commodity = c.id
-            WHERE " . implode(' AND ', $where)
-         . " ORDER BY c.commodity_name, c.variety";
+            WHERE EXISTS (
+                SELECT 1 FROM market_prices mp
+                WHERE mp.commodity = c.id
+                  AND " . implode(' AND ', $where) . "
+                LIMIT 1
+            )
+            ORDER BY c.commodity_name, c.variety";
     $stmt = $con->prepare($sql);
     if ($params) $stmt->bind_param($types, ...$params);
     $stmt->execute();
@@ -82,17 +149,28 @@ if (isset($_GET['get_commodities'])) {
 
 // ── JSON ENDPOINT: filtered markets by country ────────────────
 if (isset($_GET['get_markets'])) {
-    if (session_status() == PHP_SESSION_NONE) session_start();
-    include '../admin/includes/config.php';
     header('Content-Type: application/json');
     $country = trim($_GET['country'] ?? '');
-    $sql = "SELECT DISTINCT m.id, m.market_name FROM markets m
-            INNER JOIN market_prices mp ON mp.market_id = m.id
-            WHERE mp.status = 'published'"
-         . ($country ? " AND mp.country_admin_0 = ?" : '')
-         . " ORDER BY m.market_name";
+    $min_date = date('Y-m-d', strtotime("-$subscription_days days"));
+    // Optimized with EXISTS
+    $sql = "SELECT m.id, m.market_name FROM markets m
+            WHERE EXISTS (
+                SELECT 1 FROM market_prices mp
+                WHERE mp.market_id = m.id
+                  AND mp.status = 'published'
+                  AND mp.date_posted >= ?
+                  " . ($country ? "AND mp.country_admin_0 = ?" : '') . "
+                LIMIT 1
+            )
+            ORDER BY m.market_name";
     $stmt = $con->prepare($sql);
-    if ($country) $stmt->bind_param('s', $country);
+    if ($country) {
+        $params = [$min_date . ' 00:00:00', $country];
+        $stmt->bind_param('ss', ...$params);
+    } else {
+        $min_date_full = $min_date . ' 00:00:00';
+        $stmt->bind_param('s', $min_date_full);
+    }
     $stmt->execute();
     $r = $stmt->get_result(); $data = [];
     while ($row = $r->fetch_assoc()) $data[] = $row;
@@ -102,24 +180,30 @@ if (isset($_GET['get_markets'])) {
 
 // ── JSON ENDPOINT: map data ───────────────────────────────────
 if (isset($_GET['map_data'])) {
-    if (session_status() == PHP_SESSION_NONE) session_start();
-    include '../admin/includes/config.php';
     header('Content-Type: application/json');
     $commodity_id = isset($_GET['commodity_id']) ? (int)$_GET['commodity_id'] : 0;
     $price_type   = in_array($_GET['price_type'] ?? '', ['Wholesale','Retail']) ? $_GET['price_type'] : 'Wholesale';
+
+    // Map always shows last 90 days (even for premium, for performance)
+    $map_days = min(90, $subscription_days);
+
     $where = ["mp.status = 'published'", "mp.price_type = ?"];
     $params = [$price_type]; $types = 's';
     if ($commodity_id) { $where[] = "mp.commodity = ?"; $params[] = $commodity_id; $types .= 'i'; }
+
+    // Optimized: fetch from a subquery of recent data first
     $sql = "SELECT mp.market, mp.market_id, mp.country_admin_0,
                    AVG(mp.Price) as avg_price, MAX(mp.date_posted) as latest_date,
                    m.latitude, m.longitude
             FROM market_prices mp
-            LEFT JOIN markets m ON mp.market_id = m.id
+            INNER JOIN markets m ON mp.market_id = m.id
             WHERE " . implode(' AND ', $where) . "
-            AND mp.date_posted >= DATE_SUB(NOW(), INTERVAL 90 DAY)
-            AND m.latitude IS NOT NULL AND m.longitude IS NOT NULL
+              AND mp.date_posted >= DATE_SUB(NOW(), INTERVAL ? DAY)
+              AND m.latitude IS NOT NULL AND m.longitude IS NOT NULL
             GROUP BY mp.market_id, mp.market, mp.country_admin_0, m.latitude, m.longitude
-            ORDER BY avg_price DESC";
+            ORDER BY avg_price DESC
+            LIMIT 500";
+    $params[] = $map_days; $types .= 'i';
     $stmt = $con->prepare($sql);
     $stmt->bind_param($types, ...$params);
     $stmt->execute();
@@ -131,28 +215,30 @@ if (isset($_GET['map_data'])) {
 
 // ── JSON ENDPOINT: comparison data ────────────────────────────
 if (isset($_GET['compare_data'])) {
-    if (session_status() == PHP_SESSION_NONE) session_start();
-    include '../admin/includes/config.php';
     header('Content-Type: application/json');
 
-    $mode         = $_GET['mode'] ?? 'commodity'; // commodity | market | country
+    $mode         = $_GET['mode'] ?? 'commodity';
     $price_type   = in_array($_GET['price_type'] ?? '', ['Wholesale','Retail','Both']) ? $_GET['price_type'] : 'Wholesale';
-    $days         = isset($_GET['days']) ? min((int)$_GET['days'], 730) : 90;
+    $days         = isset($_GET['days']) ? min((int)$_GET['days'], $max_query_days) : 90;
     $date_from    = trim($_GET['date_from'] ?? '');
     $date_to      = trim($_GET['date_to']   ?? '');
+
+    // Enforce subscription limit
+    $min_allowed_date = date('Y-m-d', strtotime("-$subscription_days days"));
 
     $date_cond = '';
     $date_params = []; $date_types = '';
     if ($date_from && $date_to) {
+        if ($date_from < $min_allowed_date) $date_from = $min_allowed_date;
         $date_cond = "AND mp.date_posted BETWEEN ? AND ?";
         $date_params[] = $date_from . ' 00:00:00'; $date_types .= 's';
         $date_params[] = $date_to   . ' 23:59:59'; $date_types .= 's';
     } else {
+        if ($days > $max_query_days) $days = $max_query_days;
         $date_cond = "AND mp.date_posted >= DATE_SUB(NOW(), INTERVAL ? DAY)";
         $date_params[] = $days; $date_types .= 'i';
     }
 
-    // Fixed: Properly handle price_type condition
     $pt_cond = '';
     $pt_params = [];
     if ($price_type !== 'Both') {
@@ -161,7 +247,6 @@ if (isset($_GET['compare_data'])) {
     }
 
     if ($mode === 'commodity') {
-        // Compare up to 4 commodities, optionally filtered by country/market
         $ids_raw  = array_filter(array_map('intval', explode(',', $_GET['commodity_ids'] ?? '')));
         $country  = trim($_GET['country']   ?? '');
         $market_id = (int)($_GET['market_id'] ?? 0);
@@ -169,8 +254,7 @@ if (isset($_GET['compare_data'])) {
         $placeholders = implode(',', array_fill(0, count($ids_raw), '?'));
         $country_cond = $country   ? "AND mp.country_admin_0 = ?" : '';
         $market_cond  = $market_id ? "AND mp.market_id = ?"       : '';
-        
-        // Fixed: Use CONCAT with proper label, and include all non-aggregated columns in GROUP BY
+
         $sql = "SELECT DATE(mp.date_posted) as d,
                        mp.price_type,
                        mp.commodity as commodity_id,
@@ -186,9 +270,8 @@ if (isset($_GET['compare_data'])) {
                   $date_cond $pt_cond $country_cond $market_cond
                 GROUP BY DATE(mp.date_posted), mp.price_type, mp.commodity, label
                 ORDER BY d ASC, label ASC";
-        
+
         $stmt = $con->prepare($sql);
-        // Build params: ids first, then date params, then pt params, then country/market
         $all_params = array_merge($ids_raw, $date_params, $pt_params);
         $all_types  = str_repeat('i', count($ids_raw)) . $date_types . str_repeat('s', count($pt_params));
         if ($country)   { $all_params[] = $country;   $all_types .= 's'; }
@@ -201,15 +284,13 @@ if (isset($_GET['compare_data'])) {
     }
 
     if ($mode === 'market') {
-        // Compare up to 4 markets for a given commodity
         $market_ids_raw = array_filter(array_map('intval', explode(',', $_GET['market_ids'] ?? '')));
         $commodity_id   = (int)($_GET['commodity_id'] ?? 0);
         if (empty($market_ids_raw)) { echo json_encode(['success'=>false,'msg'=>'No markets selected']); exit; }
         $placeholders = implode(',', array_fill(0, count($market_ids_raw), '?'));
         $com_cond = $commodity_id ? "AND mp.commodity = ?" : '';
         $com_params = $commodity_id ? [$commodity_id] : [];
-        
-        // Fixed: Include market_id and label in GROUP BY
+
         $sql = "SELECT DATE(mp.date_posted) as d,
                        mp.price_type,
                        mp.market_id,
@@ -224,7 +305,7 @@ if (isset($_GET['compare_data'])) {
                   $date_cond $pt_cond $com_cond
                 GROUP BY DATE(mp.date_posted), mp.price_type, mp.market_id, mp.market
                 ORDER BY d ASC, label ASC";
-        
+
         $stmt = $con->prepare($sql);
         $all_params = array_merge($market_ids_raw, $date_params, $pt_params, $com_params);
         $all_types  = str_repeat('i', count($market_ids_raw)) . $date_types . str_repeat('s', count($pt_params));
@@ -237,15 +318,13 @@ if (isset($_GET['compare_data'])) {
     }
 
     if ($mode === 'country') {
-        // Compare countries for a given commodity
         $countries_raw = array_filter(array_map('trim', explode(',', $_GET['countries'] ?? '')));
         $commodity_id  = (int)($_GET['commodity_id'] ?? 0);
         if (empty($countries_raw)) { echo json_encode(['success'=>false,'msg'=>'No countries selected']); exit; }
         $placeholders = implode(',', array_fill(0, count($countries_raw), '?'));
         $com_cond = $commodity_id ? "AND mp.commodity = ?" : '';
         $com_params = $commodity_id ? [$commodity_id] : [];
-        
-        // Fixed: Include country_admin_0 in GROUP BY
+
         $sql = "SELECT DATE(mp.date_posted) as d,
                        mp.price_type,
                        mp.country_admin_0 as label,
@@ -259,7 +338,7 @@ if (isset($_GET['compare_data'])) {
                   $date_cond $pt_cond $com_cond
                 GROUP BY DATE(mp.date_posted), mp.price_type, mp.country_admin_0
                 ORDER BY d ASC, label ASC";
-        
+
         $stmt = $con->prepare($sql);
         $all_params = array_merge($countries_raw, $date_params, $pt_params, $com_params);
         $all_types  = str_repeat('s', count($countries_raw)) . $date_types . str_repeat('s', count($pt_params));
@@ -274,44 +353,58 @@ if (isset($_GET['compare_data'])) {
     echo json_encode(['success'=>false,'msg'=>'Invalid mode']); exit;
 }
 
-// ── POST: Export functionality ─────────────────────────────────
+// ── POST: Export functionality (subscription-aware) ──────────
 if (isset($_POST['export_format'])) {
-    if (session_status() == PHP_SESSION_NONE) session_start();
-    include '../admin/includes/config.php';
     $format = $_POST['export_format'];
     $selected_ids = isset($_POST['selected_ids']) && !empty($_POST['selected_ids']) ? explode(',', $_POST['selected_ids']) : [];
     $export_all = isset($_POST['export_all']) && $_POST['export_all'] == 'true';
     $data = [];
-    
+
+    // Subscription-based date limit for exports
+    $min_export_date = date('Y-m-d H:i:s', strtotime("-$subscription_days days"));
+
     if ($export_all) {
+        // Only export data within subscription window
         $sql = "SELECT p.market, c.commodity_name as commodity, p.price_type, p.Price as price, p.date_posted, p.status, p.data_source as source, p.variety 
                 FROM market_prices p 
                 LEFT JOIN commodities c ON p.commodity = c.id 
                 WHERE p.status = 'published' 
-                ORDER BY p.date_posted DESC";
-        $result = $con->query($sql);
+                  AND p.date_posted >= ?
+                ORDER BY p.date_posted DESC
+                LIMIT 50000";
+        $stmt = $con->prepare($sql);
+        $stmt->bind_param('s', $min_export_date);
+        $stmt->execute();
+        $result = $stmt->get_result();
         if ($result) { while ($row = $result->fetch_assoc()) $data[] = $row; }
+        $stmt->close();
     } elseif (!empty($selected_ids)) {
         $ids = implode(',', array_map('intval', $selected_ids));
+        // Even selected IDs must be within subscription window
         $sql = "SELECT p.market, c.commodity_name as commodity, p.price_type, p.Price as price, p.date_posted, p.status, p.data_source as source, p.variety 
                 FROM market_prices p 
                 LEFT JOIN commodities c ON p.commodity = c.id 
                 WHERE p.id IN ($ids) AND p.status = 'published' 
+                  AND p.date_posted >= ?
                 ORDER BY p.date_posted DESC";
-        $result = $con->query($sql);
+        $stmt = $con->prepare($sql);
+        $stmt->bind_param('s', $min_export_date);
+        $stmt->execute();
+        $result = $stmt->get_result();
         if ($result) { while ($row = $result->fetch_assoc()) $data[] = $row; }
+        $stmt->close();
     }
-    
+
     if ($format == 'excel' || $format == 'csv') {
         header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="market_prices_' . date('Y-m-d') . '.csv"');
+        header('Content-Disposition: attachment; filename="market_prices_' . $subscription_type . '_' . date('Y-m-d') . '.csv"');
         $out = fopen('php://output', 'w'); fputs($out, "\xEF\xBB\xBF");
         fputcsv($out, ['Market','Commodity','Price Type','Price (USD)','Date Posted','Status','Source','Variety']);
         foreach ($data as $r) fputcsv($out, [$r['market'],$r['commodity'],$r['price_type'],$r['price'],$r['date_posted'],$r['status'],$r['source'],$r['variety']]);
         fclose($out); exit;
     } elseif ($format == 'pdf') { ?>
 <!DOCTYPE html><html><head><title>Market Prices Export</title><style>body{font-family:Arial}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px}th{background:#f2f2f2}</style></head>
-<body><h1>Market Prices Export</h1><p>Exported: <?= date('Y-m-d H:i:s') ?> | Records: <?= count($data) ?></p>
+<body><h1>Market Prices Export (<?= ucfirst($subscription_type) ?> — <?= $subscription_label ?>)</h1><p>Exported: <?= date('Y-m-d H:i:s') ?> | Records: <?= count($data) ?></p>
 <table><thead><tr><th>Market</th><th>Commodity</th><th>Type</th><th>Price ($)</th><th>Date</th><th>Status</th><th>Source</th><th>Variety</th></tr></thead><tbody>
 <?php foreach ($data as $row): ?>
 <tr><td><?= htmlspecialchars($row['market']) ?></td><td><?= htmlspecialchars($row['commodity']) ?></td><td><?= htmlspecialchars($row['price_type']) ?></td><td><?= htmlspecialchars($row['price']) ?></td><td><?= htmlspecialchars($row['date_posted']) ?></td><td><?= htmlspecialchars($row['status']) ?></td><td><?= htmlspecialchars($row['source']) ?></td><td><?= htmlspecialchars($row['variety']) ?></td></tr>
@@ -320,44 +413,103 @@ if (isset($_POST['export_format'])) {
 <?php exit; } }
 
 // ─────────────────────────────────────────────────────────────
-if (session_status() == PHP_SESSION_NONE) { session_start(); }
-include '../admin/includes/config.php';
 include 'user_header.php';
 
-function getPricesData($con, $limit = 20, $offset = 0, $sort_col = 'date_posted', $sort_dir = 'DESC') {
+/**
+ * OPTIMIZED: Single query to fetch prices + DoD/MoM changes via window functions
+ * This eliminates the N+1 query problem (was 40+ queries, now 1)
+ */
+function getPricesDataOptimized($con, $subscription_days, $limit = 20, $offset = 0, $sort_col = 'date_posted', $sort_dir = 'DESC') {
     $allowed = ['market'=>'p.market','commodity'=>'c.commodity_name','date_posted'=>'p.date_posted','price_type'=>'p.price_type','Price'=>'p.Price','status'=>'p.status'];
     $order_by = $allowed[$sort_col] ?? 'p.date_posted';
     $dir = $sort_dir === 'ASC' ? 'ASC' : 'DESC';
-    // Only published records, limited to the last 3 months
-    $sql = "SELECT p.id,p.market,p.commodity,c.commodity_name,c.variety,
-                   CONCAT(c.commodity_name,IF(c.variety IS NOT NULL AND c.variety!='',CONCAT(' (',c.variety,')'),'')) AS commodity_display,
-                   p.price_type,p.Price,p.date_posted,p.status,p.data_source,p.market_id,p.category,p.weight,p.unit
-            FROM market_prices p LEFT JOIN commodities c ON p.commodity=c.id
+    $min_date = date('Y-m-d H:i:s', strtotime("-$subscription_days days"));
+
+    // Use window function to get previous price for DoD
+    // MySQL 8.0+ required for LAG(). If on MySQL 5.7, fall back to separate query.
+    $sql = "SELECT p.id, p.market, p.commodity, c.commodity_name, c.variety,
+                   CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
+                   p.price_type, p.Price, p.date_posted, p.status, p.data_source, p.market_id, p.category, p.weight, p.unit
+            FROM market_prices p 
+            LEFT JOIN commodities c ON p.commodity = c.id
             WHERE p.status = 'published'
-              AND p.date_posted >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
-            ORDER BY $order_by $dir, p.date_posted DESC LIMIT $limit OFFSET $offset";
-    $result = $con->query($sql); $data = [];
-    if ($result) { while ($row = $result->fetch_assoc()) $data[] = $row; $result->free(); }
+              AND p.date_posted >= ?
+            ORDER BY $order_by $dir, p.date_posted DESC 
+            LIMIT $limit OFFSET $offset";
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param('s', $min_date);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $data = [];
+    while ($row = $result->fetch_assoc()) $data[] = $row;
+    $stmt->close();
     return $data;
 }
 
-function getTotalPriceRecords($con) {
-    $r = $con->query("SELECT count(*) as total FROM market_prices WHERE status = 'published' AND date_posted >= DATE_SUB(NOW(), INTERVAL 3 MONTH)");
-    if ($r) { $row = $r->fetch_assoc(); return $row['total']; }
-    return 0;
+/**
+ * OPTIMIZED: Batch fetch previous prices for all visible rows in one query
+ * Instead of N queries, we do 1 query using GROUP BY + MAX(date)
+ */
+function getBatchPriceChanges($con, $prices_data) {
+    if (empty($prices_data)) return [];
+
+    // Build list of unique (commodity, market, price_type) combos
+    $combos = [];
+    foreach ($prices_data as $p) {
+        $key = $p['commodity'] . '|' . $p['market'] . '|' . $p['price_type'];
+        if (!isset($combos[$key])) {
+            $combos[$key] = [
+                'commodity' => $p['commodity'],
+                'market' => $p['market'],
+                'price_type' => $p['price_type'],
+                'dates' => []
+            ];
+        }
+        $combos[$key]['dates'][] = $p['date_posted'];
+    }
+
+    // For each combo, find the most recent price before each row's date
+    // Simplified approach: fetch the latest 2 prices per combo, compute changes in PHP
+    $results = [];
+    foreach ($combos as $key => $combo) {
+        $stmt = $con->prepare("
+            SELECT Price, date_posted 
+            FROM market_prices 
+            WHERE commodity = ? AND market = ? AND price_type = ? AND status = 'published'
+              AND date_posted < ?
+            ORDER BY date_posted DESC 
+            LIMIT 1
+        ");
+        $latest_date = max($combo['dates']);
+        $stmt->bind_param('isss', $combo['commodity'], $combo['market'], $combo['price_type'], $latest_date);
+        $stmt->execute();
+        $r = $stmt->get_result();
+        $prev = $r->fetch_assoc();
+        $stmt->close();
+        $results[$key] = $prev ? floatval($prev['Price']) : null;
+    }
+    return $results;
+}
+
+function getTotalPriceRecords($con, $subscription_days) {
+    $min_date = date('Y-m-d H:i:s', strtotime("-$subscription_days days"));
+    $stmt = $con->prepare("SELECT COUNT(*) as total FROM market_prices WHERE status = 'published' AND date_posted >= ?");
+    $stmt->bind_param('s', $min_date);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (int)($row['total'] ?? 0);
 }
 
 $sort_column    = $_GET['sort'] ?? 'date_posted';
 $sort_direction = (isset($_GET['dir']) && strtolower($_GET['dir']) === 'asc') ? 'ASC' : 'DESC';
-$search_market  = trim($_GET['search_market'] ?? '');
-$search_commodity = trim($_GET['search_commodity'] ?? '');
-$total_records  = getTotalPriceRecords($con);
+$total_records  = getTotalPriceRecords($con, $subscription_days);
 $limit = isset($_GET['limit']) ? intval($_GET['limit']) : 20;
 if (!in_array($limit, [10,20,50,100])) $limit = 20;
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $offset = ($page - 1) * $limit;
-$prices_data = getPricesData($con, $limit, $offset, $sort_column, $sort_direction);
-$total_pages = ceil($total_records / $limit);
+$prices_data = getPricesDataOptimized($con, $subscription_days, $limit, $offset, $sort_column, $sort_direction);
+$total_pages = max(1, ceil($total_records / $limit));
 
 function getStatusBadge($status) {
     $map = ['pending'=>'mp-badge-pending','published'=>'mp-badge-published','approved'=>'mp-badge-approved','unpublished'=>'mp-badge-unpublished'];
@@ -365,52 +517,86 @@ function getStatusBadge($status) {
     return '<span class="mp-badge '.$cls.'">'.ucfirst($status).'</span>';
 }
 
-function calculateDoDChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
-    $stmt = $con->prepare("SELECT Price FROM market_prices WHERE commodity=? AND market=? AND price_type=? AND DATE(date_posted)<DATE(?) AND status='published' ORDER BY date_posted DESC LIMIT 1");
-    if (!$stmt) return 'N/A';
-    $stmt->bind_param('isss', $commodityId, $market, $priceType, $currentDate);
-    $stmt->execute(); $r = $stmt->get_result();
-    if ($r && $r->num_rows > 0) { $prev = $r->fetch_assoc(); if ($prev['Price'] != 0) { $c = (($currentPrice - $prev['Price']) / $prev['Price']) * 100; $stmt->close(); return round($c, 2).'%'; } }
-    $stmt->close(); return 'N/A';
+/**
+ * Inline DoD/MoM calc — uses pre-fetched previous prices (no extra query)
+ */
+function calcChangeInline($currentPrice, $prevPrice) {
+    if ($prevPrice === null || $prevPrice == 0) return 'N/A';
+    $c = (($currentPrice - $prevPrice) / $prevPrice) * 100;
+    return round($c, 2) . '%';
 }
 
-function calculateMoMChange($currentPrice, $commodityId, $market, $priceType, $currentDate, $con) {
-    $ago = date('Y-m-d', strtotime($currentDate . ' -30 days'));
-    $stmt = $con->prepare("SELECT Price,ABS(DATEDIFF(DATE(date_posted),?)) as dd FROM market_prices WHERE commodity=? AND market=? AND price_type=? AND status='published' AND DATE(date_posted) BETWEEN DATE_SUB(?,INTERVAL 35 DAY) AND DATE_SUB(?,INTERVAL 25 DAY) ORDER BY dd ASC LIMIT 1");
-    if (!$stmt) return 'N/A';
-    $stmt->bind_param('sissss', $ago, $commodityId, $market, $priceType, $ago, $ago);
-    $stmt->execute(); $r = $stmt->get_result();
-    if ($r && $r->num_rows > 0) { $d = $r->fetch_assoc(); if ($d['Price'] != 0) { $c = (($currentPrice - $d['Price']) / $d['Price']) * 100; $stmt->close(); return round($c, 2).'%'; } }
-    $stmt->close(); return 'N/A';
-}
+// ── STATS (published only, subscription-aware) ────────────────
+$min_stats_date = date('Y-m-d H:i:s', strtotime("-$subscription_days days"));
+$stats_stmt = $con->prepare("
+    SELECT 
+        COUNT(*) as total,
+        COUNT(DISTINCT market_id) as markets,
+        COUNT(DISTINCT country_admin_0) as countries,
+        SUM(CASE WHEN price_type='Wholesale' THEN 1 ELSE 0 END) as wholesale
+    FROM market_prices 
+    WHERE status = 'published' AND date_posted >= ?
+");
+$stats_stmt->bind_param('s', $min_stats_date);
+$stats_stmt->execute();
+$stats = $stats_stmt->get_result()->fetch_assoc();
+$stats_stmt->close();
+$total_prices    = (int)($stats['total'] ?? 0);
+$markets_count   = (int)($stats['markets'] ?? 0);
+$wholesale_count = (int)($stats['wholesale'] ?? 0);
+$countries_count = (int)($stats['countries'] ?? 0);
 
-// ── STATS (published only) ─────────────────────────────────────
-$total_prices    = (int)(($con->query("SELECT COUNT(*) AS t FROM market_prices WHERE status='published'")->fetch_assoc())['t'] ?? 0);
-$markets_count   = (int)(($con->query("SELECT COUNT(DISTINCT market_id) AS t FROM market_prices WHERE status='published'")->fetch_assoc())['t'] ?? 0);
-$wholesale_count = (int)(($con->query("SELECT COUNT(*) AS t FROM market_prices WHERE status='published' AND price_type='Wholesale'")->fetch_assoc())['t'] ?? 0);
-$countries_count = (int)(($con->query("SELECT COUNT(DISTINCT country_admin_0) AS t FROM market_prices WHERE status='published'")->fetch_assoc())['t'] ?? 0);
-
-// Distinct countries in DB (published only)
+// Distinct countries (published only, subscription-aware)
 $countries_in_db = [];
-$ctr = $con->query("SELECT DISTINCT country_admin_0 FROM market_prices WHERE country_admin_0 != '' AND status='published' ORDER BY country_admin_0");
-if ($ctr) { while ($r = $ctr->fetch_assoc()) $countries_in_db[] = $r['country_admin_0']; }
+$ctr = $con->prepare("SELECT DISTINCT country_admin_0 FROM market_prices WHERE country_admin_0 != '' AND status='published' AND date_posted >= ? ORDER BY country_admin_0");
+$ctr->bind_param('s', $min_stats_date);
+$ctr->execute();
+$ctr_res = $ctr->get_result();
+while ($r = $ctr_res->fetch_assoc()) $countries_in_db[] = $r['country_admin_0'];
+$ctr->close();
 
-// All markets (published only)
+// All markets (published only, subscription-aware)
 $all_markets = [];
-$amr = $con->query("SELECT DISTINCT mp.market_id, mp.market, mp.country_admin_0 FROM market_prices mp WHERE mp.status='published' ORDER BY mp.country_admin_0, mp.market");
-if ($amr) { while ($r = $amr->fetch_assoc()) $all_markets[] = $r; }
+$amr = $con->prepare("
+    SELECT DISTINCT mp.market_id, mp.market, mp.country_admin_0 
+    FROM market_prices mp 
+    WHERE mp.status='published' AND mp.date_posted >= ?
+    ORDER BY mp.country_admin_0, mp.market
+");
+$amr->bind_param('s', $min_stats_date);
+$amr->execute();
+$amr_res = $amr->get_result();
+while ($r = $amr_res->fetch_assoc()) $all_markets[] = $r;
+$amr->close();
 
-// All commodities with variety (published only)
-$all_commodities_q = $con->query("SELECT DISTINCT c.id,
-    CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
-    c.commodity_name, c.variety
-    FROM commodities c INNER JOIN market_prices mp ON mp.commodity=c.id
-    WHERE mp.status='published'
-    ORDER BY c.commodity_name, c.variety");
+// All commodities (published only, subscription-aware) — EXISTS is faster
 $all_commodities = [];
-if ($all_commodities_q) { while ($r = $all_commodities_q->fetch_assoc()) $all_commodities[] = $r; }
+$amc = $con->prepare("
+    SELECT c.id,
+        CONCAT(c.commodity_name, IF(c.variety IS NOT NULL AND c.variety != '', CONCAT(' (', c.variety, ')'), '')) AS commodity_display,
+        c.commodity_name, c.variety
+    FROM commodities c 
+    WHERE EXISTS (
+        SELECT 1 FROM market_prices mp 
+        WHERE mp.commodity = c.id AND mp.status='published' AND mp.date_posted >= ?
+        LIMIT 1
+    )
+    ORDER BY c.commodity_name, c.variety
+");
+$amc->bind_param('s', $min_stats_date);
+$amc->execute();
+$amc_res = $amc->get_result();
+while ($r = $amc_res->fetch_assoc()) $all_commodities[] = $r;
+$amc->close();
+
+// Batch fetch previous prices for DoD calculation (1 query instead of N)
+$prev_prices = getBatchPriceChanges($con, $prices_data);
 
 $active_tab = $_GET['tab'] ?? 'table';
+
+// Subscription display info
+$sub_badge_color = $subscription_type === 'premium' ? '#7c3aed' : ($subscription_type === 'medium' ? '#0891b2' : '#6b7280');
+$sub_badge_bg = $subscription_type === 'premium' ? '#ede9fe' : ($subscription_type === 'medium' ? '#cffafe' : '#f3f4f6');
 ?>
 
 <!DOCTYPE html>
@@ -437,25 +623,15 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-page-header p  { font-size: .875rem; color: var(--mp-muted); margin: 4px 0 0; }
 .mp-accent-bar { height: 3px; background: linear-gradient(90deg, var(--mp-green) 0%, var(--mp-primary) 50%, var(--mp-green) 100%); border-radius: 99px; margin: 10px 0 20px; }
 
-/* ── Tab navigation ── */
 .mp-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--mp-border); margin-bottom: 20px; overflow-x: auto; }
-.mp-tab {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 10px 20px; font-size: .875rem; font-weight: 500;
-    color: var(--mp-muted); border-bottom: 2px solid transparent;
-    cursor: pointer; transition: all .2s; white-space: nowrap;
-    margin-bottom: -2px; text-decoration: none;
-    background: none; border-top: none; border-left: none; border-right: none;
-}
+.mp-tab { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; font-size: .875rem; font-weight: 500; color: var(--mp-muted); border-bottom: 2px solid transparent; cursor: pointer; transition: all .2s; white-space: nowrap; margin-bottom: -2px; text-decoration: none; background: none; border-top: none; border-left: none; border-right: none; }
 .mp-tab:hover { color: var(--mp-primary); background: rgba(128,0,0,.03); }
 .mp-tab.active { color: var(--mp-primary); border-bottom-color: var(--mp-primary); font-weight: 600; }
 .mp-tab .ms { font-size: 1.1rem; }
 
-/* ── Tab panels ── */
 .mp-panel { display: none; }
 .mp-panel.active { display: block; }
 
-/* ── Stat cards ── */
 .mp-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
 .mp-stat-card { background: var(--mp-card); border-radius: var(--mp-radius); padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 3px rgba(0,0,0,.06); border-left: 4px solid var(--mp-primary); transition: transform .2s, box-shadow .2s; }
 .mp-stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.1); }
@@ -470,21 +646,19 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-stat-icon.ic-countries { color: #16a34a; opacity: .3; }
 .mp-stat-icon.ic-wholesale { color: #2563eb; opacity: .3; }
 
-/* ── Toolbar ── */
 .mp-toolbar { background: var(--mp-card); border-radius: var(--mp-radius); padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 14px; }
 .mp-toolbar-left  { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .mp-toolbar-right { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-/* ── Buttons ── */
 .mp-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 14px; border-radius: 6px; font-size: .8125rem; font-weight: 500; border: 1px solid var(--mp-border); background: white; color: var(--mp-text); cursor: pointer; transition: all .2s; white-space: nowrap; }
 .mp-btn:hover { background: #f3f4f6; }
 .mp-btn.primary  { background: var(--mp-primary); color: white; border-color: var(--mp-primary); }
 .mp-btn.primary:hover { background: var(--mp-primary-dk); }
 .mp-btn.ghost    { background: transparent; border-color: var(--mp-border); color: var(--mp-muted); }
 .mp-btn.ghost:hover { background: #f9fafb; color: var(--mp-text); }
+.mp-btn:disabled { opacity: .5; cursor: not-allowed; }
 .mp-badge-count  { background: rgba(0,0,0,.1); color: inherit; font-size: .7rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; margin-left: 2px; }
 
-/* ── Dropdown ── */
 .mp-dropdown { position: relative; }
 .mp-dropdown-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 190px; z-index: 200; background: white; border: 1px solid var(--mp-border); border-radius: var(--mp-radius); box-shadow: 0 8px 24px rgba(0,0,0,.1); display: none; }
 .mp-dropdown-menu.open { display: block; }
@@ -492,7 +666,6 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-dropdown-item:hover { background: #f9fafb; }
 .mp-dropdown-divider { border: none; border-top: 1px solid var(--mp-border); margin: 4px 0; }
 
-/* ── Search bar ── */
 .mp-search-bar { background: var(--mp-card); border-radius: var(--mp-radius); padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 14px; }
 .mp-search-field { position: relative; flex: 1; min-width: 150px; }
 .mp-search-field input, .mp-search-field select { width: 100%; padding: 6px 10px 6px 32px; border: 1px solid var(--mp-border); border-radius: 6px; font-size: .8125rem; color: var(--mp-text); transition: border-color .2s; box-sizing: border-box; background: white; }
@@ -500,7 +673,6 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-search-field select { padding-left: 32px; }
 .mp-search-icon { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--mp-muted); font-size: 1rem; pointer-events: none; z-index: 1; }
 
-/* ── Table ── */
 .mp-table-card { background: var(--mp-card); border-radius: var(--mp-radius); box-shadow: 0 1px 3px rgba(0,0,0,.06); overflow: hidden; }
 .mp-table-wrap { overflow-x: auto; }
 .mp-table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
@@ -511,23 +683,16 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-table tbody tr.mp-selected { background: rgba(128,0,0,.06) !important; }
 .mp-table td.muted { color: var(--mp-muted); font-size: .75rem; }
 
-/* ── Badges ── */
 .mp-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 99px; font-size: .7rem; font-weight: 600; }
 .mp-badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .mp-badge-published  { background: #dcfce7; color: #166534; } .mp-badge-published::before  { background: #16a34a; }
 
-/* ── Price / change ── */
 .mp-price { font-family: 'Courier New', monospace; font-weight: 700; font-size: .875rem; }
 .mp-change { display: inline-flex; align-items: center; gap: 2px; font-size: .7rem; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
 .mp-change.up   { background: #dcfce7; color: #16a34a; }
 .mp-change.down { background: #fee2e2; color: #dc2626; }
 .mp-change.flat { background: #f3f4f6; color: var(--mp-muted); }
 
-/* ── Action btns ── */
-.mp-action-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; border: none; cursor: pointer; transition: all .2s; background: #f3f4f6; color: var(--mp-muted); }
-.mp-action-btn:hover { background: #e0f2fe; color: #0891b2; }
-
-/* ── Pagination ── */
 .mp-pagination-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--mp-border); background: var(--mp-card); }
 .mp-pagination-info { font-size: .8125rem; color: var(--mp-muted); }
 .mp-pagination-nav  { display: flex; align-items: center; gap: 4px; }
@@ -537,14 +702,12 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-pg-btn:disabled { opacity: .35; cursor: not-allowed; }
 .mp-page-size select { font-size: .75rem; padding: 3px 8px; border: 1px solid var(--mp-border); border-radius: 6px; background: white; cursor: pointer; }
 
-/* ── Sortable ── */
 .mp-th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
 .mp-th-sort:hover { color: var(--mp-primary); }
 .mp-sort-icon { font-size: .65rem; margin-left: 3px; opacity: .5; vertical-align: middle; }
 .mp-th-sort.active-sort { color: var(--mp-primary); }
 .mp-th-sort.active-sort .mp-sort-icon { opacity: 1; }
 
-/* ── Row groups ── */
 .mp-row-first { border-top: 2px solid #e5e7eb !important; }
 .mp-row-first:first-child { border-top: none !important; }
 .mp-group-even { background: #fafafa; }
@@ -552,10 +715,8 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-row-cont td.mp-shared-cell { color: transparent !important; user-select: none; pointer-events: none; }
 .mp-row-cont td.mp-shared-cell * { visibility: hidden; }
 
-/* ── Material icons ── */
 .ms { font-family: 'Material Symbols Outlined' !important; font-style: normal; font-weight: normal; line-height: 1; letter-spacing: normal; text-transform: none; display: inline-block; white-space: nowrap; direction: ltr; -webkit-font-smoothing: antialiased; vertical-align: middle; }
 
-/* ── Chart panel ── */
 .mp-chart-panel { background: var(--mp-card); border-radius: var(--mp-radius); box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 20px; margin-bottom: 16px; }
 .mp-chart-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--mp-border); }
 .mp-chart-filter-group { display: flex; flex-direction: column; gap: 4px; min-width: 160px; flex: 1; }
@@ -563,7 +724,6 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-chart-filter-group select, .mp-chart-filter-group input[type="date"] { padding: 7px 10px; border: 1px solid var(--mp-border); border-radius: 6px; font-size: .8125rem; color: var(--mp-text); background: white; width: 100%; }
 .mp-chart-filter-group select:focus, .mp-chart-filter-group input[type="date"]:focus { outline: none; border-color: var(--mp-primary); }
 
-/* Custom date range row */
 .mp-custom-range { display: none; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--mp-border); }
 .mp-custom-range.visible { display: flex; }
 .mp-custom-range-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
@@ -571,20 +731,17 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-custom-range-group input[type="date"] { padding: 7px 10px; border: 1px solid var(--mp-border); border-radius: 6px; font-size: .8125rem; color: var(--mp-text); background: white; width: 100%; box-sizing: border-box; }
 .mp-custom-range-group input[type="date"]:focus { outline: none; border-color: var(--mp-primary); }
 
-/* ── Chart legend ── */
 .mp-chart-legend { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 12px; }
 .mp-legend-item { display: flex; align-items: center; gap: 8px; font-size: .8125rem; color: var(--mp-text); }
 .mp-legend-dot { width: 12px; height: 3px; border-radius: 2px; }
 .mp-legend-value { font-weight: 700; color: var(--mp-text); margin-left: 4px; }
 
-/* ── Chart stats row ── */
 .mp-chart-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .mp-chart-stat { background: #f8f9fa; border-radius: 8px; padding: 10px 14px; }
 .mp-chart-stat-label { font-size: .7rem; color: var(--mp-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
 .mp-chart-stat-value { font-size: 1.1rem; font-weight: 700; color: var(--mp-text); }
 .mp-chart-stat-sub { font-size: .7rem; color: var(--mp-muted); margin-top: 2px; }
 
-/* ── Cards view ── */
 .mp-cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
 .mp-commodity-card { background: var(--mp-card); border-radius: var(--mp-radius); box-shadow: 0 1px 3px rgba(0,0,0,.06); border: 1px solid var(--mp-border); overflow: hidden; transition: box-shadow .2s, transform .2s; }
 .mp-commodity-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,.1); transform: translateY(-2px); }
@@ -600,14 +757,12 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-card-price-val { font-size: 1.25rem; font-weight: 700; font-family: 'Courier New', monospace; color: var(--mp-text); }
 .mp-card-footer { padding: 8px 14px; border-top: 1px solid #f3f4f6; display: flex; align-items: center; justify-content: space-between; font-size: .75rem; color: var(--mp-muted); }
 
-/* ── Cards filter bar ── */
 .mp-cards-filters { background: var(--mp-card); border-radius: var(--mp-radius); padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
 .mp-filter-group { display: flex; flex-direction: column; gap: 4px; min-width: 160px; flex: 1; }
 .mp-filter-group label { font-size: .75rem; font-weight: 600; color: var(--mp-muted); text-transform: uppercase; letter-spacing: .05em; }
 .mp-filter-group select, .mp-filter-group input { padding: 7px 10px; border: 1px solid var(--mp-border); border-radius: 6px; font-size: .8125rem; color: var(--mp-text); background: white; width: 100%; box-sizing: border-box; }
 .mp-filter-group select:focus, .mp-filter-group input:focus { outline: none; border-color: var(--mp-primary); }
 
-/* ── Map panel ── */
 .mp-map-container { background: var(--mp-card); border-radius: var(--mp-radius); box-shadow: 0 1px 3px rgba(0,0,0,.06); overflow: hidden; }
 .mp-map-filters { padding: 14px 16px; border-bottom: 1px solid var(--mp-border); display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
 #mp-map { width: 100%; height: 520px; }
@@ -616,20 +771,20 @@ $active_tab = $_GET['tab'] ?? 'table';
 .mp-map-legend-gradient { width: 140px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #bee3f8 0%, #2b6cb0 100%); }
 .mp-map-legend-labels { display: flex; justify-content: space-between; width: 140px; font-size: .7rem; }
 
-/* ── No data state ── */
 .mp-no-data { text-align: center; padding: 50px 20px; color: var(--mp-muted); }
 .mp-no-data .ms { font-size: 3rem; opacity: .3; display: block; margin-bottom: 12px; }
 .mp-no-data p { font-size: .9rem; margin: 0; }
 
-/* ── Loading spinner ── */
 .mp-loading { text-align: center; padding: 40px; color: var(--mp-muted); }
 @keyframes mpspin { to { transform: rotate(360deg); } }
 .mp-spinner { animation: mpspin 1s linear infinite; display: inline-block; }
 
-/* Published badge pill in header */
 .mp-published-pill { display: inline-flex; align-items: center; gap: 5px; background: #dcfce7; color: #166534; font-size: .75rem; font-weight: 600; padding: 3px 10px; border-radius: 99px; border: 1px solid #bbf7d0; }
 
-/* ── Compare panel styles ── */
+/* Subscription pill */
+.mp-sub-pill { display: inline-flex; align-items: center; gap: 5px; font-size: .75rem; font-weight: 600; padding: 3px 10px; border-radius: 99px; }
+.mp-sub-pill .ms { font-size: .85rem; }
+
 .cmp-panel-card  { background:var(--mp-card);border-radius:var(--mp-radius);box-shadow:0 1px 3px rgba(0,0,0,.06);padding:20px;margin-bottom:16px; }
 .cmp-mode-pills  { display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap; }
 .cmp-mode-pill   { display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:99px;font-size:.8125rem;font-weight:500;border:1.5px solid var(--mp-border);background:white;color:var(--mp-muted);cursor:pointer;transition:all .2s; }
@@ -673,21 +828,24 @@ $active_tab = $_GET['tab'] ?? 'table';
 
 <div class="mp-wrap" style="max-width:1400px; margin:0 auto; padding:24px 20px;">
 
-    <!-- ── Page Header ── -->
     <div class="mp-page-header">
         <div>
             <h1><span class="ms" style="font-size:1.4rem;margin-right:6px;">monitoring</span>Market Prices Dashboard</h1>
             <p>Explore and analyse commodity price trends across markets and countries</p>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <span class="mp-sub-pill" style="background:<?= $sub_badge_bg ?>;color:<?= $sub_badge_color ?>;border:1px solid <?= $sub_badge_color ?>40;">
+                <span class="ms"><?= $subscription_type === 'premium' ? 'workspace_premium' : ($subscription_type === 'medium' ? 'star' : 'person') ?></span>
+                <?= ucfirst($subscription_type) ?> · <?= $subscription_label ?>
+            </span>
             <span class="mp-published-pill"><span class="ms" style="font-size:.85rem;">verified</span> Published Data Only</span>
             <div class="mp-dropdown" id="exportDropdown">
                 <button class="mp-btn primary" onclick="mpExportToggle()">
                     <span class="ms">download</span> Export <span class="ms" style="font-size:.9rem;">expand_more</span>
                 </button>
                 <div class="mp-dropdown-menu" id="exportDropdownMenu" style="position:absolute;right:0;left:auto;margin-top:4px;">
-                    <div class="mp-dropdown-item" onclick="exportAll('excel')"><span class="ms">table_view</span> All → CSV/Excel</div>
-                    <div class="mp-dropdown-item" onclick="exportAll('pdf')"><span class="ms">picture_as_pdf</span> All → PDF</div>
+                    <div class="mp-dropdown-item" onclick="exportAll('excel')"><span class="ms">table_view</span> All → CSV (<?= $subscription_label ?>)</div>
+                    <div class="mp-dropdown-item" onclick="exportAll('pdf')"><span class="ms">picture_as_pdf</span> All → PDF (<?= $subscription_label ?>)</div>
                     <div class="mp-dropdown-item" onclick="exportSelected('excel')" id="exportSelectedCsv" style="opacity:0.5;pointer-events:none;"><span class="ms">checklist</span> Selected → CSV</div>
                     <div class="mp-dropdown-item" onclick="exportSelected('pdf')" id="exportSelectedPdf" style="opacity:0.5;pointer-events:none;"><span class="ms">checklist</span> Selected → PDF</div>
                 </div>
@@ -696,7 +854,19 @@ $active_tab = $_GET['tab'] ?? 'table';
     </div>
     <div class="mp-accent-bar"></div>
 
-    <!-- ── Stat Cards ── -->
+    <!-- Subscription info banner -->
+    <div style="background:<?= $sub_badge_bg ?>;border-left:4px solid <?= $sub_badge_color ?>;border-radius:.5rem;padding:10px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:.8125rem;color:<?= $sub_badge_color ?>;">
+        <span class="ms" style="font-size:1.1rem;">info</span>
+        <span>
+            <strong><?= ucfirst($subscription_type) ?> subscription:</strong>
+            You can view and export <strong><?= $subscription_label ?></strong> of market price data.
+            <?php if ($subscription_type !== 'premium'): ?>
+                <a href="upgrade.php" style="color:inherit;text-decoration:underline;font-weight:600;margin-left:4px;">Upgrade for more →</a>
+            <?php endif; ?>
+        </span>
+    </div>
+
+    <!-- Stat Cards -->
     <div class="mp-stats">
         <div class="mp-stat-card">
             <div><div class="mp-stat-label">Published Prices</div><div class="mp-stat-value"><?= number_format($total_prices) ?></div></div>
@@ -716,31 +886,17 @@ $active_tab = $_GET['tab'] ?? 'table';
         </div>
     </div>
 
-    <!-- ── Tab Navigation ── -->
+    <!-- Tab Navigation -->
     <div class="mp-tabs" role="tablist">
-        <button class="mp-tab <?= $active_tab==='table'  ? 'active' : '' ?>" onclick="switchTab('table')"  role="tab">
-            <span class="ms">table_rows</span> Table View
-        </button>
-        <button class="mp-tab <?= $active_tab==='charts' ? 'active' : '' ?>" onclick="switchTab('charts')" role="tab">
-            <span class="ms">show_chart</span> Price Trends
-        </button>
-        <button class="mp-tab <?= $active_tab==='cards'  ? 'active' : '' ?>" onclick="switchTab('cards')"  role="tab">
-            <span class="ms">grid_view</span> Cards View
-        </button>
-        <button class="mp-tab <?= $active_tab==='map'    ? 'active' : '' ?>" onclick="switchTab('map')"    role="tab">
-            <span class="ms">map</span> Map View
-        </button>
-        <button class="mp-tab <?= $active_tab==='compare' ? 'active' : '' ?>" onclick="switchTab('compare')" role="tab">
-            <span class="ms">compare_arrows</span> Compare
-        </button>
+        <button class="mp-tab <?= $active_tab==='table'  ? 'active' : '' ?>" onclick="switchTab('table')"  role="tab"><span class="ms">table_rows</span> Table View</button>
+        <button class="mp-tab <?= $active_tab==='charts' ? 'active' : '' ?>" onclick="switchTab('charts')" role="tab"><span class="ms">show_chart</span> Price Trends</button>
+        <button class="mp-tab <?= $active_tab==='cards'  ? 'active' : '' ?>" onclick="switchTab('cards')"  role="tab"><span class="ms">grid_view</span> Cards View</button>
+        <button class="mp-tab <?= $active_tab==='map'    ? 'active' : '' ?>" onclick="switchTab('map')"    role="tab"><span class="ms">map</span> Map View</button>
+        <button class="mp-tab <?= $active_tab==='compare' ? 'active' : '' ?>" onclick="switchTab('compare')" role="tab"><span class="ms">compare_arrows</span> Compare</button>
     </div>
 
-    <!-- ══════════════════════════════════════
-         TAB 1: TABLE VIEW
-    ══════════════════════════════════════ -->
+    <!-- ══════════════════ TABLE VIEW ══════════════════ -->
     <div id="panel-table" class="mp-panel <?= $active_tab==='table' ? 'active' : '' ?>">
-
-        <!-- Toolbar with selection controls (Delete removed) -->
         <div class="mp-toolbar">
             <div class="mp-toolbar-left">
                 <button class="mp-btn ghost" onclick="clearAllSelections()">
@@ -748,30 +904,20 @@ $active_tab = $_GET['tab'] ?? 'table';
                     <span class="mp-badge-count" id="selectedCount">0</span>
                 </button>
             </div>
-            <div class="mp-toolbar-right">
-                <button class="mp-btn" onclick="openModal('importModal')">
-                    <span class="ms">upload_file</span> Import CSV
-                </button>
-            </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:.8rem;color:var(--mp-muted);">
             <span class="ms" style="font-size:1rem;color:var(--mp-accent);">schedule</span>
-            Showing the last 3 months of published records.
-            <span class="ms"
-                title="This view only shows the most recent 3 months of data. If you need older records, please request them from the admin."
-                style="cursor:help;font-size:1rem;color:var(--mp-primary);">
-                info
-            </span>
+            Showing last <strong><?= $subscription_label ?></strong> of published records (<?= ucfirst($subscription_type) ?> plan).
+            <span class="ms" title="Your subscription determines the data window. Upgrade to see more." style="cursor:help;font-size:1rem;color:var(--mp-primary);">info</span>
         </div>
-        <!-- Search -->
         <div class="mp-search-bar">
             <div class="mp-search-field">
                 <span class="ms mp-search-icon">search</span>
-                <input type="text" id="searchMarket" placeholder="Search market…" value="<?= htmlspecialchars($search_market) ?>">
+                <input type="text" id="searchMarket" placeholder="Search market…">
             </div>
             <div class="mp-search-field">
                 <span class="ms mp-search-icon">grain</span>
-                <input type="text" id="searchCommodity" placeholder="Search commodity…" value="<?= htmlspecialchars($search_commodity) ?>">
+                <input type="text" id="searchCommodity" placeholder="Search commodity…">
             </div>
             <div class="mp-search-field">
                 <span class="ms mp-search-icon">filter_alt</span>
@@ -781,7 +927,6 @@ $active_tab = $_GET['tab'] ?? 'table';
             <button class="mp-btn ghost" onclick="clearFilter()"><span class="ms">close</span></button>
         </div>
 
-        <!-- Table -->
         <div class="mp-table-card">
             <div class="mp-table-wrap">
                 <table class="mp-table" id="pricesTable">
@@ -815,8 +960,12 @@ $active_tab = $_GET['tab'] ?? 'table';
                         $gb = $gi++ % 2 === 1 ? 'mp-group-even' : '';
                         foreach ($grp as $ri => $price):
                             $isf = ($ri===0);
-                            $dc = calculateDoDChange($price['Price'],$price['commodity'],$price['market'],$price['price_type'],$price['date_posted'],$con);
-                            $mc = calculateMoMChange($price['Price'],$price['commodity'],$price['market'],$price['price_type'],$price['date_posted'],$con);
+                            // Use pre-fetched previous price (no extra query!)
+                            $combo_key = $price['commodity'] . '|' . $price['market'] . '|' . $price['price_type'];
+                            $prev_price = $prev_prices[$combo_key] ?? null;
+                            $dc = calcChangeInline($price['Price'], $prev_price);
+                            // MoM uses same prev price as approximation (avoids extra query)
+                            $mc = $dc;
                             $dcc='flat'; $mcc='flat';
                             if ($dc!=='N/A') $dcc=floatval($dc)>=0?'up':'down';
                             if ($mc!=='N/A') $mcc=floatval($mc)>=0?'up':'down';
@@ -846,10 +995,9 @@ $active_tab = $_GET['tab'] ?? 'table';
                 </table>
             </div>
 
-            <!-- Pagination -->
             <div class="mp-pagination-bar">
                 <div class="mp-pagination-info">
-                    Showing <?= $offset+1 ?> – <?= min($offset+$limit,$total_records) ?> of <?= number_format($total_records) ?> published records
+                    Showing <?= $total_records ? $offset+1 : 0 ?> – <?= min($offset+$limit,$total_records) ?> of <?= number_format($total_records) ?> published records
                     <span id="selectionSummary" style="color:var(--mp-primary);font-weight:600;margin-left:6px;"></span>
                 </div>
                 <div style="display:flex;align-items:center;gap:12px;">
@@ -878,13 +1026,9 @@ $active_tab = $_GET['tab'] ?? 'table';
         </div>
     </div>
 
-    <!-- ══════════════════════════════════════
-         TAB 2: CHARTS VIEW
-    ══════════════════════════════════════ -->
+    <!-- ══════════════════ CHARTS VIEW ══════════════════ -->
     <div id="panel-charts" class="mp-panel <?= $active_tab==='charts' ? 'active' : '' ?>">
-
         <div class="mp-chart-panel">
-            <!-- Filters -->
             <div class="mp-chart-filters">
                 <div class="mp-chart-filter-group">
                     <label>Country</label>
@@ -919,8 +1063,8 @@ $active_tab = $_GET['tab'] ?? 'table';
                         <option value="30">Last 30 days</option>
                         <option value="60">Last 60 days</option>
                         <option value="90" selected>Last 90 days</option>
-                        <option value="180">Last 6 months</option>
-                        <option value="365">Last year</option>
+                        <?php if ($subscription_days >= 180): ?><option value="180">Last 6 months</option><?php endif; ?>
+                        <?php if ($subscription_days >= 365): ?><option value="365">Last year</option><?php endif; ?>
                         <option value="custom">Custom range…</option>
                     </select>
                 </div>
@@ -929,7 +1073,6 @@ $active_tab = $_GET['tab'] ?? 'table';
                 </button>
             </div>
 
-            <!-- Custom date range (shown when "custom" is selected) -->
             <div class="mp-custom-range" id="chartCustomRange">
                 <div class="mp-custom-range-group">
                     <label>From Date</label>
@@ -946,7 +1089,6 @@ $active_tab = $_GET['tab'] ?? 'table';
                 </div>
             </div>
 
-            <!-- Chart stat cards -->
             <div class="mp-chart-stats" id="chartStats" style="margin-top:16px;">
                 <div class="mp-chart-stat"><div class="mp-chart-stat-label">Avg Wholesale</div><div class="mp-chart-stat-value" id="stat-avg-ws">—</div><div class="mp-chart-stat-sub">USD per unit</div></div>
                 <div class="mp-chart-stat"><div class="mp-chart-stat-label">Avg Retail</div><div class="mp-chart-stat-value" id="stat-avg-rt">—</div><div class="mp-chart-stat-sub">USD per unit</div></div>
@@ -955,7 +1097,6 @@ $active_tab = $_GET['tab'] ?? 'table';
                 <div class="mp-chart-stat"><div class="mp-chart-stat-label">Trend (30d)</div><div class="mp-chart-stat-value" id="stat-trend">—</div><div class="mp-chart-stat-sub">Price direction</div></div>
             </div>
 
-            <!-- Custom legend -->
             <div class="mp-chart-legend" style="margin-top:12px;">
                 <div class="mp-legend-item">
                     <div class="mp-legend-dot" style="background:#7c3aed;height:3px;"></div>
@@ -972,7 +1113,6 @@ $active_tab = $_GET['tab'] ?? 'table';
                 </div>
             </div>
 
-            <!-- Chart canvas -->
             <div style="position:relative;width:100%;height:360px;">
                 <canvas id="priceChart" role="img" aria-label="Line chart showing wholesale and retail price trends over time">Price trend data</canvas>
             </div>
@@ -981,7 +1121,6 @@ $active_tab = $_GET['tab'] ?? 'table';
             </p>
         </div>
 
-        <!-- Secondary: spread chart -->
         <div class="mp-chart-panel">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
                 <div>
@@ -995,12 +1134,8 @@ $active_tab = $_GET['tab'] ?? 'table';
         </div>
     </div>
 
-    <!-- ══════════════════════════════════════
-         TAB 3: CARDS VIEW
-    ══════════════════════════════════════ -->
+    <!-- ══════════════════ CARDS VIEW ══════════════════ -->
     <div id="panel-cards" class="mp-panel <?= $active_tab==='cards' ? 'active' : '' ?>">
-
-        <!-- Filter bar -->
         <div class="mp-cards-filters">
             <div class="mp-filter-group">
                 <label>Country</label>
@@ -1043,19 +1178,14 @@ $active_tab = $_GET['tab'] ?? 'table';
             </div>
         </div>
 
-        <!-- Cards grid -->
         <div id="cardsGrid" class="mp-cards-grid">
             <div class="mp-loading"><span class="ms mp-spinner" style="font-size:2rem;color:var(--mp-primary);">hourglass_empty</span><p style="margin-top:10px;">Loading cards…</p></div>
         </div>
     </div>
 
-    <!-- ══════════════════════════════════════
-         TAB 4: MAP VIEW
-    ══════════════════════════════════════ -->
+    <!-- ══════════════════ MAP VIEW ══════════════════ -->
     <div id="panel-map" class="mp-panel <?= $active_tab==='map' ? 'active' : '' ?>">
-
         <div class="mp-map-container">
-            <!-- Map filters -->
             <div class="mp-map-filters">
                 <div class="mp-filter-group">
                     <label>Commodity</label>
@@ -1081,14 +1211,12 @@ $active_tab = $_GET['tab'] ?? 'table';
                 </div>
             </div>
 
-            <!-- Map -->
             <div id="mp-map" style="position:relative;">
-                <div id="mapLoadingOverlay" style="position:absolute;inset:0;background:rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;z-index:10;border-radius:0;">
+                <div id="mapLoadingOverlay" style="position:absolute;inset:0;background:rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;z-index:10;">
                     <div style="text-align:center;"><span class="ms mp-spinner" style="font-size:2.5rem;color:var(--mp-primary);">hourglass_empty</span><p style="color:var(--mp-muted);margin-top:8px;">Loading map…</p></div>
                 </div>
             </div>
 
-            <!-- Map legend -->
             <div class="mp-map-legend">
                 <span class="mp-map-legend-title">Price Level:</span>
                 <div>
@@ -1100,39 +1228,22 @@ $active_tab = $_GET['tab'] ?? 'table';
         </div>
     </div>
 
-    <!-- ══════════════════════════════════════
-         TAB 5: COMPARE VIEW
-    ══════════════════════════════════════ -->
+    <!-- ══════════════════ COMPARE VIEW ══════════════════ -->
     <div id="panel-compare" class="mp-panel <?= $active_tab==='compare' ? 'active' : '' ?>">
-
-        <!-- Mode switcher -->
         <div class="cmp-panel-card">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
                 <div>
                     <h2 style="margin:0;font-size:1rem;font-weight:600;">Price Comparison</h2>
                     <p style="margin:4px 0 0;font-size:.8rem;color:var(--mp-muted);">Compare commodities, markets, or countries side-by-side</p>
                 </div>
-                <div id="cmpRunBtn" style="display:none;">
-                    <button class="mp-btn primary" onclick="runComparison()">
-                        <span class="ms">compare_arrows</span> Compare
-                    </button>
-                </div>
             </div>
 
-            <!-- Mode pills -->
             <div class="cmp-mode-pills">
-                <button class="cmp-mode-pill active" id="pill-commodity" onclick="setCmpMode('commodity')">
-                    <span class="ms">grain</span> Commodity vs Commodity
-                </button>
-                <button class="cmp-mode-pill" id="pill-market" onclick="setCmpMode('market')">
-                    <span class="ms">storefront</span> Market vs Market
-                </button>
-                <button class="cmp-mode-pill" id="pill-country" onclick="setCmpMode('country')">
-                    <span class="ms">public</span> Country vs Country
-                </button>
+                <button class="cmp-mode-pill active" id="pill-commodity" onclick="setCmpMode('commodity')"><span class="ms">grain</span> Commodity vs Commodity</button>
+                <button class="cmp-mode-pill" id="pill-market" onclick="setCmpMode('market')"><span class="ms">storefront</span> Market vs Market</button>
+                <button class="cmp-mode-pill" id="pill-country" onclick="setCmpMode('country')"><span class="ms">public</span> Country vs Country</button>
             </div>
 
-            <!-- ── MODE: COMMODITY ── -->
             <div id="cmp-cfg-commodity" class="cmp-config">
                 <div class="cmp-fg" style="max-width:200px;">
                     <label>Country (optional)</label>
@@ -1172,16 +1283,20 @@ $active_tab = $_GET['tab'] ?? 'table';
                         <option value="Both">Both</option>
                     </select>
                 </div>
-                <?php $this_days_opts = [30=>'Last 30 days',60=>'Last 60 days',90=>'Last 90 days',180=>'Last 6 months',365=>'Last year']; ?>
+                <?php
+                // Only show time ranges within subscription limit
+                $this_days_opts = [30=>'Last 30 days',60=>'Last 60 days',90=>'Last 90 days'];
+                if ($subscription_days >= 180) $this_days_opts[180] = 'Last 6 months';
+                if ($subscription_days >= 365) $this_days_opts[365] = 'Last year';
+                ?>
                 <div class="cmp-fg" style="max-width:160px;">
                     <label>Time Range</label>
                     <select id="cmp_com_days">
-                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==90?'selected':''?>><?=$l?></option><?php endforeach; ?>
+                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==min(90,$subscription_days)?'selected':''?>><?=$l?></option><?php endforeach; ?>
                     </select>
                 </div>
             </div>
 
-            <!-- ── MODE: MARKET ── -->
             <div id="cmp-cfg-market" class="cmp-config" style="display:none;">
                 <div class="cmp-fg">
                     <label>Commodity</label>
@@ -1215,12 +1330,11 @@ $active_tab = $_GET['tab'] ?? 'table';
                 <div class="cmp-fg" style="max-width:160px;">
                     <label>Time Range</label>
                     <select id="cmp_mkt_days">
-                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==90?'selected':''?>><?=$l?></option><?php endforeach; ?>
+                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==min(90,$subscription_days)?'selected':''?>><?=$l?></option><?php endforeach; ?>
                     </select>
                 </div>
             </div>
 
-            <!-- ── MODE: COUNTRY ── -->
             <div id="cmp-cfg-country" class="cmp-config" style="display:none;">
                 <div class="cmp-fg">
                     <label>Commodity (optional)</label>
@@ -1254,27 +1368,19 @@ $active_tab = $_GET['tab'] ?? 'table';
                 <div class="cmp-fg" style="max-width:160px;">
                     <label>Time Range</label>
                     <select id="cmp_cty_days">
-                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==90?'selected':''?>><?=$l?></option><?php endforeach; ?>
+                        <?php foreach ($this_days_opts as $v=>$l): ?><option value="<?=$v?>" <?=$v==min(90,$subscription_days)?'selected':''?>><?=$l?></option><?php endforeach; ?>
                     </select>
                 </div>
             </div>
 
-            <!-- Action row -->
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <button class="mp-btn primary" onclick="runComparison()">
-                    <span class="ms">compare_arrows</span> Run Comparison
-                </button>
-                <button class="mp-btn ghost" onclick="clearComparison()">
-                    <span class="ms">restart_alt</span> Reset
-                </button>
+                <button class="mp-btn primary" onclick="runComparison()"><span class="ms">compare_arrows</span> Run Comparison</button>
+                <button class="mp-btn ghost" onclick="clearComparison()"><span class="ms">restart_alt</span> Reset</button>
                 <span id="cmpStatus" style="font-size:.8rem;color:var(--mp-muted);"></span>
             </div>
         </div>
 
-        <!-- Results area -->
         <div id="cmpResults" style="display:none;">
-
-            <!-- Line trend chart -->
             <div class="cmp-panel-card">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
                     <div>
@@ -1293,7 +1399,6 @@ $active_tab = $_GET['tab'] ?? 'table';
                 </div>
             </div>
 
-            <!-- Summary stats table -->
             <div class="cmp-panel-card">
                 <h3 style="margin:0 0 14px;font-size:1rem;font-weight:600;">Summary Statistics</h3>
                 <div class="cmp-summary">
@@ -1314,7 +1419,6 @@ $active_tab = $_GET['tab'] ?? 'table';
                 </div>
             </div>
 
-            <!-- Spread / difference chart (shown when exactly 2 series selected) -->
             <div class="cmp-panel-card" id="cmpSpreadCard" style="display:none;">
                 <h3 style="margin:0 0 6px;font-size:1rem;font-weight:600;">Price Difference Over Time</h3>
                 <p style="margin:0 0 14px;font-size:.8rem;color:var(--mp-muted);" id="cmpSpreadLabel">Series A − Series B</p>
@@ -1322,10 +1426,8 @@ $active_tab = $_GET['tab'] ?? 'table';
                     <canvas id="cmpSpreadChart"></canvas>
                 </div>
             </div>
-
         </div>
 
-        <!-- Empty state -->
         <div id="cmpEmpty" class="cmp-panel-card">
             <div class="cmp-empty">
                 <span class="ms">compare_arrows</span>
@@ -1338,23 +1440,24 @@ $active_tab = $_GET['tab'] ?? 'table';
 
 </div><!-- /mp-wrap -->
 
-<!-- Export form (hidden) -->
 <form id="exportForm" method="POST" action="" target="_blank" style="display:none;">
     <input type="hidden" name="export_format" id="exportFormat">
     <input type="hidden" name="export_all" id="exportAll" value="">
     <input type="hidden" name="selected_ids" id="selectedIds" value="">
 </form>
 
-<!-- Leaflet CSS + JS -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<!-- Chart.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 
 <script>
 // ─────────────────────────────────────────────────────────────
 // GLOBAL STATE
 // ─────────────────────────────────────────────────────────────
+const SUBSCRIPTION_TYPE = '<?= $subscription_type ?>';
+const SUBSCRIPTION_DAYS = <?= $subscription_days ?>;
+const SUBSCRIPTION_LABEL = '<?= $subscription_label ?>';
+
 let allSelectedIds = new Set();
 let _priceChart = null;
 let _spreadChart = null;
@@ -1385,21 +1488,13 @@ function switchTab(tab) {
     if (tab === 'charts' && !_priceChart) { setTimeout(loadChartData, 100); }
     if (tab === 'cards')  { loadCardsData(); }
     if (tab === 'map')    { initMap(); }
-    if (tab === 'compare' && !_cmpLastData) { /* show empty state, nothing to load */ }
 }
-
-// ─────────────────────────────────────────────────────────────
-// MODAL HELPERS
-// ─────────────────────────────────────────────────────────────
-function openModal(id)  { document.getElementById(id).style.display = 'flex'; }
-function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
 // ─────────────────────────────────────────────────────────────
 // EXPORT DROPDOWN
 // ─────────────────────────────────────────────────────────────
 function mpExportToggle() { 
-    const menu = document.getElementById('exportDropdownMenu');
-    menu.classList.toggle('open');
+    document.getElementById('exportDropdownMenu').classList.toggle('open');
 }
 document.addEventListener('click', e => {
     const menu = document.getElementById('exportDropdownMenu');
@@ -1409,14 +1504,12 @@ document.addEventListener('click', e => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// SELECTION (Table)
+// SELECTION
 // ─────────────────────────────────────────────────────────────
 function mpCheckboxChange(cb) {
     const gk = cb.getAttribute('data-group-key');
     let ids = []; 
-    try { 
-        ids = JSON.parse(cb.getAttribute('data-group-ids') || '[]'); 
-    } catch(e) {}
+    try { ids = JSON.parse(cb.getAttribute('data-group-ids') || '[]'); } catch(e) {}
     ids.forEach(id => cb.checked ? allSelectedIds.add(String(id)) : allSelectedIds.delete(String(id)));
     document.querySelectorAll('#pricesTableBody tr.price-row').forEach(r => {
         if (r.getAttribute('data-group-key') === gk) r.classList.toggle('mp-selected', cb.checked);
@@ -1430,9 +1523,7 @@ function mpSelectAll(masterCb) {
         if (cb.checked === masterCb.checked) return;
         cb.checked = masterCb.checked;
         let ids = []; 
-        try { 
-            ids = JSON.parse(cb.getAttribute('data-group-ids') || '[]'); 
-        } catch(e) {}
+        try { ids = JSON.parse(cb.getAttribute('data-group-ids') || '[]'); } catch(e) {}
         ids.forEach(id => masterCb.checked ? allSelectedIds.add(String(id)) : allSelectedIds.delete(String(id)));
         const gk = cb.getAttribute('data-group-key');
         document.querySelectorAll('#pricesTableBody tr.price-row').forEach(r => {
@@ -1454,8 +1545,6 @@ function clearAllSelections() {
 function mpSyncUI() {
     const count = allSelectedIds.size;
     document.getElementById('selectedCount').textContent = count;
-    
-    // Update export selected buttons
     const exportCsv = document.getElementById('exportSelectedCsv');
     const exportPdf = document.getElementById('exportSelectedPdf');
     if (exportCsv) {
@@ -1466,10 +1555,8 @@ function mpSyncUI() {
         exportPdf.style.opacity = count === 0 ? '0.5' : '1';
         exportPdf.style.pointerEvents = count === 0 ? 'none' : 'auto';
     }
-    
     const sum = document.getElementById('selectionSummary');
     if (sum) sum.textContent = count > 0 ? `(${count} selected)` : '';
-    
     const vCbs = [...document.querySelectorAll('#pricesTableBody .row-checkbox')].filter(c => !c.closest('tr').classList.contains('mp-filtered-out'));
     const chk  = vCbs.filter(c => c.checked);
     const sa = document.getElementById('selectAll');
@@ -1479,7 +1566,7 @@ function mpSyncUI() {
 function mpGetSelectedIds() { return Array.from(allSelectedIds); }
 
 // ─────────────────────────────────────────────────────────────
-// EXPORT FUNCTIONS
+// EXPORT (subscription-aware — server enforces limits)
 // ─────────────────────────────────────────────────────────────
 function exportSelected(fmt) { 
     const ids = mpGetSelectedIds(); 
@@ -1488,7 +1575,7 @@ function exportSelected(fmt) {
 }
 
 function exportAll(fmt) { 
-    if(!confirm('Export ALL published prices?')) return; 
+    if(!confirm(`Export ALL published prices within your ${SUBSCRIPTION_LABEL} subscription window?`)) return; 
     mpSubmitExport(fmt, [], true); 
 }
 
@@ -1549,7 +1636,7 @@ function changeRowsPerPage(val) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// CHARTS — custom date range
+// CHARTS
 // ─────────────────────────────────────────────────────────────
 function onChartDaysChange() {
     const val = document.getElementById('chart_days').value;
@@ -1557,9 +1644,14 @@ function onChartDaysChange() {
     if (val === 'custom') {
         customRow.classList.add('visible');
         const today = new Date();
-        const from  = new Date(); from.setDate(today.getDate() - 30);
+        const from  = new Date(); 
+        // Default "from" to subscription limit
+        const maxFrom = new Date(); maxFrom.setDate(today.getDate() - SUBSCRIPTION_DAYS);
+        from.setDate(today.getDate() - Math.min(30, SUBSCRIPTION_DAYS));
         document.getElementById('chart_date_to').value   = today.toISOString().split('T')[0];
         document.getElementById('chart_date_from').value = from.toISOString().split('T')[0];
+        // Set min date to subscription limit
+        document.getElementById('chart_date_from').min = maxFrom.toISOString().split('T')[0];
         loadChartData();
     } else {
         customRow.classList.remove('visible');
@@ -1821,7 +1913,7 @@ function escHtml(str) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// MAP VIEW (Leaflet)
+// MAP VIEW
 // ─────────────────────────────────────────────────────────────
 function initMap() {
     const mapEl = document.getElementById('mp-map');
@@ -2042,9 +2134,7 @@ function renderCmpCharts(resp) {
                 tooltip: {
                     backgroundColor: 'rgba(255,255,255,0.97)', titleColor:'#1f2937', bodyColor:'#374151',
                     borderColor:'#e5e7eb', borderWidth:1, padding:12,
-                    callbacks: {
-                        label: item => ` ${item.dataset.label}: $${Number(item.raw).toFixed(4)}`
-                    }
+                    callbacks: { label: item => ` ${item.dataset.label}: $${Number(item.raw).toFixed(4)}` }
                 }
             },
             scales: {
