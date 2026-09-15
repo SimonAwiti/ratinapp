@@ -1,7 +1,6 @@
 <?php
-// market_prices_monitoring.php
+// market_prices_monitoring.php (Optimized)
 session_start();
-
 
 // ============================================================
 // EXPORT CSV — must run BEFORE admin_header.php is included
@@ -23,38 +22,41 @@ if (isset($_GET['export_csv'])) {
     $search_commodity  = $_GET['search_commodity'] ?? '';
     $filter_country    = $_GET['filter_country'] ?? '';
 
+    // OPTIMIZED: build WHERE with index-friendly date comparison
     $where_export  = "WHERE 1=1";
     $export_params = [];
     $export_types  = "";
 
     if (!empty($start_date) && !empty($end_date)) {
-        $where_export   .= " AND DATE(date_posted) BETWEEN ? AND ?";
-        $export_params[] = $start_date;
+        $where_export   .= " AND mp.date_posted >= ? AND mp.date_posted < DATE_ADD(?, INTERVAL 1 DAY)";
+        $export_params[] = $start_date . ' 00:00:00';
         $export_params[] = $end_date;
         $export_types   .= "ss";
     }
     if (!empty($search_enumerator)) {
-        $where_export   .= " AND postedby LIKE ?";
+        $where_export   .= " AND mp.postedby LIKE ?";
         $export_params[] = '%' . $search_enumerator . '%';
         $export_types   .= "s";
     }
     if (!empty($search_market)) {
-        $where_export   .= " AND market LIKE ?";
+        $where_export   .= " AND mp.market LIKE ?";
         $export_params[] = '%' . $search_market . '%';
         $export_types   .= "s";
     }
     if (!empty($search_commodity)) {
-        $where_export   .= " AND (category LIKE ? OR commodity IN (SELECT id FROM commodities WHERE commodity_name LIKE ?))";
+        $where_export   .= " AND (mp.category LIKE ? OR mp.commodity IN (SELECT id FROM commodities WHERE commodity_name LIKE ?))";
         $export_params[] = '%' . $search_commodity . '%';
         $export_params[] = '%' . $search_commodity . '%';
         $export_types   .= "ss";
     }
     if (!empty($filter_country)) {
-        $where_export   .= " AND country_admin_0 = ?";
+        $where_export   .= " AND mp.country_admin_0 = ?";
         $export_params[] = $filter_country;
         $export_types   .= "s";
     }
 
+    // OPTIMIZED: LIMIT safety cap + explicit column list
+    $EXPORT_LIMIT = 200000;
     $exp_stmt = $con->prepare("SELECT 
         mp.id, mp.category, c.commodity_name as commodity, mp.country_admin_0,
         mp.market, mp.weight, mp.unit, mp.price_type, mp.Price, mp.subject,
@@ -64,7 +66,8 @@ if (isset($_GET['export_csv'])) {
         FROM market_prices mp
         LEFT JOIN commodities c ON mp.commodity = c.id
         $where_export
-        ORDER BY mp.date_posted DESC");
+        ORDER BY mp.date_posted DESC
+        LIMIT $EXPORT_LIMIT");
     if (!empty($export_params)) $exp_stmt->bind_param($export_types, ...$export_params);
     $exp_stmt->execute();
     $exp_result = $exp_stmt->get_result();
@@ -107,25 +110,18 @@ if (file_exists('includes/config.php')) include 'includes/config.php';
 elseif (file_exists('../admin/includes/config.php')) include '../admin/includes/config.php';
 
 // ============================================================
-// HELPER FUNCTION TO GET MARKET LIST (expected markets)
-// ============================================================
-function getExpectedMarkets($con) {
-    $result = $con->query("SELECT DISTINCT market, country_admin_0 FROM market_prices ORDER BY market");
-    $markets = [];
-    while ($row = $result->fetch_assoc()) {
-        $markets[] = $row;
-    }
-    return $markets;
-}
-
-// ============================================================
 // API HANDLER — fetch single market price for view modal
+// OPTIMIZED: explicit columns, no SELECT *
 // ============================================================
 if (isset($_GET['get_price']) && is_numeric($_GET['get_price'])) {
     header('Content-Type: application/json');
     $get_id = (int)$_GET['get_price'];
     $api_stmt = $con->prepare("SELECT 
-        mp.*, c.commodity_name as commodity_name 
+        mp.id, mp.category, mp.commodity, mp.country_admin_0, mp.market,
+        mp.weight, mp.unit, mp.price_type, mp.Price, mp.subject,
+        mp.day, mp.month, mp.year, mp.date_posted, mp.variety,
+        mp.data_source, mp.supplied_volume, mp.comments, mp.supply_status, mp.postedby,
+        c.commodity_name 
         FROM market_prices mp
         LEFT JOIN commodities c ON mp.commodity = c.id
         WHERE mp.id = ?");
@@ -142,96 +138,41 @@ if (isset($_GET['get_price']) && is_numeric($_GET['get_price'])) {
 }
 
 // ============================================================
-// EXPORT CSV WITH DATE RANGE (DIRECT DOWNLOAD - FIXED)
+// CACHED REFERENCE DATA (countries + expected markets)
+// OPTIMIZED: file-based cache, 10 min TTL. These change slowly.
 // ============================================================
-if (isset($_GET['export_csv'])) {
-    // Clean output buffers
-    while (ob_get_level()) ob_end_clean();
-    
-    // Set headers for file download
-    header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="market_prices_export_' . date('Y-m-d') . '.csv"');
-    header('Pragma: no-cache');
-    header('Expires: 0');
-    
-    $start_date = $_GET['start_date'] ?? '';
-    $end_date = $_GET['end_date'] ?? '';
-    $search_enumerator = $_GET['search_enumerator'] ?? '';
-    $search_market = $_GET['search_market'] ?? '';
-    $search_commodity = $_GET['search_commodity'] ?? '';
-    $filter_country = $_GET['filter_country'] ?? '';
-    
-    $where_export = "WHERE 1=1";
-    $export_params = [];
-    $export_types = "";
-    
-    if (!empty($start_date) && !empty($end_date)) {
-        $where_export .= " AND DATE(date_posted) BETWEEN ? AND ?";
-        $export_params[] = $start_date;
-        $export_params[] = $end_date;
-        $export_types .= "ss";
+function mp_get_reference_data($con, $ttl = 600) {
+    $cache_file = sys_get_temp_dir() . '/mp_monitoring_ref_' . md5(__DIR__ . '|ratin_mon') . '.json';
+    if (is_readable($cache_file) && (time() - filemtime($cache_file)) < $ttl) {
+        $decoded = json_decode(file_get_contents($cache_file), true);
+        if (is_array($decoded) && isset($decoded['countries'], $decoded['markets'])) {
+            return $decoded;
+        }
     }
-    if (!empty($search_enumerator)) {
-        $where_export .= " AND postedby LIKE ?";
-        $export_params[] = '%' . $search_enumerator . '%';
-        $export_types .= "s";
-    }
-    if (!empty($search_market)) {
-        $where_export .= " AND market LIKE ?";
-        $export_params[] = '%' . $search_market . '%';
-        $export_types .= "s";
-    }
-    if (!empty($search_commodity)) {
-        $where_export .= " AND (category LIKE ? OR commodity IN (SELECT id FROM commodities WHERE commodity_name LIKE ?))";
-        $export_params[] = '%' . $search_commodity . '%';
-        $export_params[] = '%' . $search_commodity . '%';
-        $export_types .= "ss";
-    }
-    if (!empty($filter_country)) {
-        $where_export .= " AND country_admin_0 = ?";
-        $export_params[] = $filter_country;
-        $export_types .= "s";
-    }
-    
-    $exp_query = "SELECT 
-        mp.id, mp.category, c.commodity_name as commodity, mp.country_admin_0, 
-        mp.market, mp.weight, mp.unit, mp.price_type, mp.Price, mp.subject,
-        DATE(CONCAT(mp.year, '-', mp.month, '-', mp.day)) as price_date,
-        mp.date_posted, mp.variety, mp.data_source, 
-        mp.supplied_volume, mp.comments, mp.supply_status, mp.postedby
-        FROM market_prices mp
-        LEFT JOIN commodities c ON mp.commodity = c.id
-        $where_export
-        ORDER BY mp.date_posted DESC";
-    
-    $exp_stmt = $con->prepare($exp_query);
-    if (!empty($export_params)) {
-        $exp_stmt->bind_param($export_types, ...$export_params);
-    }
-    $exp_stmt->execute();
-    $exp_result = $exp_stmt->get_result();
-    
-    $out = fopen('php://output', 'w');
-    fputs($out, "\xEF\xBB\xBF");
-    fputcsv($out, [
-        'ID', 'Category', 'Commodity', 'Country', 'Market', 'Weight', 'Unit',
-        'Price Type', 'Price', 'Subject', 'Price Date', 'Date Posted',
-        'Variety', 'Data Source', 'Supplied Volume', 'Comments', 'Supply Status', 'Submitted By'
-    ]);
-    
-    while ($row = $exp_result->fetch_assoc()) {
-        fputcsv($out, [
-            $row['id'], $row['category'], $row['commodity'], $row['country_admin_0'],
-            $row['market'], $row['weight'], $row['unit'], $row['price_type'],
-            number_format($row['Price'], 2, '.', ''), $row['subject'], $row['price_date'],
-            $row['date_posted'], $row['variety'], $row['data_source'],
-            $row['supplied_volume'], $row['comments'], $row['supply_status'], $row['postedby']
-        ]);
-    }
-    fclose($out);
-    $exp_stmt->close();
-    exit;
+
+    // Distinct countries
+    $countries = [];
+    $r = $con->query("SELECT DISTINCT country_admin_0 FROM market_prices WHERE country_admin_0 IS NOT NULL AND country_admin_0 != '' ORDER BY country_admin_0");
+    if ($r) { while ($row = $r->fetch_assoc()) $countries[] = $row['country_admin_0']; $r->free(); }
+
+    // Expected markets — use a derived table with GROUP BY which can use idx_lookup
+    $markets = [];
+    $r = $con->query("SELECT market, MAX(country_admin_0) as country_admin_0 
+                      FROM market_prices 
+                      WHERE market IS NOT NULL AND market != ''
+                      GROUP BY market 
+                      ORDER BY market");
+    if ($r) { while ($row = $r->fetch_assoc()) $markets[] = $row; $r->free(); }
+
+    $payload = ['countries' => $countries, 'markets' => $markets];
+    @file_put_contents($cache_file, json_encode($payload), LOCK_EX);
+    return $payload;
 }
+
+$ref_data = mp_get_reference_data($con);
+$distinct_countries = $ref_data['countries'];
+$all_expected_markets = $ref_data['markets'];
+$total_expected_markets = count($all_expected_markets);
 
 // ============================================================
 // GET DATE RANGE FROM REQUEST
@@ -260,49 +201,31 @@ if ($date_preset == 'today') {
 }
 
 // ============================================================
-// STATISTICS WITH DATE RANGE
+// STATISTICS — OPTIMIZED: single aggregate pass, index-friendly
 // ============================================================
-$date_condition = "";
-$stats_params = [];
-$stats_types = "";
+$stats_params = [$start_date . ' 00:00:00', $end_date];
+$stats_types  = "ss";
 
-if (!empty($start_date) && !empty($end_date)) {
-    $date_condition = "WHERE DATE(date_posted) BETWEEN ? AND ?";
-    $stats_params = [$start_date, $end_date];
-    $stats_types = "ss";
-}
+$stats_row = null;
+$stats_stmt = $con->prepare("
+    SELECT 
+        COUNT(*) as total_submissions,
+        COUNT(DISTINCT market) as markets_with_submissions,
+        COUNT(DISTINCT commodity) as total_commodities,
+        COUNT(DISTINCT postedby) as unique_enumerators
+    FROM market_prices
+    WHERE date_posted >= ? AND date_posted < DATE_ADD(?, INTERVAL 1 DAY)
+");
+$stats_stmt->bind_param($stats_types, ...$stats_params);
+$stats_stmt->execute();
+$stats_row = $stats_stmt->get_result()->fetch_assoc();
+$stats_stmt->close();
 
-$submissions_query = "SELECT COUNT(DISTINCT market) as count FROM market_prices $date_condition";
-$submissions_stmt = $con->prepare($submissions_query);
-if (!empty($stats_params)) $submissions_stmt->bind_param($stats_types, ...$stats_params);
-$submissions_stmt->execute();
-$markets_with_submissions = (int)$submissions_stmt->get_result()->fetch_assoc()['count'];
-$submissions_stmt->close();
-
-$total_submissions_query = "SELECT COUNT(*) as count FROM market_prices $date_condition";
-$total_stmt = $con->prepare($total_submissions_query);
-if (!empty($stats_params)) $total_stmt->bind_param($stats_types, ...$stats_params);
-$total_stmt->execute();
-$total_submissions = (int)$total_stmt->get_result()->fetch_assoc()['count'];
-$total_stmt->close();
-
-$commodities_query = "SELECT COUNT(DISTINCT commodity) as count FROM market_prices $date_condition";
-$commodities_stmt = $con->prepare($commodities_query);
-if (!empty($stats_params)) $commodities_stmt->bind_param($stats_types, ...$stats_params);
-$commodities_stmt->execute();
-$total_commodities = (int)$commodities_stmt->get_result()->fetch_assoc()['count'];
-$commodities_stmt->close();
-
-$all_expected_markets = getExpectedMarkets($con);
-$total_expected_markets = count($all_expected_markets);
-$markets_no_submission = max(0, $total_expected_markets - $markets_with_submissions);
-
-$enumerators_query = "SELECT COUNT(DISTINCT postedby) as count FROM market_prices $date_condition";
-$enumerators_stmt = $con->prepare($enumerators_query);
-if (!empty($stats_params)) $enumerators_stmt->bind_param($stats_types, ...$stats_params);
-$enumerators_stmt->execute();
-$unique_enumerators = (int)$enumerators_stmt->get_result()->fetch_assoc()['count'];
-$enumerators_stmt->close();
+$total_submissions        = (int)($stats_row['total_submissions'] ?? 0);
+$markets_with_submissions = (int)($stats_row['markets_with_submissions'] ?? 0);
+$total_commodities        = (int)($stats_row['total_commodities'] ?? 0);
+$unique_enumerators       = (int)($stats_row['unique_enumerators'] ?? 0);
+$markets_no_submission    = max(0, $total_expected_markets - $markets_with_submissions);
 
 // ============================================================
 // PAGINATION + SORTING + FILTERING
@@ -320,40 +243,41 @@ $search_market = trim($_GET['search_market'] ?? '');
 $search_commodity = trim($_GET['search_commodity'] ?? '');
 $filter_country = trim($_GET['filter_country'] ?? '');
 
+// OPTIMIZED: use mp. prefix and index-friendly date comparison
 $where = "WHERE 1=1";
 $params = [];
 $types = "";
 
-if (!empty($start_date) && !empty($end_date)) {
-    $where .= " AND DATE(date_posted) BETWEEN ? AND ?";
-    $params[] = $start_date;
-    $params[] = $end_date;
-    $types .= "ss";
-}
+$where .= " AND mp.date_posted >= ? AND mp.date_posted < DATE_ADD(?, INTERVAL 1 DAY)";
+$params[] = $start_date . ' 00:00:00';
+$params[] = $end_date;
+$types .= "ss";
 
 if ($search_enumerator !== '') {
-    $where .= " AND postedby LIKE ?";
+    $where .= " AND mp.postedby LIKE ?";
     $params[] = '%' . $search_enumerator . '%';
     $types .= "s";
 }
 if ($search_market !== '') {
-    $where .= " AND market LIKE ?";
+    $where .= " AND mp.market LIKE ?";
     $params[] = '%' . $search_market . '%';
     $types .= "s";
 }
 if ($search_commodity !== '') {
-    $where .= " AND (category LIKE ? OR commodity IN (SELECT id FROM commodities WHERE commodity_name LIKE ?))";
+    $where .= " AND (mp.category LIKE ? OR mp.commodity IN (SELECT id FROM commodities WHERE commodity_name LIKE ?))";
     $params[] = '%' . $search_commodity . '%';
     $params[] = '%' . $search_commodity . '%';
     $types .= "ss";
 }
 if ($filter_country !== '') {
-    $where .= " AND country_admin_0 = ?";
+    $where .= " AND mp.country_admin_0 = ?";
     $params[] = $filter_country;
     $types .= "s";
 }
 
-$count_stmt = $con->prepare("SELECT COUNT(*) as total FROM market_prices $where");
+// OPTIMIZED: Use SQL_CALC_FOUND_ROWS alternative — count separately
+// but the WHERE is now index-friendly
+$count_stmt = $con->prepare("SELECT COUNT(*) as total FROM market_prices mp $where");
 if (!empty($params)) $count_stmt->bind_param($types, ...$params);
 $count_stmt->execute();
 $filtered_records = (int)$count_stmt->get_result()->fetch_assoc()['total'];
@@ -363,88 +287,70 @@ $total_pages = max(1, (int)ceil($filtered_records / $limit));
 $page = isset($_GET['page']) ? max(1, min((int)$_GET['page'], $total_pages)) : 1;
 $offset = ($page - 1) * $limit;
 
-$countries_result = $con->query("SELECT DISTINCT country_admin_0 FROM market_prices ORDER BY country_admin_0");
-$distinct_countries = [];
-while ($row = $countries_result->fetch_assoc()) {
-    $distinct_countries[] = $row['country_admin_0'];
-}
-
 // ============================================================
-// ENUMERATOR SUMMARY (Excel-style: Market Days / Submissions /
-// Commodities, broken out by calendar week Mon–Sun)
-//
-// Definitions (matched against the enumerator's own Excel workbook):
-//   Market Days  = distinct days the enumerator had ANY submission
-//                  in that week
-//   Submissions  = total number of price rows (Wholesale + Retail
-//                  entries) submitted in that week
-//   Commodities  = sum, across each day the enumerator submitted,
-//                  of the distinct commodities recorded that day
-//                  (mirrors how the workbook's Raw Data tab is
-//                  rolled up day-by-day, not a week-wide distinct
-//                  count)
+// ENUMERATOR SUMMARY — OPTIMIZED: aggregate in SQL, not PHP
+// Returns: enumerator, date, rows_that_day, distinct_commodities_that_day
 // ============================================================
-$summary_where = "WHERE 1=1";
-$summary_params = [];
-$summary_types = "";
+$summary_params = [$start_date . ' 00:00:00', $end_date];
+$summary_types  = "ss";
+$summary_extra_where = "";
 
-if (!empty($start_date) && !empty($end_date)) {
-    $summary_where .= " AND DATE(date_posted) BETWEEN ? AND ?";
-    $summary_params[] = $start_date;
-    $summary_params[] = $end_date;
-    $summary_types  .= "ss";
-}
 if ($filter_country !== '') {
-    $summary_where .= " AND country_admin_0 = ?";
+    $summary_extra_where = " AND country_admin_0 = ?";
     $summary_params[] = $filter_country;
-    $summary_types  .= "s";
+    $summary_types .= "s";
 }
 
-$summary_sql = "SELECT postedby, DATE(date_posted) as sub_date, commodity
-    FROM market_prices
-    $summary_where
-    ORDER BY postedby, sub_date";
+$summary_sql = "SELECT 
+    COALESCE(NULLIF(TRIM(postedby), ''), 'Unknown') as enum_name,
+    DATE(date_posted) as sub_date,
+    COUNT(*) as row_count,
+    COUNT(DISTINCT commodity) as distinct_commodities
+FROM market_prices
+WHERE date_posted >= ? AND date_posted < DATE_ADD(?, INTERVAL 1 DAY)
+$summary_extra_where
+GROUP BY enum_name, sub_date
+ORDER BY enum_name, sub_date";
+
 $summary_stmt = $con->prepare($summary_sql);
-if (!empty($summary_params)) $summary_stmt->bind_param($summary_types, ...$summary_params);
+$summary_stmt->bind_param($summary_types, ...$summary_params);
 $summary_stmt->execute();
-$summary_rows = $summary_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$summary_result = $summary_stmt->get_result();
+$day_rows = [];
+while ($r = $summary_result->fetch_assoc()) $day_rows[] = $r;
 $summary_stmt->close();
 
-// Step 1: roll every row up to enumerator + day
-$day_agg = []; // [enumerator][date] => ['rows' => n, 'commodities' => [id => true]]
-foreach ($summary_rows as $r) {
-    $enum = trim((string)$r['postedby']) !== '' ? $r['postedby'] : 'Unknown';
+// Build per-enumerator per-day aggregation in PHP (much smaller than before — only summary rows)
+$day_agg = [];
+foreach ($day_rows as $r) {
+    $enum = $r['enum_name'];
     $date = $r['sub_date'];
     if (!isset($day_agg[$enum][$date])) {
-        $day_agg[$enum][$date] = ['rows' => 0, 'commodities' => []];
+        $day_agg[$enum][$date] = ['rows' => 0, 'commodities' => 0];
     }
-    $day_agg[$enum][$date]['rows']++;
-    if ($r['commodity'] !== null && $r['commodity'] !== '') {
-        $day_agg[$enum][$date]['commodities'][$r['commodity']] = true;
-    }
+    $day_agg[$enum][$date]['rows'] += (int)$r['row_count'];
+    $day_agg[$enum][$date]['commodities'] += (int)$r['distinct_commodities'];
 }
 
-// Step 2: figure out which Monday-start weeks fall within the selected range
+// Week bucketing
 function mp_monday_of($dateStr) {
     $d = new DateTime($dateStr);
     $d->modify('monday this week');
     return $d->format('Y-m-d');
 }
 
-$week_buckets = []; // 'Y-m-d' (Monday) => display label
-if (!empty($start_date) && !empty($end_date)) {
-    $cursor = new DateTime(mp_monday_of($start_date));
-    $range_end = new DateTime($end_date);
-    while ($cursor <= $range_end) {
-        $wk_start_str = $cursor->format('Y-m-d');
-        $wk_end = (clone $cursor)->modify('+6 days');
-        $week_buckets[$wk_start_str] = date('M j', strtotime($wk_start_str)) . '–' . $wk_end->format('M j');
-        $cursor->modify('+7 days');
-    }
+$week_buckets = [];
+$cursor = new DateTime(mp_monday_of($start_date));
+$range_end = new DateTime($end_date);
+while ($cursor <= $range_end) {
+    $wk_start_str = $cursor->format('Y-m-d');
+    $wk_end = (clone $cursor)->modify('+6 days');
+    $week_buckets[$wk_start_str] = date('M j', strtotime($wk_start_str)) . '–' . $wk_end->format('M j');
+    $cursor->modify('+7 days');
 }
 $week_keys = array_keys($week_buckets);
 
-// Step 3: pivot enumerator x week
+// Pivot
 $pivot_final = [];
 $grand_by_week = [];
 $grand_total = ['days' => 0, 'subs' => 0, 'commodities' => 0];
@@ -456,10 +362,10 @@ foreach ($day_agg as $enum => $dates) {
 
     foreach ($dates as $date => $info) {
         $wk = mp_monday_of($date);
-        if (!isset($row['weeks'][$wk])) continue; // outside the selected range
+        if (!isset($row['weeks'][$wk])) continue;
         $row['weeks'][$wk]['days'] += 1;
         $row['weeks'][$wk]['subs'] += $info['rows'];
-        $row['weeks'][$wk]['commodities'] += count($info['commodities']);
+        $row['weeks'][$wk]['commodities'] += $info['commodities'];
     }
 
     foreach ($week_keys as $wk) {
@@ -471,7 +377,6 @@ foreach ($day_agg as $enum => $dates) {
         $grand_by_week[$wk]['commodities'] += $row['weeks'][$wk]['commodities'];
     }
 
-    // Skip enumerators with zero activity in range entirely (keeps table tight)
     if ($row['total']['subs'] > 0 || $row['total']['days'] > 0) {
         $grand_total['days'] += $row['total']['days'];
         $grand_total['subs'] += $row['total']['subs'];
@@ -480,7 +385,6 @@ foreach ($day_agg as $enum => $dates) {
     }
 }
 
-// Most active enumerator first, same feel as the workbook
 usort($pivot_final, function ($a, $b) { return $b['total']['subs'] <=> $a['total']['subs']; });
 
 // ============================================================
@@ -507,7 +411,6 @@ $data_stmt->execute();
 $prices_data = $data_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $data_stmt->close();
 
-// Group data by Market + Commodity + Date
 $grouped_prices = [];
 foreach ($prices_data as $price) {
     $date_key = date('Y-m-d', strtotime($price['date_posted']));
@@ -575,22 +478,18 @@ if ($date_preset == 'today') {
 .price-value{font-family:monospace;font-weight:700;font-size:.85rem}
 .commodity-name{font-weight:500;color:#1f2937}
 
-/* Tabs */
 .mp-tab-btn{color:#6b7280;border-color:transparent}
 .mp-tab-btn:hover{color:#800000}
 .mp-tab-btn.active{color:#800000;border-color:#800000}
 .tab-panel.hidden{display:none}
 
-/* Enumerator summary table */
 #summaryTable th, #summaryTable td{white-space:nowrap}
 #summaryTable td.sticky, #summaryTable th.sticky{z-index:5}
 </style>
 
-
 <div class="auth-bg-gradient -m-4 -mt-20 p-4 pt-24 min-h-screen">
 <div class="max-w-7xl mx-auto">
 
-    <!-- Page Header -->
     <div class="mb-6">
         <div class="flex justify-between items-center flex-wrap gap-4">
             <div>
@@ -606,7 +505,6 @@ if ($date_preset == 'today') {
         <div class="h-0.5 w-full header-accent-gradient mt-3 rounded-full"></div>
     </div>
 
-    <!-- View Tabs -->
     <div class="flex gap-2 mb-5 border-b border-gray-200">
         <button id="tabBtnRecords" onclick="switchTab('records')"
             class="mp-tab-btn active px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-all">
@@ -617,8 +515,6 @@ if ($date_preset == 'today') {
             <span class="material-symbols-outlined text-base align-middle mr-1">groups</span>Enumerator Summary
         </button>
     </div>
-
-    <!-- Date Range Filter Bar -->
 
     <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
         <div class="flex flex-wrap gap-3 items-center">
@@ -643,7 +539,6 @@ if ($date_preset == 'today') {
         </div>
     </div>
 
-    <!-- Summary Cards -->
     <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-maroon">
             <div class="flex items-center justify-between">
@@ -655,7 +550,6 @@ if ($date_preset == 'today') {
                 <span class="material-symbols-outlined text-3xl text-maroon/40">storefront</span>
             </div>
         </div>
-        
         <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-red-500">
             <div class="flex items-center justify-between">
                 <div>
@@ -665,7 +559,6 @@ if ($date_preset == 'today') {
                 <span class="material-symbols-outlined text-3xl text-red-400/60">warning</span>
             </div>
         </div>
-        
         <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-blue-500">
             <div class="flex items-center justify-between">
                 <div>
@@ -675,7 +568,6 @@ if ($date_preset == 'today') {
                 <span class="material-symbols-outlined text-3xl text-blue-400/50">receipt</span>
             </div>
         </div>
-        
         <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-green-600">
             <div class="flex items-center justify-between">
                 <div>
@@ -685,7 +577,6 @@ if ($date_preset == 'today') {
                 <span class="material-symbols-outlined text-3xl text-green-500/50">eco</span>
             </div>
         </div>
-        
         <div class="stat-card bg-white rounded-lg p-3 shadow-sm border-l-4 border-purple-500">
             <div class="flex items-center justify-between">
                 <div>
@@ -697,10 +588,8 @@ if ($date_preset == 'today') {
         </div>
     </div>
 
-    <!-- ═══════════ RECORDS TAB PANEL ═══════════ -->
     <div id="panelRecords" class="tab-panel">
 
-    <!-- Search & Filters -->
     <div class="bg-white rounded-lg shadow-sm mb-5 p-3">
         <div class="flex flex-wrap gap-3 items-center">
             <div class="flex-1 min-w-[150px]">
@@ -746,7 +635,6 @@ if ($date_preset == 'today') {
         </div>
     </div>
 
-    <!-- Main Table -->
     <div class="bg-white rounded-lg shadow-sm overflow-hidden">
         <div class="overflow-x-auto">
             <table class="w-full text-sm">
@@ -805,7 +693,6 @@ if ($date_preset == 'today') {
             </table>
         </div>
 
-        <!-- Pagination -->
         <div class="border-t border-gray-200 px-4 py-3 bg-white">
             <div class="flex flex-wrap justify-between items-center gap-3">
                 <div class="text-xs text-gray-500">
@@ -867,7 +754,6 @@ if ($date_preset == 'today') {
 
     </div><!-- /panelRecords -->
 
-    <!-- ═══════════ ENUMERATOR SUMMARY TAB PANEL ═══════════ -->
     <div id="panelSummary" class="tab-panel hidden">
         <div class="bg-white rounded-lg shadow-sm p-4 mb-3">
             <div class="flex items-center justify-between flex-wrap gap-2">
@@ -907,8 +793,6 @@ if ($date_preset == 'today') {
                         </tr>
                         <tr class="bg-gray-50">
                             <?php
-                            // Full, literal Tailwind class strings (dynamically concatenated
-                            // class names don't get picked up by Tailwind's JIT scanner).
                             $mp_grp_week_bg  = ['purple' => 'bg-purple-50/40', 'blue' => 'bg-blue-50/40',  'green' => 'bg-green-50/40'];
                             $mp_grp_total_bg = ['purple' => 'bg-purple-100',   'blue' => 'bg-blue-100',    'green' => 'bg-green-100'];
                             foreach (['purple', 'blue', 'green'] as $grp): ?>
@@ -969,7 +853,6 @@ if ($date_preset == 'today') {
 </div>
 </div>
 
-<!-- Export CSV Modal -->
 <div id="exportModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
     <div class="min-h-screen flex items-center justify-center p-4">
         <div class="bg-white rounded-xl w-full max-w-md shadow-xl">
@@ -1019,7 +902,6 @@ if ($date_preset == 'today') {
     </div>
 </div>
 
-<!-- View Details Modal -->
 <div id="viewModal" class="fixed inset-0 bg-black/50 hidden z-50 overflow-y-auto">
     <div class="min-h-screen flex items-center justify-center p-4">
         <div class="bg-white rounded-xl w-full max-w-2xl shadow-xl">
@@ -1058,7 +940,6 @@ const PHP = {
 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
-// ── Tab switching ────────────────────────────────────────────
 function switchTab(tab) {
     const isRecords = tab === 'records';
     document.getElementById('panelRecords').classList.toggle('hidden', !isRecords);
@@ -1068,7 +949,6 @@ function switchTab(tab) {
     try { sessionStorage.setItem('mpActiveTab', tab); } catch (e) {}
 }
 
-// ── Export the on-screen Enumerator Summary table as CSV ───────
 function exportSummaryCsv() {
     const table = document.getElementById('summaryTable');
     if (!table) { alert('No summary data to export.'); return; }
@@ -1089,7 +969,6 @@ function exportSummaryCsv() {
     link.click();
     document.body.removeChild(link);
 }
-
 
 function buildUrl(overrides) {
     const p = {
@@ -1208,13 +1087,11 @@ function exportCSV() {
         }
     }
     
-    // Get current filter values
     const searchEnumerator = document.getElementById('searchEnumerator').value.trim();
     const searchMarket = document.getElementById('searchMarket').value.trim();
     const searchCommodity = document.getElementById('searchCommodity').value.trim();
     const filterCountry = document.getElementById('filterCountry').value;
     
-    // Build URL with all parameters
     const params = new URLSearchParams();
     params.set('export_csv', '1');
     if (startDate && endDate && preset !== 'all') {
@@ -1226,7 +1103,6 @@ function exportCSV() {
     if (searchCommodity) params.set('search_commodity', searchCommodity);
     if (filterCountry) params.set('filter_country', filterCountry);
     
-    // Direct download - this will trigger the file download
     window.location.href = '?' + params.toString();
     closeModal('exportModal');
 }
@@ -1263,7 +1139,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (savedTab === 'summary') switchTab('summary');
     } catch (e) {}
 });
-
 </script>
 
 <?php require_once '../admin/includes/admin_footer.php'; ?>
