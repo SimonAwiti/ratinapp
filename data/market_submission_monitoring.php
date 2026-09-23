@@ -227,6 +227,14 @@ $total_commodities        = (int)($stats_row['total_commodities'] ?? 0);
 $unique_enumerators       = (int)($stats_row['unique_enumerators'] ?? 0);
 $markets_no_submission    = max(0, $total_expected_markets - $markets_with_submissions);
 
+// Total enumerators (for the "active / total" stat card)
+$total_enumerators = 0;
+if ($r = $con->query("SELECT COUNT(*) AS c FROM enumerators")) {
+    $total_enumerators = (int)$r->fetch_assoc()['c'];
+    $r->free();
+}
+$inactive_enumerators = max(0, $total_enumerators - $unique_enumerators);
+
 // ============================================================
 // PAGINATION + SORTING + FILTERING
 // ============================================================
@@ -288,26 +296,27 @@ $page = isset($_GET['page']) ? max(1, min((int)$_GET['page'], $total_pages)) : 1
 $offset = ($page - 1) * $limit;
 
 // ============================================================
-// ENUMERATOR SUMMARY — OPTIMIZED: aggregate in SQL, not PHP
-// Returns: enumerator, date, rows_that_day, distinct_commodities_that_day
+// ENUMERATOR SUMMARY — All enumerators (master list) + their activity
 // ============================================================
 $summary_params = [$start_date . ' 00:00:00', $end_date];
 $summary_types  = "ss";
 $summary_extra_where = "";
 
 if ($filter_country !== '') {
-    $summary_extra_where = " AND country_admin_0 = ?";
+    // NOTE: filter_country refers to market_prices.country_admin_0, NOT enumerators.country
+    $summary_extra_where = " AND mp.country_admin_0 = ?";
     $summary_params[] = $filter_country;
     $summary_types .= "s";
 }
 
+// 1) Activity per enumerator per day (only from market_prices)
 $summary_sql = "SELECT 
-    COALESCE(NULLIF(TRIM(postedby), ''), 'Unknown') as enum_name,
-    DATE(date_posted) as sub_date,
+    COALESCE(NULLIF(TRIM(mp.postedby), ''), 'Unknown') as enum_name,
+    DATE(mp.date_posted) as sub_date,
     COUNT(*) as row_count,
-    COUNT(DISTINCT commodity) as distinct_commodities
-FROM market_prices
-WHERE date_posted >= ? AND date_posted < DATE_ADD(?, INTERVAL 1 DAY)
+    COUNT(DISTINCT mp.commodity) as distinct_commodities
+FROM market_prices mp
+WHERE mp.date_posted >= ? AND mp.date_posted < DATE_ADD(?, INTERVAL 1 DAY)
 $summary_extra_where
 GROUP BY enum_name, sub_date
 ORDER BY enum_name, sub_date";
@@ -320,7 +329,29 @@ $day_rows = [];
 while ($r = $summary_result->fetch_assoc()) $day_rows[] = $r;
 $summary_stmt->close();
 
-// Build per-enumerator per-day aggregation in PHP (much smaller than before — only summary rows)
+// 2) Master list of ALL enumerators (with contact details)
+$enum_params = [];
+$enum_types  = "";
+$enum_where  = "";
+if ($filter_country !== '') {
+    $enum_where  = " WHERE country = ?";
+    $enum_params[] = $filter_country;
+    $enum_types .= "s";
+}
+
+$enum_sql = "SELECT id, name, email, phone, country, county_district, username
+             FROM enumerators
+             $enum_where
+             ORDER BY name";
+$enum_stmt = $con->prepare($enum_sql);
+if (!empty($enum_params)) $enum_stmt->bind_param($enum_types, ...$enum_params);
+$enum_stmt->execute();
+$enum_result = $enum_stmt->get_result();
+$all_enumerators = [];
+while ($e = $enum_result->fetch_assoc()) $all_enumerators[] = $e;
+$enum_stmt->close();
+
+// 3) Build per-enumerator per-day aggregation in PHP
 $day_agg = [];
 foreach ($day_rows as $r) {
     $enum = $r['enum_name'];
@@ -332,7 +363,7 @@ foreach ($day_rows as $r) {
     $day_agg[$enum][$date]['commodities'] += (int)$r['distinct_commodities'];
 }
 
-// Week bucketing
+// 4) Week bucketing
 function mp_monday_of($dateStr) {
     $d = new DateTime($dateStr);
     $d->modify('monday this week');
@@ -350,42 +381,108 @@ while ($cursor <= $range_end) {
 }
 $week_keys = array_keys($week_buckets);
 
-// Pivot
+// 5) Pivot — iterate over the MASTER list first, then attach activity
 $pivot_final = [];
 $grand_by_week = [];
 $grand_total = ['days' => 0, 'subs' => 0, 'commodities' => 0];
 foreach ($week_keys as $wk) $grand_by_week[$wk] = ['days' => 0, 'subs' => 0, 'commodities' => 0];
 
-foreach ($day_agg as $enum => $dates) {
-    $row = ['name' => $enum, 'weeks' => [], 'total' => ['days' => 0, 'subs' => 0, 'commodities' => 0]];
+// Track which names in market_prices matched an enumerator (normalized)
+$matched_names = [];
+
+foreach ($all_enumerators as $e) {
+    $enum_name = $e['name'];
+    $norm = strtolower(trim($enum_name));
+    $matched_names[$norm] = true;
+
+    $row = [
+        'id'              => $e['id'],
+        'name'            => $e['name'],
+        'email'           => $e['email'],
+        'phone'           => $e['phone'],
+        'country'         => $e['country'],
+        'county_district' => $e['county_district'],
+        'username'        => $e['username'],
+        'weeks'           => [],
+        'total'           => ['days' => 0, 'subs' => 0, 'commodities' => 0],
+    ];
+    foreach ($week_keys as $wk) $row['weeks'][$wk] = ['days' => 0, 'subs' => 0, 'commodities' => 0];
+
+    // Attach activity for this enumerator (case-insensitive name match)
+    foreach ($day_agg as $poster => $dates) {
+        if (strtolower(trim($poster)) !== $norm) continue;
+        foreach ($dates as $date => $info) {
+            $wk = mp_monday_of($date);
+            if (!isset($row['weeks'][$wk])) continue;
+            $row['weeks'][$wk]['days']        += 1;
+            $row['weeks'][$wk]['subs']        += $info['rows'];
+            $row['weeks'][$wk]['commodities'] += $info['commodities'];
+        }
+    }
+
+    foreach ($week_keys as $wk) {
+        $row['total']['days']        += $row['weeks'][$wk]['days'];
+        $row['total']['subs']        += $row['weeks'][$wk]['subs'];
+        $row['total']['commodities'] += $row['weeks'][$wk]['commodities'];
+        $grand_by_week[$wk]['days']        += $row['weeks'][$wk]['days'];
+        $grand_by_week[$wk]['subs']        += $row['weeks'][$wk]['subs'];
+        $grand_by_week[$wk]['commodities'] += $row['weeks'][$wk]['commodities'];
+    }
+
+    $grand_total['days']        += $row['total']['days'];
+    $grand_total['subs']        += $row['total']['subs'];
+    $grand_total['commodities'] += $row['total']['commodities'];
+
+    $pivot_final[] = $row;
+}
+
+// 6) Any leftover posters in market_prices that don't map to an enumerator record
+//    (free-text typos etc.) — keep them visible so nothing is silently lost.
+foreach ($day_agg as $poster => $dates) {
+    $norm = strtolower(trim($poster));
+    if (isset($matched_names[$norm])) continue;
+
+    $row = [
+        'id'              => null,
+        'name'            => $poster . ' (unregistered)',
+        'email'           => '',
+        'phone'           => '',
+        'country'         => '',
+        'county_district' => '',
+        'username'        => '',
+        'weeks'           => [],
+        'total'           => ['days' => 0, 'subs' => 0, 'commodities' => 0],
+    ];
     foreach ($week_keys as $wk) $row['weeks'][$wk] = ['days' => 0, 'subs' => 0, 'commodities' => 0];
 
     foreach ($dates as $date => $info) {
         $wk = mp_monday_of($date);
         if (!isset($row['weeks'][$wk])) continue;
-        $row['weeks'][$wk]['days'] += 1;
-        $row['weeks'][$wk]['subs'] += $info['rows'];
+        $row['weeks'][$wk]['days']        += 1;
+        $row['weeks'][$wk]['subs']        += $info['rows'];
         $row['weeks'][$wk]['commodities'] += $info['commodities'];
     }
-
     foreach ($week_keys as $wk) {
-        $row['total']['days'] += $row['weeks'][$wk]['days'];
-        $row['total']['subs'] += $row['weeks'][$wk]['subs'];
+        $row['total']['days']        += $row['weeks'][$wk]['days'];
+        $row['total']['subs']        += $row['weeks'][$wk]['subs'];
         $row['total']['commodities'] += $row['weeks'][$wk]['commodities'];
-        $grand_by_week[$wk]['days'] += $row['weeks'][$wk]['days'];
-        $grand_by_week[$wk]['subs'] += $row['weeks'][$wk]['subs'];
+        $grand_by_week[$wk]['days']        += $row['weeks'][$wk]['days'];
+        $grand_by_week[$wk]['subs']        += $row['weeks'][$wk]['subs'];
         $grand_by_week[$wk]['commodities'] += $row['weeks'][$wk]['commodities'];
     }
-
-    if ($row['total']['subs'] > 0 || $row['total']['days'] > 0) {
-        $grand_total['days'] += $row['total']['days'];
-        $grand_total['subs'] += $row['total']['subs'];
-        $grand_total['commodities'] += $row['total']['commodities'];
-        $pivot_final[] = $row;
-    }
+    $grand_total['days']        += $row['total']['days'];
+    $grand_total['subs']        += $row['total']['subs'];
+    $grand_total['commodities'] += $row['total']['commodities'];
+    $pivot_final[] = $row;
 }
 
-usort($pivot_final, function ($a, $b) { return $b['total']['subs'] <=> $a['total']['subs']; });
+// 7) Sort: active first (by total subs desc), then inactive alphabetically
+usort($pivot_final, function ($a, $b) {
+    if ($b['total']['subs'] !== $a['total']['subs']) {
+        return $b['total']['subs'] <=> $a['total']['subs'];
+    }
+    return strcasecmp($a['name'], $b['name']);
+});
 
 // ============================================================
 // FETCH AND GROUP DATA BY MARKET + COMMODITY + DATE
@@ -581,7 +678,11 @@ if ($date_preset == 'today') {
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-xs text-gray-400 uppercase tracking-wide">Enumerators</p>
-                    <p class="text-xl font-bold text-purple-600"><?= number_format($unique_enumerators) ?></p>
+                    <p class="text-xl font-bold text-purple-600">
+                        <?= number_format($unique_enumerators) ?>
+                        <span class="text-sm font-normal text-gray-400">/ <?= number_format($total_enumerators) ?></span>
+                    </p>
+                    <p class="text-xs text-gray-400"><?= $inactive_enumerators ?> inactive</p>
                 </div>
                 <span class="material-symbols-outlined text-3xl text-purple-400/50">people</span>
             </div>
@@ -778,7 +879,7 @@ if ($date_preset == 'today') {
         <?php elseif (empty($pivot_final)): ?>
             <div class="bg-white rounded-lg shadow-sm p-8 text-center text-gray-400">
                 <span class="material-symbols-outlined text-5xl text-gray-300 block">groups</span>
-                <p class="text-sm mt-1">No enumerator activity found for the selected date range.</p>
+                <p class="text-sm mt-1">No enumerators found.</p>
             </div>
         <?php else: ?>
         <div class="bg-white rounded-lg shadow-sm overflow-hidden">
@@ -786,7 +887,9 @@ if ($date_preset == 'today') {
                 <table class="w-full text-xs border-collapse" id="summaryTable">
                     <thead>
                         <tr class="bg-gray-50">
-                            <th rowspan="2" class="sticky left-0 bg-gray-50 px-3 py-2 text-left font-semibold text-gray-600 uppercase border-b border-r border-gray-200 align-bottom" style="min-width:170px;">Enumerator</th>
+                            <th rowspan="2" class="sticky left-0 bg-gray-50 px-3 py-2 text-left font-semibold text-gray-600 uppercase border-b border-r border-gray-200 align-bottom" style="min-width:240px;">Enumerator</th>
+                            <th rowspan="2" class="sticky left-[240px] bg-gray-50 px-3 py-2 text-left font-semibold text-gray-600 uppercase border-b border-r border-gray-200 align-bottom" style="min-width:200px;">Contact</th>
+                            <th rowspan="2" class="sticky left-[440px] bg-gray-50 px-3 py-2 text-left font-semibold text-gray-600 uppercase border-b border-r-2 border-gray-300 align-bottom" style="min-width:120px;">Country</th>
                             <th colspan="<?= count($week_keys) + 1 ?>" class="px-2 py-1.5 text-center font-semibold text-purple-700 uppercase border-b border-l border-gray-200 bg-purple-50">Market Days</th>
                             <th colspan="<?= count($week_keys) + 1 ?>" class="px-2 py-1.5 text-center font-semibold text-blue-700 uppercase border-b border-l border-gray-200 bg-blue-50">Submissions</th>
                             <th colspan="<?= count($week_keys) + 1 ?>" class="px-2 py-1.5 text-center font-semibold text-green-700 uppercase border-b border-l border-gray-200 bg-green-50">Commodities</th>
@@ -807,7 +910,26 @@ if ($date_preset == 'today') {
                     <tbody class="divide-y divide-gray-100">
                         <?php foreach ($pivot_final as $row): ?>
                         <tr class="table-row-hover">
-                            <td class="sticky left-0 bg-white px-3 py-2 font-medium text-gray-800 border-r border-gray-200 whitespace-nowrap"><?= htmlspecialchars($row['name']) ?></td>
+                            <td class="sticky left-0 bg-white px-3 py-2 font-medium text-gray-800 border-r border-gray-200 whitespace-nowrap">
+                                <?= htmlspecialchars($row['name']) ?>
+                            </td>
+                            <td class="sticky left-[240px] bg-white px-3 py-2 text-gray-600 border-r border-gray-200 whitespace-nowrap">
+                                <?php if (!empty($row['email'])): ?>
+                                    <div class="flex items-center gap-1"><span class="material-symbols-outlined text-xs text-gray-400">mail</span><?= htmlspecialchars($row['email']) ?></div>
+                                <?php endif; ?>
+                                <?php if (!empty($row['phone'])): ?>
+                                    <div class="flex items-center gap-1"><span class="material-symbols-outlined text-xs text-gray-400">call</span><?= htmlspecialchars($row['phone']) ?></div>
+                                <?php endif; ?>
+                                <?php if (empty($row['email']) && empty($row['phone'])): ?>
+                                    <span class="text-gray-300">—</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="sticky left-[440px] bg-white px-3 py-2 text-gray-600 border-r-2 border-gray-300 whitespace-nowrap">
+                                <?= htmlspecialchars($row['country'] ?: '—') ?>
+                                <?php if (!empty($row['county_district'])): ?>
+                                    <div class="text-[10px] text-gray-400"><?= htmlspecialchars($row['county_district']) ?></div>
+                                <?php endif; ?>
+                            </td>
                             <?php foreach ($week_keys as $wk): ?>
                                 <td class="px-2 py-2 text-center border-l border-gray-100 <?= $row['weeks'][$wk]['days'] === 0 ? 'text-gray-300' : 'text-gray-700' ?>"><?= $row['weeks'][$wk]['days'] ?></td>
                             <?php endforeach; ?>
@@ -826,6 +948,10 @@ if ($date_preset == 'today') {
                     <tfoot>
                         <tr class="bg-gray-100 font-bold">
                             <td class="sticky left-0 bg-gray-100 px-3 py-2 text-gray-800 border-r border-t-2 border-gray-300">TOTAL</td>
+                            <td class="sticky left-[240px] bg-gray-100 px-3 py-2 border-r border-t-2 border-gray-300 text-gray-400 text-[11px]">
+                                <?= count($pivot_final) ?> enumerators
+                            </td>
+                            <td class="sticky left-[440px] bg-gray-100 px-3 py-2 border-r-2 border-t-2 border-gray-300"></td>
                             <?php foreach ($week_keys as $wk): ?>
                                 <td class="px-2 py-2 text-center text-gray-800 border-l border-t-2 border-gray-300"><?= $grand_by_week[$wk]['days'] ?></td>
                             <?php endforeach; ?>
@@ -964,7 +1090,7 @@ function exportSummaryCsv() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = 'enumerator_summary_<?= $start_date ?>_to_<?= $end_date ?>.csv';
+    link.download = 'enumerator_summary_all_<?= $start_date ?>_to_<?= $end_date ?>.csv';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
