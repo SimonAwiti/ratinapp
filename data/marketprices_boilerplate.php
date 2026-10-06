@@ -247,35 +247,105 @@ if (isset($_POST['import_csv']) && isset($_FILES['csv_file']) && $_FILES['csv_fi
 
 // ── EXPORT ────────────────────────────────────────────────────
 if (isset($_POST['export_format'])) {
-    $format = $_POST['export_format'];
-    $selected_ids = isset($_POST['selected_ids']) ? $_POST['selected_ids'] : [];
-    $export_all = isset($_POST['export_all']) && $_POST['export_all'] == 'true';
-    $data = [];
-    if ($export_all) {
-        $sql = "SELECT p.market,c.commodity_name as commodity,p.price_type,p.Price as price,p.date_posted,p.status,p.data_source as source,p.variety FROM market_prices p LEFT JOIN commodities c ON p.commodity=c.id ORDER BY p.date_posted DESC";
-        $result = $con->query($sql);
-        if ($result) { while ($row = $result->fetch_assoc()) { $data[] = $row; } }
-    } elseif (!empty($selected_ids)) {
-        $ids = implode(',', array_map('intval', $selected_ids));
-        $sql = "SELECT p.market,c.commodity_name as commodity,p.price_type,p.Price as price,p.date_posted,p.status,p.data_source as source,p.variety FROM market_prices p LEFT JOIN commodities c ON p.commodity=c.id WHERE p.id IN ($ids) ORDER BY p.date_posted DESC";
-        $result = $con->query($sql);
-        if ($result) { while ($row = $result->fetch_assoc()) { $data[] = $row; } }
-    }
-    if ($format == 'excel' || $format == 'csv') {
+    if (session_status() == PHP_SESSION_NONE) session_start();
+    include '../admin/includes/config.php';
+
+    $format       = $_POST['export_format'];
+    $selected_ids = !empty($_POST['selected_ids'])
+        ? array_slice(array_map('intval', explode(',', $_POST['selected_ids'])), 0, 5000)
+        : [];
+    $export_all   = isset($_POST['export_all']) && $_POST['export_all'] === 'true';
+    $EXPORT_LIMIT = 100000;
+
+    // Discard any buffered output so headers and CSV bytes are clean
+    while (ob_get_level()) { ob_end_clean(); }
+
+    if ($format === 'excel' || $format === 'csv') {
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="market_prices_' . date('Y-m-d') . '.csv"');
-        $output = fopen('php://output', 'w');
-        fputs($output, "\xEF\xBB\xBF");
-        fputcsv($output, ['Market','Commodity','Price Type','Price','Date Posted','Status','Source','Variety']);
-        foreach ($data as $row) { fputcsv($output, [$row['market'],$row['commodity'],$row['price_type'],$row['price'],$row['date_posted'],$row['status'],$row['source'],$row['variety']]); }
-        fclose($output); exit;
-    } elseif ($format == 'pdf') { ?>
-        <!DOCTYPE html><html><head><title>Market Prices Export</title><style>body{font-family:Arial}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px}th{background:#f2f2f2}</style></head>
-        <body><h1>Market Prices Export</h1><p>Exported: <?= date('Y-m-d H:i:s') ?> &nbsp;|&nbsp; Records: <?= count($data) ?></p>
-        <table><thead><tr><th>Market</th><th>Commodity</th><th>Price Type</th><th>Price ($)</th><th>Date Posted</th><th>Status</th><th>Source</th><th>Variety</th></tr></thead><tbody>
-        <?php foreach ($data as $row): ?><tr><td><?= htmlspecialchars($row['market']) ?></td><td><?= htmlspecialchars($row['commodity']) ?></td><td><?= htmlspecialchars($row['price_type']) ?></td><td><?= htmlspecialchars($row['price']) ?></td><td><?= htmlspecialchars($row['date_posted']) ?></td><td><?= htmlspecialchars($row['status']) ?></td><td><?= htmlspecialchars($row['source']) ?></td><td><?= htmlspecialchars($row['variety']) ?></td></tr><?php endforeach; ?>
-        </tbody></table><script>window.onload=function(){window.print();}</script></body></html>
-    <?php exit; }
+        $out = fopen('php://output', 'w');
+        fputs($out, "\xEF\xBB\xBF");
+        fputcsv($out, ['Market','Commodity','Price Type','Price (USD)','Date Posted','Status','Source','Variety']);
+
+        if ($export_all) {
+            // Stream row-by-row — never build a big in-memory array
+            $sql = "SELECT p.market, c.commodity_name AS commodity, p.price_type,
+                           p.Price AS price, p.date_posted, p.status,
+                           p.data_source AS source, p.variety
+                    FROM market_prices p
+                    LEFT JOIN commodities c ON p.commodity = c.id
+                    ORDER BY p.date_posted DESC
+                    LIMIT $EXPORT_LIMIT";
+            $result = $con->query($sql);
+            if ($result) {
+                while ($r = $result->fetch_assoc()) {
+                    fputcsv($out, [
+                        $r['market'], $r['commodity'], $r['price_type'],
+                        $r['price'], $r['date_posted'], $r['status'],
+                        $r['source'], $r['variety']
+                    ]);
+                }
+            }
+        } elseif (!empty($selected_ids)) {
+            $ids = implode(',', $selected_ids);
+            $sql = "SELECT p.market, c.commodity_name AS commodity, p.price_type,
+                           p.Price AS price, p.date_posted, p.status,
+                           p.data_source AS source, p.variety
+                    FROM market_prices p
+                    LEFT JOIN commodities c ON p.commodity = c.id
+                    WHERE p.id IN ($ids)
+                    ORDER BY p.date_posted DESC";
+            $result = $con->query($sql);
+            if ($result) {
+                while ($r = $result->fetch_assoc()) {
+                    fputcsv($out, [
+                        $r['market'], $r['commodity'], $r['price_type'],
+                        $r['price'], $r['date_posted'], $r['status'],
+                        $r['source'], $r['variety']
+                    ]);
+                }
+            }
+        }
+        fclose($out);
+        exit;
+    }
+
+    if ($format === 'pdf') {
+        // Collect just enough for the PDF view (bounded)
+        $data = [];
+        if ($export_all) {
+            $sql = "SELECT p.market, c.commodity_name AS commodity, p.price_type,
+                           p.Price AS price, p.date_posted, p.status,
+                           p.data_source AS source, p.variety
+                    FROM market_prices p
+                    LEFT JOIN commodities c ON p.commodity = c.id
+                    ORDER BY p.date_posted DESC
+                    LIMIT $EXPORT_LIMIT";
+            $result = $con->query($sql);
+            if ($result) { while ($r = $result->fetch_assoc()) $data[] = $r; }
+        } elseif (!empty($selected_ids)) {
+            $ids = implode(',', $selected_ids);
+            $sql = "SELECT p.market, c.commodity_name AS commodity, p.price_type,
+                           p.Price AS price, p.date_posted, p.status,
+                           p.data_source AS source, p.variety
+                    FROM market_prices p
+                    LEFT JOIN commodities c ON p.commodity = c.id
+                    WHERE p.id IN ($ids)
+                    ORDER BY p.date_posted DESC";
+            $result = $con->query($sql);
+            if ($result) { while ($r = $result->fetch_assoc()) $data[] = $r; }
+        }
+        ?>
+<!DOCTYPE html><html><head><title>Market Prices Export</title><style>body{font-family:Arial}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px}th{background:#f2f2f2}</style></head>
+<body><h1>Market Prices Export</h1><p>Exported: <?= date('Y-m-d H:i:s') ?> | Records: <?= count($data) ?></p>
+<table><thead><tr><th>Market</th><th>Commodity</th><th>Type</th><th>Price ($)</th><th>Date</th><th>Status</th><th>Source</th><th>Variety</th></tr></thead><tbody>
+<?php foreach ($data as $row): ?>
+<tr><td><?= htmlspecialchars($row['market']) ?></td><td><?= htmlspecialchars($row['commodity']) ?></td><td><?= htmlspecialchars($row['price_type']) ?></td><td><?= htmlspecialchars($row['price']) ?></td><td><?= htmlspecialchars($row['date_posted']) ?></td><td><?= htmlspecialchars($row['status']) ?></td><td><?= htmlspecialchars($row['source']) ?></td><td><?= htmlspecialchars($row['variety']) ?></td></tr>
+<?php endforeach; ?>
+</tbody></table><script>window.onload=function(){window.print();}</script></body></html>
+<?php
+        exit;
+    }
 }
 
 // ── PAGE SETUP ────────────────────────────────────────────────
@@ -286,6 +356,12 @@ if (isset($_SESSION['import_message'])) {
     $import_message = $_SESSION['import_message']; $import_status = $_SESSION['import_status'];
     unset($_SESSION['import_message']); unset($_SESSION['import_status']);
 }
+
+// ── SORT / SEARCH PARAMS (must be defined before getPricesData) ─
+$sort_column    = $_GET['sort'] ?? 'date_posted';
+$sort_direction = (isset($_GET['dir']) && strtolower($_GET['dir']) === 'asc') ? 'ASC' : 'DESC';
+$search_market  = trim($_GET['search_market'] ?? '');
+$search_commodity = trim($_GET['search_commodity'] ?? '');
 
 function getPricesData($con, $limit = 10, $offset = 0, $sort_col = 'date_posted', $sort_dir = 'DESC') {
     $allowed = ['market' => 'p.market', 'commodity' => 'c.commodity_name', 'date_posted' => 'p.date_posted',
@@ -361,12 +437,6 @@ $total_prices   = (int)(($con->query("SELECT COUNT(*) AS t FROM market_prices")-
 $pending_count  = (int)(($con->query("SELECT COUNT(*) AS t FROM market_prices WHERE status='pending'")->fetch_assoc())['t'] ?? 0);
 $published_count= (int)(($con->query("SELECT COUNT(*) AS t FROM market_prices WHERE status='published'")->fetch_assoc())['t'] ?? 0);
 $wholesale_count= (int)(($con->query("SELECT COUNT(*) AS t FROM market_prices WHERE price_type='Wholesale'")->fetch_assoc())['t'] ?? 0);
-
-// ── SORT / SEARCH PARAMS ───────────────────────────────────────
-$sort_column    = $_GET['sort'] ?? 'date_posted';
-$sort_direction = (isset($_GET['dir']) && strtolower($_GET['dir']) === 'asc') ? 'ASC' : 'DESC';
-$search_market  = trim($_GET['search_market'] ?? '');
-$search_commodity = trim($_GET['search_commodity'] ?? '');
 
 // ── DATA FOR MODALS ────────────────────────────────────────────
 $markets_for_modal = [];
@@ -507,7 +577,7 @@ $modal_units      = ['kg','tons','g','lb','litres','pieces','bags'];
 /* ── Dropdown ── */
 .mp-dropdown { position: relative; }
 .mp-dropdown-menu {
-    position: absolute; top: calc(100% + 4px); left: 0; min-width: 190px; z-index: 200;
+    position: absolute; top: calc(100% + 4px); right: 0; min-width: 190px; z-index: 200;
     background: white; border: 1px solid var(--mp-border); border-radius: var(--mp-radius);
     box-shadow: 0 8px 24px rgba(0,0,0,.1); display: none;
 }
@@ -691,10 +761,8 @@ input[type="checkbox"].mp-check { width: 15px; height: 15px; cursor: pointer; ac
 }
 .mp-row-cont td.mp-shared-cell span,
 .mp-row-cont td.mp-shared-cell * { visibility: hidden; }
-/* Group separator between different groups */
 .mp-row-first { border-top: 2px solid #e5e7eb !important; }
 .mp-row-first:first-child { border-top: none !important; }
-/* Subtle group background bands */
 .mp-group-even { background: #fafafa; }
 .mp-group-even:hover { background: #f5f5f5 !important; }
 
@@ -1006,6 +1074,16 @@ input[type="checkbox"].mp-check { width: 15px; height: 15px; cursor: pointer; ac
     </div><!-- /table card -->
 
 </div><!-- /mp-wrap -->
+
+
+<!-- ══════════════════════════════════════
+     PERSISTENT EXPORT FORM (must live in the DOM)
+══════════════════════════════════════ -->
+<form id="exportForm" method="POST" action="" target="_blank" style="display:none;">
+    <input type="hidden" name="export_format" id="exportFormat">
+    <input type="hidden" name="export_all" id="exportAll" value="">
+    <input type="hidden" name="selected_ids" id="selectedIds" value="">
+</form>
 
 
 <!-- ══════════════════════════════════════
@@ -1485,23 +1563,34 @@ function mpPerformAction(action, ids) {
     .catch(err => { toast.remove(); alert('Request failed: ' + err.message); });
 }
 
-// ── Export ────────────────────────────────────────────────────
-function exportSelected(format) {
+// ─────────────────────────────────────────────────────────────
+// EXPORT — uses a persistent <form> in the DOM (see #exportForm).
+// Posting from a persistent form (not a detached, dynamically
+// created one) keeps the user-gesture chain intact even after a
+// confirm() dialog, so the download is never suppressed.
+// ─────────────────────────────────────────────────────────────
+function exportSelected(fmt) {
     const ids = mpGetSelectedIds();
     if (!ids.length) { alert('Select at least one price to export.'); return; }
-    mpSubmitExport(format, ids, false);
+    mpSubmitExport(fmt, ids, false);
 }
-function exportAll(format) {
+
+function exportAll(fmt) {
     if (!confirm('Export ALL prices? This may take a moment for large datasets.')) return;
-    mpSubmitExport(format, [], true);
+    mpSubmitExport(fmt, [], true);
 }
-function mpSubmitExport(format, ids, doAll) {
-    const form = document.createElement('form');
-    form.method = 'POST'; form.action = window.location.href; form.target = '_blank';
-    const add = (n, v) => { const i = document.createElement('input'); i.type='hidden'; i.name=n; i.value=v; form.appendChild(i); };
-    add('export_format', format);
-    if (doAll) { add('export_all','true'); } else { ids.forEach(id => add('selected_ids[]', id)); }
-    document.body.appendChild(form); form.submit(); document.body.removeChild(form);
+
+function mpSubmitExport(fmt, ids, doAll) {
+    const form = document.getElementById('exportForm');
+    document.getElementById('exportFormat').value = fmt;
+    if (doAll) {
+        document.getElementById('exportAll').value   = 'true';
+        document.getElementById('selectedIds').value = '';
+    } else {
+        document.getElementById('exportAll').value   = '';
+        document.getElementById('selectedIds').value = ids.join(',');
+    }
+    form.submit();
 }
 
 // ─────────────────────────────────────────────────────────────
