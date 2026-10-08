@@ -108,7 +108,7 @@ if ($mode === 'catalog') {
             $commodityParams[] = $filterCountry;
             $commodityTypes .= 's';
         }
-        $commoditySql .= " ORDER BY c.commodity_name, c.variety";
+        $commoditySql .= " ORDER BY CASE WHEN c.id = 47 THEN 0 ELSE 1 END, c.commodity_name, c.variety";
         $stmt = $con->prepare($commoditySql);
         if ($stmt === false) throw new Exception('commodities prepare failed: ' . $con->error);
         if ($commodityParams) $stmt->bind_param($commodityTypes, ...$commodityParams);
