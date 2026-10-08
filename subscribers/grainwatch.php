@@ -541,9 +541,12 @@ include 'user_header.php';
                         <div class="prose max-w-none font-body-md">
                             <?= nl2br(htmlspecialchars_decode($view_grainwatch['description'])) ?>
                         </div>
-                        <?php if (!empty($view_grainwatch['document_path'])): ?>
+                        <?php if (!empty($view_grainwatch['document_path'])): 
+                            $base_url = 'https://ratin.net/ratinapp/news-system/api/';
+                            $doc_url = rtrim($base_url, '/') . '/' . ltrim($view_grainwatch['document_path'], '/');
+                        ?>
                             <div class="mt-6 pt-4 border-t border-outline-variant">
-                                <a href="<?= htmlspecialchars($view_grainwatch['document_path']) ?>" target="_blank" class="document-link font-body-md">
+                                <a href="<?= htmlspecialchars($doc_url) ?>" target="_blank" class="document-link font-body-md">
                                     <span class="material-symbols-outlined">picture_as_pdf</span>
                                     Download Full Report (PDF)
                                 </a>
