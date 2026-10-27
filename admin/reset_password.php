@@ -1,87 +1,192 @@
 <?php
+// reset_password.php - email OTP password reset
 session_start();
 
-// Include database config
 if (file_exists('includes/config.php')) {
     include 'includes/config.php';
 }
+require_once __DIR__ . '/../includes/Mailer.php';   // Microsoft Graph sendMail()
 
-$error_message = '';
+// ---- Settings ----
+const OTP_TTL_MINUTES   = 10;   // code validity
+const OTP_MAX_ATTEMPTS  = 5;    // wrong guesses before the code is dead
+const OTP_MAX_REQUESTS  = 3;    // codes per account per window
+const OTP_WINDOW_MIN    = 15;
+const MIN_PASSWORD_LEN  = 8;
+
+$error_message   = '';
 $success_message = '';
-$verification_step = false; // Step 1: verify identity, Step 2: set new password
-$verified_username = '';
+$otp_step        = isset($_SESSION['reset_pending']) && $_SESSION['reset_pending'] === true;
+$redirect        = false;
 
-// Process verification step
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['verify'])) {
-    $username = trim($_POST['username']);
-    $email = trim($_POST['email']);
-    
-    if (empty($username) || empty($email)) {
-        $error_message = "Please enter both username and email address.";
-    } else {
-        if (isset($con)) {
-            // Check if user exists with matching username and email
-            $stmt = $con->prepare("SELECT id, username, email, full_name FROM admin_users WHERE username = ? AND email = ? AND status = 'active'");
+// CSRF token
+if (empty($_SESSION['csrf'])) {
+    $_SESSION['csrf'] = bin2hex(random_bytes(32));
+}
+function csrf_ok(): bool {
+    return isset($_POST['csrf']) && hash_equals($_SESSION['csrf'], $_POST['csrf']);
+}
+
+function send_otp_email(string $to, string $name, string $otp): void {
+    $name = htmlspecialchars($name);
+    $mins = OTP_TTL_MINUTES;
+    $html = "
+    <div style=\"font-family:Arial,sans-serif;max-width:480px;margin:auto;color:#1a1c1c\">
+      <h2 style=\"color:#00450d\">RATIN Analytics</h2>
+      <p>Hello {$name},</p>
+      <p>Use this code to reset your admin password:</p>
+      <p style=\"font-size:32px;letter-spacing:8px;font-weight:bold;background:#f3f3f3;padding:16px;text-align:center;border-radius:6px\">{$otp}</p>
+      <p>It expires in {$mins} minutes. If you did not request this, you can ignore this email; your password has not changed.</p>
+      <p style=\"color:#717a6d;font-size:12px\">Never share this code with anyone.</p>
+    </div>";
+    sendMail($to, 'Your RATIN password reset code', $html, "Your RATIN password reset code is {$otp}. It expires in {$mins} minutes.");
+}
+
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    if (!csrf_ok()) {
+        $error_message = "Your session expired. Please try again.";
+    } elseif (!isset($con)) {
+        $error_message = "Service unavailable. Please try again later.";
+    }
+
+    // ---------- Step 1: request a code ----------
+    elseif (isset($_POST['send_otp'])) {
+        $username = trim($_POST['username'] ?? '');
+        $email    = trim($_POST['email'] ?? '');
+
+        if ($username === '' || $email === '') {
+            $error_message = "Please enter both username and email address.";
+        } else {
+            $stmt = $con->prepare("SELECT id, email, full_name FROM admin_users WHERE username = ? AND email = ? AND status = 'active'");
             $stmt->bind_param("ss", $username, $email);
             $stmt->execute();
-            $result = $stmt->get_result();
-            
-            if ($result->num_rows > 0) {
-                $user = $result->fetch_assoc();
-                $verification_step = true;
-                $verified_username = $user['username'];
-                $success_message = "Identity verified! You can now set a new password.";
-            } else {
-                $error_message = "No account found with the provided username and email combination.";
-            }
+            $user = $stmt->get_result()->fetch_assoc();
             $stmt->close();
+
+            // Same outcome whether or not the account exists (no account enumeration)
+            $_SESSION['reset_pending']  = true;
+            $_SESSION['reset_admin_id'] = $user ? (int)$user['id'] : 0;
+            $_SESSION['reset_email']    = $email;
+
+            if ($user) {
+                $admin_id = (int)$user['id'];
+
+                // Throttle: max N codes per window
+                $win = OTP_WINDOW_MIN;
+                $q = $con->prepare("SELECT COUNT(*) FROM password_resets WHERE admin_id = ? AND created_at > (NOW() - INTERVAL {$win} MINUTE)");
+                $q->bind_param("i", $admin_id);
+                $q->execute();
+                $q->bind_result($recent);
+                $q->fetch();
+                $q->close();
+
+                if ($recent < OTP_MAX_REQUESTS) {
+                    // Invalidate older unused codes
+                    $inv = $con->prepare("UPDATE password_resets SET used_at = NOW() WHERE admin_id = ? AND used_at IS NULL");
+                    $inv->bind_param("i", $admin_id);
+                    $inv->execute();
+                    $inv->close();
+
+                    $otp  = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+                    $hash = password_hash($otp, PASSWORD_DEFAULT);
+                    $ip   = $_SERVER['REMOTE_ADDR'] ?? null;
+                    $ttl  = OTP_TTL_MINUTES;
+
+                    $ins = $con->prepare("INSERT INTO password_resets (admin_id, otp_hash, expires_at, request_ip) VALUES (?, ?, NOW() + INTERVAL {$ttl} MINUTE, ?)");
+                    $ins->bind_param("iss", $admin_id, $hash, $ip);
+                    $ins->execute();
+                    $ins->close();
+
+                    try {
+                        send_otp_email($user['email'], $user['full_name'] ?: $username, $otp);
+                    } catch (Throwable $e) {
+                        error_log('RATIN OTP mail failed: ' . $e->getMessage());
+                    }
+                }
+            }
+
+            $otp_step        = true;
+            $success_message = "If the details match an active account, a 6-digit code has been sent to that email address.";
+        }
+    }
+
+    // ---------- Step 2: verify code + set new password ----------
+    elseif (isset($_POST['update_password'])) {
+        $otp_step   = true;
+        $admin_id   = (int)($_SESSION['reset_admin_id'] ?? 0);
+        $otp        = preg_replace('/\D/', '', $_POST['otp'] ?? '');
+        $new        = $_POST['new_password'] ?? '';
+        $confirm    = $_POST['confirm_password'] ?? '';
+
+        if (!($_SESSION['reset_pending'] ?? false)) {
+            $error_message = "Please request a new code.";
+            $otp_step = false;
+        } elseif (strlen($otp) !== 6) {
+            $error_message = "Enter the 6-digit code from your email.";
+        } elseif (strlen($new) < MIN_PASSWORD_LEN) {
+            $error_message = "Password must be at least " . MIN_PASSWORD_LEN . " characters long.";
+        } elseif ($new !== $confirm) {
+            $error_message = "Passwords do not match.";
         } else {
-            // Fallback verification (replace with your actual credentials)
-            if ($username === 'admin' && $email === 'admin@ratin.com') {
-                $verification_step = true;
-                $verified_username = $username;
-                $success_message = "Identity verified! You can now set a new password.";
+            $generic = "Invalid or expired code. Please check the code or request a new one.";
+            $row = null;
+
+            if ($admin_id > 0) {
+                $s = $con->prepare("SELECT id, otp_hash, attempts FROM password_resets
+                                    WHERE admin_id = ? AND used_at IS NULL AND expires_at > NOW()
+                                    ORDER BY id DESC LIMIT 1");
+                $s->bind_param("i", $admin_id);
+                $s->execute();
+                $row = $s->get_result()->fetch_assoc();
+                $s->close();
+            }
+
+            if (!$row || $row['attempts'] >= OTP_MAX_ATTEMPTS) {
+                $error_message = $generic;
             } else {
-                $error_message = "No account found with the provided username and email combination.";
+                // Count the attempt before checking, so guesses can't be raced
+                $a = $con->prepare("UPDATE password_resets SET attempts = attempts + 1 WHERE id = ?");
+                $a->bind_param("i", $row['id']);
+                $a->execute();
+                $a->close();
+
+                if (password_verify($otp, $row['otp_hash'])) {
+                    $pw = password_hash($new, PASSWORD_DEFAULT);
+
+                    $con->begin_transaction();
+                    $u = $con->prepare("UPDATE admin_users SET password = ? WHERE id = ?");
+                    $u->bind_param("si", $pw, $admin_id);
+                    $ok1 = $u->execute();
+                    $u->close();
+
+                    $m = $con->prepare("UPDATE password_resets SET used_at = NOW() WHERE admin_id = ? AND used_at IS NULL");
+                    $m->bind_param("i", $admin_id);
+                    $ok2 = $m->execute();
+                    $m->close();
+
+                    if ($ok1 && $ok2) {
+                        $con->commit();
+                        unset($_SESSION['reset_pending'], $_SESSION['reset_admin_id'], $_SESSION['reset_email']);
+                        session_regenerate_id(true);
+                        $otp_step        = false;
+                        $redirect        = true;
+                        $success_message = "Password reset successfully! Redirecting to login...";
+                    } else {
+                        $con->rollback();
+                        $error_message = "Failed to update password. Please try again.";
+                    }
+                } else {
+                    $error_message = $generic;
+                }
             }
         }
     }
-}
 
-// Process password update step
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_password'])) {
-    $username = trim($_POST['verified_username']);
-    $new_password = $_POST['new_password'];
-    $confirm_password = $_POST['confirm_password'];
-    
-    if (empty($new_password) || empty($confirm_password)) {
-        $error_message = "Please enter and confirm your new password.";
-    } elseif (strlen($new_password) < 6) {
-        $error_message = "Password must be at least 6 characters long.";
-    } elseif ($new_password !== $confirm_password) {
-        $error_message = "Passwords do not match.";
-    } else {
-        if (isset($con)) {
-            // Hash the new password
-            $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
-            
-            // Update password in database
-            $stmt = $con->prepare("UPDATE admin_users SET password = ? WHERE username = ?");
-            $stmt->bind_param("ss", $hashed_password, $username);
-            
-            if ($stmt->execute()) {
-                $success_message = "Password has been reset successfully! Redirecting to login...";
-                // Redirect after 2 seconds
-                echo '<meta http-equiv="refresh" content="2;url=login.php">';
-            } else {
-                $error_message = "Failed to update password. Please try again.";
-            }
-            $stmt->close();
-        } else {
-            // Fallback - simulate success (replace with actual logic)
-            $success_message = "Password has been reset successfully! Redirecting to login...";
-            echo '<meta http-equiv="refresh" content="2;url=login.php">';
-        }
+    // ---------- Start over ----------
+    elseif (isset($_POST['restart'])) {
+        unset($_SESSION['reset_pending'], $_SESSION['reset_admin_id'], $_SESSION['reset_email']);
+        $otp_step = false;
     }
 }
 ?>
@@ -92,6 +197,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_password'])) {
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>Reset Your Password - RATIN Analytics</title>
+<?php if ($redirect): ?><meta http-equiv="refresh" content="2;url=login.php"><?php endif; ?>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
@@ -186,57 +292,39 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_password'])) {
         }
     </script>
 <style>
-        body {
-            background-color: #F5F5F5;
-            font-family: 'Inter', sans-serif;
-        }
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-        }
-        .card-shadow {
-            box-shadow: 0px 4px 12px rgba(0,0,0,0.05);
-        }
-        .header-gradient {
-            background: linear-gradient(135deg, #f3f3f3 0%, #e2e2e2 100%);
-        }
+        body { background-color: #F5F5F5; font-family: 'Inter', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .card-shadow { box-shadow: 0px 4px 12px rgba(0,0,0,0.05); }
+        .header-gradient { background: linear-gradient(135deg, #f3f3f3 0%, #e2e2e2 100%); }
+        .otp-input { letter-spacing: 0.6em; text-align: center; font-size: 24px; font-weight: 700; }
     </style>
 </head>
 <body class="flex flex-col min-h-screen">
-<!-- TopAppBar -->
 <header class="bg-surface border-b border-outline-variant flex justify-between items-center w-full px-container-padding py-base fixed top-0 z-50">
 <div class="text-headline-md font-headline-md font-bold text-primary">RATIN Analytics</div>
-<div class="flex items-center gap-base">
-<button class="p-2 hover:bg-surface-container transition-colors rounded-full text-on-surface-variant">
-<span class="material-symbols-outlined" data-icon="help">help</span>
-</button>
-<button class="p-2 hover:bg-surface-container transition-colors rounded-full text-on-surface-variant">
-<span class="material-symbols-outlined" data-icon="settings">settings</span>
-</button>
-</div>
 </header>
 <main class="flex-grow flex items-center justify-center px-container-padding py-24">
 <div class="w-full max-w-[480px]">
-<!-- Reset Card -->
 <div class="bg-white rounded-xl card-shadow overflow-hidden">
-<!-- Branding/Visual Header -->
 <div class="h-32 relative header-gradient overflow-hidden border-b border-outline-variant">
-<img alt="Background" class="w-full h-full object-cover opacity-10 mix-blend-multiply grayscale" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA8EgPewyxVtCNiM1DkUdagFrZHU6ktLO9kcWgaa_sv8fl63TgIS7x7bL3WLLB-eey7maBZE8MBgXNdvDjhhnola-wTIljaqk0QyWISYB4V_UgDlBWN6c9WXF46-az9oCm6_apV8BEVe8saIOeOrrig4am5VUuYxKgROkFQEA-Nq_MK9o3-J6Bqxfn6mX8C71CcYBNwQrUaqbf1mp6bm7b7ydjISqUw9gh4VuDkyKQhTHCqyax-EhQQxolUWLOoWxNEw76OyCTd24E"/>
 <div class="absolute inset-0 flex items-center justify-center">
 <div class="bg-maroon-accent/5 p-4 rounded-full border border-maroon-accent/10">
-<span class="material-symbols-outlined text-maroon-accent text-4xl" data-icon="lock_reset">lock_reset</span>
+<span class="material-symbols-outlined text-maroon-accent text-4xl"><?= $otp_step ? 'mark_email_read' : 'lock_reset' ?></span>
 </div>
 </div>
-<!-- Decorative accents -->
 <div class="absolute top-0 right-0 w-24 h-full bg-secondary-container/10 -skew-x-12 transform translate-x-12"></div>
 <div class="absolute top-0 left-0 w-1 h-full bg-maroon-accent"></div>
 </div>
 <div class="p-8">
 <div class="mb-8 text-center">
 <h1 class="font-headline-lg text-headline-lg text-on-surface mb-2">Reset Your Password</h1>
-<p class="font-body-md text-body-md text-on-surface-variant">Enter your details to verify your account and set a new password.</p>
+<p class="font-body-md text-body-md text-on-surface-variant">
+<?= $otp_step
+    ? 'Enter the 6-digit code we emailed you and choose a new password.'
+    : 'Enter your username and email and we will send you a one-time code.' ?>
+</p>
 </div>
 
-<!-- Error/Success Messages -->
 <?php if (!empty($error_message)): ?>
 <div class="mb-6 p-4 bg-error-container text-on-error-container rounded-lg flex items-center gap-3">
     <span class="material-symbols-outlined text-error">error</span>
@@ -251,18 +339,20 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_password'])) {
 </div>
 <?php endif; ?>
 
-<form method="POST" action="" class="space-y-6">
-<?php if (!$verification_step): ?>
-<!-- Step 1: Verification Section -->
+<form method="POST" action="" class="space-y-6" autocomplete="off">
+<input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf']) ?>">
+
+<?php if (!$otp_step): ?>
+<!-- Step 1: request code -->
 <div class="space-y-4">
 <div>
 <label class="block font-label-md text-label-md text-on-surface-variant mb-1" for="username">Username</label>
 <div class="relative">
 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-<span class="material-symbols-outlined text-secondary text-lg" data-icon="person">person</span>
+<span class="material-symbols-outlined text-secondary text-lg">person</span>
 </div>
-<input class="w-full pl-10 pr-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all font-body-md text-body-md" 
-       id="username" name="username" placeholder="Enter your username" type="text" 
+<input class="w-full pl-10 pr-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all font-body-md text-body-md"
+       id="username" name="username" placeholder="Enter your username" type="text"
        value="<?= isset($_POST['username']) ? htmlspecialchars($_POST['username']) : '' ?>" required/>
 </div>
 </div>
@@ -270,38 +360,43 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_password'])) {
 <label class="block font-label-md text-label-md text-on-surface-variant mb-1" for="email">Email Address</label>
 <div class="relative">
 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-<span class="material-symbols-outlined text-secondary text-lg" data-icon="mail">mail</span>
+<span class="material-symbols-outlined text-secondary text-lg">mail</span>
 </div>
-<input class="w-full pl-10 pr-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all font-body-md text-body-md" 
-       id="email" name="email" placeholder="Enter your email address" type="email" 
+<input class="w-full pl-10 pr-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all font-body-md text-body-md"
+       id="email" name="email" placeholder="Enter your email address" type="email"
        value="<?= isset($_POST['email']) ? htmlspecialchars($_POST['email']) : '' ?>" required/>
 </div>
 </div>
-<button type="submit" name="verify" class="w-full py-4 bg-maroon-accent text-white font-label-md text-label-md rounded-lg hover:bg-[#660000] active:scale-[0.98] transition-all uppercase tracking-wider flex justify-center items-center gap-2 shadow-sm">
-    Verify Identity
-    <span class="material-symbols-outlined text-lg" data-icon="verified_user">verified_user</span>
+<button type="submit" name="send_otp" class="w-full py-4 bg-maroon-accent text-white font-label-md text-label-md rounded-lg hover:bg-[#660000] active:scale-[0.98] transition-all uppercase tracking-wider flex justify-center items-center gap-2 shadow-sm">
+    Send Code
+    <span class="material-symbols-outlined text-lg">send</span>
 </button>
 </div>
-<?php else: ?>
-<!-- Step 2: Password Update Section (Now Active) -->
-<input type="hidden" name="verified_username" value="<?= htmlspecialchars($verified_username) ?>">
+
+<?php elseif (!$redirect): ?>
+<!-- Step 2: OTP + new password -->
 <div class="space-y-4">
-<div class="flex items-center gap-2 text-maroon-accent font-label-md text-label-md mb-2">
-<span class="material-symbols-outlined text-lg" data-icon="lock_open">lock_open</span>
-<span>Set New Password</span>
+<div>
+<label class="block font-label-md text-label-md text-on-surface-variant mb-1" for="otp">Verification Code</label>
+<input class="otp-input w-full px-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all"
+       id="otp" name="otp" placeholder="••••••" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required/>
+<p class="text-xs text-on-surface-variant mt-1">Code expires in <?= OTP_TTL_MINUTES ?> minutes.</p>
 </div>
 <div>
 <label class="block font-label-md text-label-md text-on-surface-variant mb-1" for="new_password">New Password</label>
-<input class="w-full px-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all font-body-md text-body-md" 
-       id="new_password" name="new_password" placeholder="Enter new password (min. 6 characters)" type="password" required/>
+<input class="w-full px-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all font-body-md text-body-md"
+       id="new_password" name="new_password" placeholder="Min. <?= MIN_PASSWORD_LEN ?> characters" type="password" minlength="<?= MIN_PASSWORD_LEN ?>" autocomplete="new-password" required/>
 </div>
 <div>
 <label class="block font-label-md text-label-md text-on-surface-variant mb-1" for="confirm_password">Confirm New Password</label>
-<input class="w-full px-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all font-body-md text-body-md" 
-       id="confirm_password" name="confirm_password" placeholder="Confirm your new password" type="password" required/>
+<input class="w-full px-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-maroon-accent focus:ring-1 focus:ring-maroon-accent outline-none transition-all font-body-md text-body-md"
+       id="confirm_password" name="confirm_password" placeholder="Confirm your new password" type="password" autocomplete="new-password" required/>
 </div>
 <button type="submit" name="update_password" class="w-full py-4 bg-maroon-accent text-white font-label-md text-label-md rounded-lg hover:bg-[#660000] active:scale-[0.98] transition-all uppercase tracking-wider shadow-sm">
     Update Password
+</button>
+<button type="submit" name="restart" formnovalidate class="w-full text-center text-secondary hover:text-maroon-accent hover:underline font-label-md text-label-md">
+    Didn't get a code? Start over
 </button>
 </div>
 <?php endif; ?>
@@ -309,28 +404,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['update_password'])) {
 
 <div class="mt-8 text-center">
 <a class="font-label-md text-label-md text-secondary hover:text-maroon-accent hover:underline flex items-center justify-center gap-1 transition-colors" href="login.php">
-<span class="material-symbols-outlined text-base" data-icon="arrow_back">arrow_back</span>
+<span class="material-symbols-outlined text-base">arrow_back</span>
     Back to Login
 </a>
 </div>
 </div>
 </div>
-<!-- Support Information -->
-<div class="mt-8 flex justify-center gap-gutter text-on-surface-variant font-label-md text-label-md">
-<a class="hover:text-secondary transition-colors" href="#">Privacy Policy</a>
-<span class="text-outline-variant">|</span>
-<a class="hover:text-secondary transition-colors" href="#">Terms of Service</a>
-<span class="text-outline-variant">|</span>
-<a class="hover:text-secondary transition-colors" href="#">Support</a>
-</div>
 </div>
 </main>
-<!-- Footer -->
 <footer class="bg-surface-container border-t border-outline-variant py-base px-container-padding flex flex-col md:flex-row justify-between items-center w-full mt-auto">
-<div class="font-label-md text-label-md text-on-surface-variant">© 2026 RATIN Analytics. All rights reserved.</div>
-<div class="flex gap-4 mt-4 md:mt-0">
-<span class="font-label-md text-label-md text-on-surface-variant">v2.1 Stable Build</span>
-</div>
+<div class="font-label-md text-label-md text-on-surface-variant">© <?= date('Y') ?> RATIN Analytics. All rights reserved.</div>
 </footer>
 </body>
 </html>
